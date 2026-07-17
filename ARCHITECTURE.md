@@ -12,7 +12,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | Command, Undo, and Redo System | Accepted with modifications | Exclusively coordinates persistent mutations and session history |
 | Storage, Serialization, and AL NOTE File Format | Accepted with modifications | Owns durable packages, serialization, resources, and file safety |
 | Autosave and Recovery | Accepted with modifications | Owns recovery scheduling, checkpoints, journals, reconstruction, and cleanup |
-| Drawing Tool System | Next subsystem | Will define user-facing drawing tools and their interaction contracts |
+| Drawing Tool System | Accepted with modifications | Converts assigned normalized input into previews and atomic Command Requests |
+| Interaction Mapping System | Next subsystem | Will define input assignment, gesture arbitration, and action mapping |
 
 ## Object System
 
@@ -132,6 +133,38 @@ Autosave and Recovery protects committed document work through complete durable 
 
 The detailed Autosave and Recovery architecture is recorded in [lib/documents/recovery/README.md](lib/documents/recovery/README.md).
 
+## Drawing Tool System
+
+The Drawing Tool System converts normalized input already assigned by Interaction Mapping into temporary previews, safe gesture outcomes, validated atomic Command Requests, and delegation to specialized systems.
+
+### Accepted Ownership Boundaries
+
+- Tools never directly mutate persistent document state.
+- Immutable tool definitions create isolated mutable gesture sessions from preset snapshots.
+- Tools use stable namespaced identities and one logical registry.
+- `alnote.*` is reserved for built-in tools; plugin namespace allocation remains deferred.
+- Interaction Mapping selects tools and assigns normalized input.
+- Tools do not own general pointer, keyboard, or gesture arbitration.
+- Gesture sessions default to one primary pointer.
+- The Drawing Engine coordinates pointer capture while platform adapters perform native capture.
+- Tool changes normally affect the next gesture; active gestures retain their original tool and preset snapshot.
+- Previews use page or document coordinates and remain outside persistent objects, history, storage, and recovery.
+- Completed gestures propose atomic Command Requests.
+- Stale or rejected requests produce no persistent change and are not silently replayed.
+- Pen variants share Stroke System services and differ through validated behavior and appearance profiles.
+- Erasers use Hit-Testing and stroke-splitting services and commit atomically.
+- Selection delegates to the Selection System.
+- Pan and navigation belong to Interaction Mapping and Viewport.
+- Insertion tools use placement sessions while owning object and import systems define persistent payloads.
+- Committed strokes contain resolved, self-sufficient appearance and behavior data.
+- Active tools, sessions, previews, presets, and other interface state are not document data.
+- Plugin tools receive restricted services and cannot bypass Command validation.
+- Recovery records only completed persistent results committed through Commands.
+- Drawing Tool architecture belongs under `lib/drawing/tools/`.
+- No Drawing Tool dependency is accepted yet.
+
+The detailed Drawing Tool System architecture is recorded in [lib/drawing/tools/README.md](lib/drawing/tools/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -218,6 +251,21 @@ The detailed Autosave and Recovery architecture is recorded in [lib/documents/re
 | D-085 | Recovery | Recovery architecture belongs under `lib/documents/recovery/` | Accepted | Documents |
 | D-086 | Security | Recovery artifacts receive document privacy and hostile-input protections | Accepted | Security, Storage |
 | D-087 | Recovery | Exact format, backend, timings, leases, retention periods, and dependencies are deferred | Deferred | Testing, Platforms, Settings |
+| D-088 | Drawing Tools | Immutable tool definitions create isolated mutable gesture sessions | Accepted | Drawing Engine |
+| D-089 | Drawing Tools | Tools use stable namespaced identities and one logical registry | Accepted | Plugins |
+| D-090 | Drawing Tools | Interaction Mapping assigns normalized input; tools do not own general arbitration | Accepted | Input, Interaction |
+| D-091 | Drawing Tools | Sessions default to one primary pointer and the engine coordinates capture | Accepted | Input, Platforms |
+| D-092 | Drawing Tools | Previews are temporary page-coordinate rendering data | Accepted | Renderer |
+| D-093 | Drawing Tools | Completed gestures submit atomic Command Requests and never mutate documents directly | Accepted | Commands |
+| D-094 | Drawing Tools | Pen variants are behavior profiles over the shared Stroke System | Accepted | Strokes |
+| D-095 | Drawing Tools | Persistent results contain resolved self-sufficient properties | Accepted | Objects, Storage |
+| D-096 | Drawing Tools | Erasers use hit-testing and splitting services and commit atomically | Accepted | Hit Testing, Strokes, Commands |
+| D-097 | Drawing Tools | Selection delegates to Selection; Pan belongs to Interaction and Viewport | Accepted | Selection, Viewport |
+| D-098 | Drawing Tools | Insertion tools use placement sessions while payload ownership remains elsewhere | Accepted | Text, Images, Shapes, PDF |
+| D-099 | Drawing Tools | Plugin tools use restricted contracts and cannot bypass Commands | Accepted | Plugins, Commands |
+| D-100 | Drawing Tools | Active tools, sessions, previews, and presets are not document data | Accepted | Settings, Storage |
+| D-101 | Drawing Tools | Drawing Tool architecture belongs under `lib/drawing/tools/` | Accepted | Drawing |
+| D-102 | Drawing Tools | Brush algorithms, compositing, multipointer behavior, limits, and dependencies remain deferred | Deferred | Interaction, Rendering, Testing |
 
 ## Deferred Object System Questions
 
@@ -344,6 +392,32 @@ The detailed Autosave and Recovery architecture is recorded in [lib/documents/re
 - SQLite WAL provides useful commit and checkpoint concepts, and SQLite is public domain.
 - No recovery implementation dependency is accepted.
 
+## Deferred Drawing Tool System Questions
+
+- Exact Interaction Mapping rules
+- Gesture arbitration
+- Pressure curves and brush algorithms
+- Highlighter compositing
+- Detailed stroke payload encoding
+- Shape, Text, Image, and PDF payloads
+- Plugin sandboxing
+- Preset storage and synchronization
+- Resource-limit values
+- Multipointer specialist tools
+- User-facing stale-command behavior
+- Exact Drawing Tool dependencies
+
+## Drawing Tool System Open-Source Record
+
+- Rnote is GPL-3.0-or-later and is an architectural reference.
+- Xournal++ is a behavioral reference; direct reuse requires file-level licensing review.
+- Krita is a conceptual reference for presets and input actions but is too complex for adoption.
+- libmypaint is ISC-licensed but raster-oriented and unsuitable for the initial vector-first engine.
+- MyPaint is a behavioral reference only.
+- `perfect-freehand` is MIT-licensed and may be evaluated behind the Stroke System, not adopted as the Tool System.
+- Dart `perfect_freehand`, Scribble, and similar Flutter packages require benchmarking, provenance, maintenance, and compatibility review.
+- No Drawing Tool dependency is accepted.
+
 ## Roadmap
 
-The Drawing Tool System subsystem is next.
+The Interaction Mapping System subsystem is next.
