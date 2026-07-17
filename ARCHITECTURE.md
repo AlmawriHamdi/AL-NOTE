@@ -9,7 +9,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | Object System | Accepted with modifications | Defines the persistent, platform-independent page-object model |
 | Layer System | Accepted with modifications | Owns layer structure, object membership, and ordering |
 | Selection and Transform System | Accepted with modifications | Owns temporary page-scoped selection and transform previews |
-| Command, Undo, and Redo System | Next subsystem | Will own persistent document mutations and history |
+| Command, Undo, and Redo System | Accepted with modifications | Exclusively coordinates persistent mutations and session history |
+| Storage, Serialization, and AL NOTE File Format | Next subsystem | Will own persistent encoding, resources, and file structure |
 
 ## Object System
 
@@ -65,6 +66,25 @@ The Selection and Transform System provides temporary, page-scoped selection and
 
 The detailed Selection and Transform System architecture is recorded in [lib/drawing/selection/README.md](lib/drawing/selection/README.md).
 
+## Command, Undo, and Redo System
+
+The Command, Undo, and Redo System is the only normal path for changing persistent AL NOTE document state.
+
+### Accepted Ownership Boundaries
+
+- A document-scoped mutation coordinator exclusively publishes persistent state.
+- It owns Command Request and Prepared Transaction contracts.
+- It owns final validation inside the serialized mutation boundary.
+- It owns atomic document-root publication.
+- It owns session-only linear undo and redo history.
+- It owns scoped revision tracking and stale-request detection.
+- It owns committed-change descriptions.
+- It tracks session content-state identities for dirty-state comparison.
+- It retains history references to resources without owning physical resource storage.
+- External effects and asynchronous preparation occur outside reversible domain commands.
+
+The detailed Command, Undo, and Redo architecture is recorded in [lib/documents/commands/README.md](lib/documents/commands/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -100,6 +120,22 @@ The detailed Selection and Transform System architecture is recorded in [lib/dra
 | D-034 | Selection | Hidden and locked objects are excluded; unknown objects are non-transformable | Accepted | Objects, Layers |
 | D-035 | Selection | Selection and transform-session ownership belongs under `lib/drawing/selection/` | Accepted | Drawing |
 | D-036 | Commands | Exact revision and stale-state token mechanism is deferred | Deferred | Command System |
+| D-037 | Commands | One document-scoped coordinator exclusively publishes persistent state | Accepted | Documents |
+| D-038 | Commands | Requests express intent; history uses structurally shared before/after state plus metadata | Accepted | D-037 |
+| D-039 | Commands | Preparation may be asynchronous; final commit is serialized and atomic | Accepted | D-037 |
+| D-040 | Commands | Transactions may span one logical document; cross-document atomicity is deferred | Accepted | Documents |
+| D-041 | History | Each open-document session owns one linear undo/redo history | Accepted | Sessions |
+| D-042 | History | Undo and redo restore recorded states, original IDs, ordering, and opaque data | Accepted | D-038 |
+| D-043 | History | Coalescing requires explicit semantic merge keys and boundaries | Accepted | D-041 |
+| D-044 | Commands | Stale checks use scoped session revision tokens; global revision is not always required | Accepted | D-037 |
+| D-045 | History | Dirty state compares current content-state identity with the last successful save | Accepted | Storage |
+| D-046 | Commands | Every successful commit emits one immutable structured change description | Accepted | Rendering, Autosave |
+| D-047 | History | Normal undo history remains session-only; recovery journaling is separate | Accepted | Recovery |
+| D-048 | Resources | History retains resource IDs or leases; physical reclamation belongs to the Resource System | Accepted | Resources |
+| D-049 | Commands | Authorization distinguishes content edits, management actions, and privileged recovery | Accepted | Objects, Layers |
+| D-050 | Commands | Command architecture belongs under `lib/documents/commands/` | Accepted | Documents |
+| D-051 | Core | Immutable collection dependency selection requires representative benchmarks | Deferred | Performance |
+| D-052 | History | Disk-backed history and very-large-entry policy are deferred | Deferred | Storage, Platforms |
 
 ## Deferred Object System Questions
 
@@ -154,6 +190,28 @@ The detailed Selection and Transform System architecture is recorded in [lib/dra
 - Flutter transformation primitives may support viewport and temporary UI mechanics but do not replace the document Selection System.
 - Dart `vector_math` may be reused behind AL NOTE-controlled transform validation contracts.
 
+## Deferred Command, Undo, and Redo Questions
+
+- Cross-document atomicity
+- Collaboration rebasing
+- Persistent or disk-backed history
+- Crash-recovery journal format
+- Exact resource storage and reclamation strategy
+- Immutable collection dependency
+- Very-large-command spill policy
+- Persistent content fingerprint
+- Exact revision implementation
+
+## Command, Undo, and Redo Open-Source Record
+
+- Rnote is GPL-3.0-or-later; adapt command and history concepts only.
+- Xournal++ is GPL-2.0-or-later; direct reuse requires file and dependency auditing.
+- Krita provides useful history, merging, and memory-limit concepts but is substantially more complex.
+- The Dart `undo` package is Apache-2.0 but is unsuitable as AL NOTE’s command core.
+- `built_collection` remains a benchmarking candidate.
+- `fast_immutable_collections` is BSD-2-Clause and remains a benchmarking candidate.
+- No command or immutable-collection dependency is accepted yet.
+
 ## Roadmap
 
-The Command, Undo, and Redo System is the next subsystem.
+The Storage, Serialization, and AL NOTE File Format subsystem is next.
