@@ -8,7 +8,8 @@ This document records architecture approved by the Main Architect, the subsystem
 |---|---|---|
 | Object System | Accepted with modifications | Defines the persistent, platform-independent page-object model |
 | Layer System | Accepted with modifications | Owns layer structure, object membership, and ordering |
-| Selection and Transform System | Next subsystem | Will define selection and transform behavior |
+| Selection and Transform System | Accepted with modifications | Owns temporary page-scoped selection and transform previews |
+| Command, Undo, and Redo System | Next subsystem | Will own persistent document mutations and history |
 
 ## Object System
 
@@ -46,6 +47,24 @@ The Layer System provides the authoritative structure:
 
 The detailed Layer System architecture is recorded in [lib/documents/layers/README.md](lib/documents/layers/README.md).
 
+## Selection and Transform System
+
+The Selection and Transform System provides temporary, page-scoped selection and transformation without placing interaction state inside persistent document objects.
+
+### Accepted Ownership Boundaries
+
+- It resolves point, rectangle, and lasso selection.
+- It owns temporary page-editing selection state.
+- It calculates selection geometry and interaction overlays.
+- It previews movement, resizing, and rotation without mutating persistent documents.
+- It enforces capabilities, visibility, locking, and Page boundaries.
+- It prepares atomic requests for the future Command System.
+- It supports whole-object and handwriting-stroke sub-target selection.
+- It does not own persistent document mutation.
+- Documents must not depend on Selection.
+
+The detailed Selection and Transform System architecture is recorded in [lib/drawing/selection/README.md](lib/drawing/selection/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -69,6 +88,18 @@ The detailed Layer System architecture is recorded in [lib/documents/layers/READ
 | D-022 | Layers | Unknown layers and their data remain preserved and inert | Accepted | Storage, Plugins |
 | D-023 | Layers | Active-layer selection is non-persistent session state | Accepted | Sessions |
 | D-024 | Layers | Nested layers and layer groups are unsupported for now | Deferred | Selection, Grouping |
+| D-025 | Selection | Selection is temporary page-editing session state | Accepted | Sessions |
+| D-026 | Selection | Targets use Page ID, Object ID, and optional stable sub-target identity | Accepted | Objects |
+| D-027 | Selection | Selection may cross layers within one page while preserving membership and order | Accepted | Layers |
+| D-028 | Selection | Initial selection supports objects and handwriting-stroke sub-targets | Accepted | Handwriting |
+| D-029 | Selection | Region selection uses precise, policy-driven containment or intersection tests | Accepted | Hit Testing |
+| D-030 | Transform | Public transforms use controlled affine operations | Accepted | Geometry |
+| D-031 | Transform | Preview is temporary; commits replace all affected objects atomically | Accepted | Commands |
+| D-032 | Transform | Every selected target must support a requested shared transform | Accepted | Capabilities |
+| D-033 | Transform | Partial overflow is allowed, but transformed content must remain recoverable from the page | Accepted | Pages |
+| D-034 | Selection | Hidden and locked objects are excluded; unknown objects are non-transformable | Accepted | Objects, Layers |
+| D-035 | Selection | Selection and transform-session ownership belongs under `lib/drawing/selection/` | Accepted | Drawing |
+| D-036 | Commands | Exact revision and stale-state token mechanism is deferred | Deferred | Command System |
 
 ## Deferred Object System Questions
 
@@ -100,6 +131,29 @@ The detailed Layer System architecture is recorded in [lib/documents/layers/READ
 - Krita provides useful layer concepts, but its node system is too complex for AL NOTE.
 - Dart `built_collection` may be evaluated behind AL NOTE-owned interfaces but must not become a permanent serialized contract.
 
+## Deferred Selection and Transform Questions
+
+- Other sub-object editing types
+- Custom pivots
+- Snapping and alignment guides
+- Direction-dependent rectangle selection
+- Overlap cycling
+- Group selection behavior
+- Reflection
+- Skew
+- Perspective transforms
+- Exact transform serialization
+- Exact revision and stale-state token mechanism
+- Read-only inspection ownership
+
+## Selection and Transform Open-Source Record
+
+- Rnote is GPL-3.0-or-later; adapt note-oriented selection concepts.
+- Xournal++ is GPL-2.0-or-later; direct reuse requires file and dependency auditing.
+- Krita provides useful transform-session and preview concepts, but its advanced transformation scope is excessive for AL NOTE.
+- Flutter transformation primitives may support viewport and temporary UI mechanics but do not replace the document Selection System.
+- Dart `vector_math` may be reused behind AL NOTE-controlled transform validation contracts.
+
 ## Roadmap
 
-The Selection and Transform System is the next subsystem.
+The Command, Undo, and Redo System is the next subsystem.
