@@ -11,7 +11,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | Selection and Transform System | Accepted with modifications | Owns temporary page-scoped selection and transform previews |
 | Command, Undo, and Redo System | Accepted with modifications | Exclusively coordinates persistent mutations and session history |
 | Storage, Serialization, and AL NOTE File Format | Accepted with modifications | Owns durable packages, serialization, resources, and file safety |
-| Autosave and Recovery | Next subsystem | Will own autosave scheduling and crash recovery |
+| Autosave and Recovery | Accepted with modifications | Owns recovery scheduling, checkpoints, journals, reconstruction, and cleanup |
+| Drawing Tool System | Next subsystem | Will define user-facing drawing tools and their interaction contracts |
 
 ## Object System
 
@@ -106,6 +107,31 @@ The Storage subsystem converts captured immutable document states and their reso
 
 The detailed Storage architecture is recorded in [lib/documents/files/README.md](lib/documents/files/README.md).
 
+## Autosave and Recovery
+
+Autosave and Recovery protects committed document work through complete durable checkpoints, short append-only journals, retained resources, and versioned recovery manifests.
+
+### Accepted Ownership Boundaries
+
+- Recovery is enabled by default and remains separate from canonical `.alnote` saving.
+- Journal entries contain committed persistent after-state replacements, not commands, UI events, previews, or undo history.
+- Each logical in-memory document has one serialized recovery writer shared by coordinated views.
+- Scheduling combines quiet-period debounce, maximum dirty-state age, checkpoint thresholds, and lifecycle flushes.
+- Durable generations, journal sequences, hashes, transaction UUIDs, and commit markers define recovery order.
+- Previous valid generations remain until replacement publication is validated and durable.
+- Startup reconstruction uses the newest valid checkpoint and its newest valid journal prefix.
+- Restored work opens dirty with a new Command History baseline and never automatically overwrites a canonical file.
+- Conflicting or uncertain recovery opens as a separate recovered document.
+- Recovery retains every resource reachable from valid generations and active recovery work.
+- Uncoordinated processes or browser tabs create separate recovery branches rather than merging automatically.
+- Cleanup requires a covered normal save, explicit discard, or confirmed save of a recovered candidate.
+- Platform adapters own storage locations, durability primitives, locking, leases, quota reporting, and lifecycle notifications.
+- Recovery artifacts receive private-document security and hostile-input protections.
+- Recovery architecture belongs under `lib/documents/recovery/`.
+- No recovery implementation dependency or backend is accepted yet.
+
+The detailed Autosave and Recovery architecture is recorded in [lib/documents/recovery/README.md](lib/documents/recovery/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -175,6 +201,23 @@ The detailed Storage architecture is recorded in [lib/documents/files/README.md]
 | D-068 | Storage | Storage architecture belongs under `lib/documents/files/` | Accepted | Documents |
 | D-069 | Storage | External links, signatures, encryption, and final media-type registration are deferred | Deferred | Security, Platforms |
 | D-070 | Storage | Exact ZIP and JSON implementation dependencies are deferred pending testing | Deferred | Performance, Platforms |
+| D-071 | Recovery | Recovery uses complete checkpoints plus a short append-only journal | Accepted | Storage, Commands |
+| D-072 | Recovery | Recovery is enabled by default and stored separately from canonical files | Accepted | D-071 |
+| D-073 | Recovery | Journal entries contain committed persistent results, not commands or UI events | Accepted | Commands |
+| D-074 | Recovery | One serialized recovery writer serves each logical in-memory document | Accepted | Sessions |
+| D-075 | Autosave | Recovery uses debounce, maximum-latency, and lifecycle triggers | Accepted | D-074 |
+| D-076 | Recovery | Previous valid generations remain until replacement is durable | Accepted | Storage |
+| D-077 | Recovery | Durable sequence numbers and hashes define recovery order | Accepted | D-071 |
+| D-078 | Recovery | Recovery records source identity and canonical destination fingerprints | Accepted | Storage |
+| D-079 | Recovery | Restoration uses the newest valid checkpoint and valid journal prefix | Accepted | D-076, D-077 |
+| D-080 | Recovery | Restored recovery opens dirty with a new history baseline | Accepted | Commands |
+| D-081 | Recovery | Uncertain or conflicting recovery opens as a separate document | Accepted | Sessions, Storage |
+| D-082 | Resources | Recovery retains every resource reachable from valid generations | Accepted | Resources |
+| D-083 | Recovery | Coordinated views share ownership; uncoordinated sessions create branches | Accepted | Sessions, Platforms |
+| D-084 | Recovery | Cleanup requires a covered save or explicit discard | Accepted | Storage |
+| D-085 | Recovery | Recovery architecture belongs under `lib/documents/recovery/` | Accepted | Documents |
+| D-086 | Security | Recovery artifacts receive document privacy and hostile-input protections | Accepted | Security, Storage |
+| D-087 | Recovery | Exact format, backend, timings, leases, retention periods, and dependencies are deferred | Deferred | Testing, Platforms, Settings |
 
 ## Deferred Object System Questions
 
@@ -279,6 +322,28 @@ The detailed Storage architecture is recorded in [lib/documents/files/README.md]
 - Protocol Buffers and FlatBuffers are rejected for canonical version-1 records.
 - No storage dependency is accepted yet.
 
+## Deferred Autosave and Recovery Questions
+
+- Exact recovery artifact encoding
+- Native and Web storage backend
+- Exact debounce and maximum-latency values
+- Checkpoint frequency and journal-size thresholds
+- Lease renewal and stale-owner timing
+- Recovery retention periods
+- Storage-pressure cleanup limits
+- Persistent logical document fingerprints
+- Canonical automatic-saving preference
+- Encryption and OS-backup policy
+- Exact Dart and Web dependencies
+
+## Autosave and Recovery Open-Source Record
+
+- Xournal++ provides useful handwriting autosave concepts, but direct reuse requires licensing review.
+- Krita demonstrates separate autosave files, recovery for saved and unsaved documents, and restoring recovered work as modified.
+- LibreOffice demonstrates separation of AutoRecovery from normal saving.
+- SQLite WAL provides useful commit and checkpoint concepts, and SQLite is public domain.
+- No recovery implementation dependency is accepted.
+
 ## Roadmap
 
-The Autosave and Recovery subsystem is next.
+The Drawing Tool System subsystem is next.
