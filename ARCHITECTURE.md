@@ -10,7 +10,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | Layer System | Accepted with modifications | Owns layer structure, object membership, and ordering |
 | Selection and Transform System | Accepted with modifications | Owns temporary page-scoped selection and transform previews |
 | Command, Undo, and Redo System | Accepted with modifications | Exclusively coordinates persistent mutations and session history |
-| Storage, Serialization, and AL NOTE File Format | Next subsystem | Will own persistent encoding, resources, and file structure |
+| Storage, Serialization, and AL NOTE File Format | Accepted with modifications | Owns durable packages, serialization, resources, and file safety |
+| Autosave and Recovery | Next subsystem | Will own autosave scheduling and crash recovery |
 
 ## Object System
 
@@ -85,6 +86,26 @@ The Command, Undo, and Redo System is the only normal path for changing persiste
 
 The detailed Command, Undo, and Redo architecture is recorded in [lib/documents/commands/README.md](lib/documents/commands/README.md).
 
+## Storage, Serialization, and AL NOTE File Format
+
+The Storage subsystem converts captured immutable document states and their resources into durable, portable, verifiable `.alnote` packages and reconstructs them without silently losing persistent information.
+
+### Accepted Ownership Boundaries
+
+- It owns the AL NOTE-specific, ODF-inspired ZIP package contract.
+- It owns deterministic version-1 UTF-8 JSON serialization.
+- It owns the manifest, structured-record catalog, and resource catalog.
+- It owns resource repository contracts using logical UUIDs and SHA-256 hashes.
+- It owns preservation-capable parsing and unknown-record preservation.
+- It owns migration planning, orchestration, and complete-result validation.
+- It owns staged loading, bounded validation, and lazy Page and resource loading.
+- It owns save and load coordination and atomic-replacement abstractions.
+- It owns external-change fingerprints.
+- Platform adapters own platform file, stream, replacement, locking, permission, quota, and browser-storage primitives.
+- It does not own undo history, autosave scheduling, recovery journals, rendering, import/export workflows, plugin execution, sync, encryption, or file-picker UI.
+
+The detailed Storage architecture is recorded in [lib/documents/files/README.md](lib/documents/files/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -136,6 +157,24 @@ The detailed Command, Undo, and Redo architecture is recorded in [lib/documents/
 | D-050 | Commands | Command architecture belongs under `lib/documents/commands/` | Accepted | Documents |
 | D-051 | Core | Immutable collection dependency selection requires representative benchmarks | Deferred | Performance |
 | D-052 | History | Disk-backed history and very-large-entry policy are deferred | Deferred | Storage, Platforms |
+| D-053 | Storage | All document forms use one `.alnote` ZIP package | Accepted | Documents |
+| D-054 | Serialization | Package version 1 uses deterministic UTF-8 JSON records | Accepted | D-053 |
+| D-055 | Serialization | Records are divided at document, section, and page boundaries | Accepted | D-053 |
+| D-056 | Resources | Version 1 embeds required resources as separate ZIP entries | Accepted | D-053 |
+| D-057 | Resources | Resources use logical UUIDs plus SHA-256 content identity | Accepted | D-056 |
+| D-058 | Storage | The manifest catalogs authoritative entries, sizes, media types, and hashes | Accepted | D-053 |
+| D-059 | Versioning | Package, root, layer, object-envelope, and type-payload versions remain separate | Accepted | Objects, Layers |
+| D-060 | Preservation | Unknown data and potentially reachable resources must be preserved | Accepted | Objects, Layers, Plugins |
+| D-061 | Serialization | Logical serialization is deterministic | Accepted | D-054 |
+| D-062 | Storage | Loading may be lazy at page and resource boundaries | Accepted | D-055 |
+| D-063 | Storage | Saving creates and validates a complete replacement package | Accepted | Commands |
+| D-064 | Migration | Migrations never modify the original package in place | Accepted | D-059 |
+| D-065 | Compatibility | Unsupported newer content is editable only when safely understood | Accepted | D-059, D-060 |
+| D-066 | Security | Packages are hostile input and require bounded validation | Accepted | D-053 |
+| D-067 | Storage | Advisory writer coordination is combined with external-file fingerprints | Accepted | Platforms |
+| D-068 | Storage | Storage architecture belongs under `lib/documents/files/` | Accepted | Documents |
+| D-069 | Storage | External links, signatures, encryption, and final media-type registration are deferred | Deferred | Security, Platforms |
+| D-070 | Storage | Exact ZIP and JSON implementation dependencies are deferred pending testing | Deferred | Performance, Platforms |
 
 ## Deferred Object System Questions
 
@@ -212,6 +251,34 @@ The detailed Command, Undo, and Redo architecture is recorded in [lib/documents/
 - `fast_immutable_collections` is BSD-2-Clause and remains a benchmarking candidate.
 - No command or immutable-collection dependency is accepted yet.
 
+## Deferred Storage and File Format Questions
+
+- Permanent registered media type
+- Numeric security limits
+- ZIP64 requirements
+- Persistent logical fingerprint
+- External resource links
+- Compact handwriting encoding
+- Advisory-lock metadata
+- Digital signatures
+- Encryption
+- Exact lexical preservation of unknown JSON
+- Formal salvage and repair format
+- Future sync hash boundaries
+- Exact ZIP and JSON dependencies
+
+## Storage and File Format Open-Source Record
+
+- Rnote is GPL-3.0-or-later and offers useful persistence concepts, but its format should not be adopted wholesale.
+- Xournal++ is currently identified as GPL-2.0; direct code reuse requires file-level and dependency licensing review.
+- ODF provides useful ZIP-package concepts without requiring AL NOTE to adopt ODF schemas.
+- SQLite is public domain but is not selected as the canonical format.
+- Dart `archive` is MIT and remains a prototype candidate.
+- `json_serializable` is BSD-3-Clause and may only be used with explicit unknown-field preservation.
+- Freezed is MIT and is only an optional implementation aid.
+- Protocol Buffers and FlatBuffers are rejected for canonical version-1 records.
+- No storage dependency is accepted yet.
+
 ## Roadmap
 
-The Storage, Serialization, and AL NOTE File Format subsystem is next.
+The Autosave and Recovery subsystem is next.
