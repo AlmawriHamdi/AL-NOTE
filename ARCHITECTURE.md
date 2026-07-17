@@ -13,7 +13,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | Storage, Serialization, and AL NOTE File Format | Accepted with modifications | Owns durable packages, serialization, resources, and file safety |
 | Autosave and Recovery | Accepted with modifications | Owns recovery scheduling, checkpoints, journals, reconstruction, and cleanup |
 | Drawing Tool System | Accepted with modifications | Converts assigned normalized input into previews and atomic Command Requests |
-| Interaction Mapping System | Next subsystem | Will define input assignment, gesture arbitration, and action mapping |
+| Interaction Mapping System | Accepted with modifications | Owns semantic action mapping, arbitration, pointer ownership, and binding profiles |
+| Text Object System | Next subsystem | Will define persistent text objects, editing boundaries, and layout contracts |
 
 ## Object System
 
@@ -165,6 +166,39 @@ The Drawing Tool System converts normalized input already assigned by Interactio
 
 The detailed Drawing Tool System architecture is recorded in [lib/drawing/tools/README.md](lib/drawing/tools/README.md).
 
+## Interaction Mapping System
+
+The Interaction Mapping System converts normalized input into one authorized semantic action while respecting device capabilities, application context, user bindings, arbitration, pointer ownership, safety, accessibility, and active sessions.
+
+### Accepted Ownership Boundaries
+
+- Interaction Mapping remains separate from raw platform input collection and normalization.
+- Actions use stable namespaced identities and one logical registry.
+- `alnote.*` is reserved for built-in actions.
+- Binding profiles are versioned Settings data and never document data.
+- Bindings may combine device, gesture, buttons, modifiers, context, and capabilities.
+- Candidate selection, recognition, arbitration, and resolution are coordinated.
+- Once an interaction commits, its binding, parameters, context, Tool, and preset snapshots remain fixed.
+- Every pointer has one logical owner; multi-touch gestures may own pointer groups.
+- Safety restrictions, focus, and existing ownership precede customizable bindings.
+- Equal-specificity conflicts in the same tier are invalid.
+- Platform palm rejection precedes conservative shared fallback policy.
+- Drawing Tools never determine whether input is a palm.
+- Stylus and touch concurrency requires guaranteed document-coordinate continuity.
+- Viewport changes must never distort or introduce discontinuities into stored strokes.
+- Keyboard dispatch is focus-aware.
+- Focused text editors retain their accepted undo and redo context.
+- Temporary overrides use tokens and affect only future gestures.
+- Lifecycle disruption cancels uncommitted interactions without partial mutation.
+- Essential actions retain accessible alternatives, recovery paths, and reset access.
+- Plugin actions use restricted namespaces, sanitized context, and controlled dispatch.
+- Shared behavior resolves from capabilities while native details remain in platform adapters.
+- Interaction architecture belongs under `lib/core/interaction/` and uses neutral contracts.
+- `lib/drawing/input/` retains normalized drawing-surface input and capture-bridging ownership.
+- No new Interaction Mapping dependency is accepted.
+
+The detailed Interaction Mapping architecture is recorded in [lib/core/interaction/README.md](lib/core/interaction/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -266,6 +300,24 @@ The detailed Drawing Tool System architecture is recorded in [lib/drawing/tools/
 | D-100 | Drawing Tools | Active tools, sessions, previews, and presets are not document data | Accepted | Settings, Storage |
 | D-101 | Drawing Tools | Drawing Tool architecture belongs under `lib/drawing/tools/` | Accepted | Drawing |
 | D-102 | Drawing Tools | Brush algorithms, compositing, multipointer behavior, limits, and dependencies remain deferred | Deferred | Interaction, Rendering, Testing |
+| D-103 | Interaction | Interaction Mapping remains separate from raw input normalization | Accepted | Input |
+| D-104 | Interaction | Actions use stable namespaced identities and one logical registry | Accepted | Plugins |
+| D-105 | Interaction | Versioned binding profiles are Settings data, never document data | Accepted | Settings |
+| D-106 | Interaction | Bindings combine device, gesture, chord, context, and capabilities | Accepted | Input |
+| D-107 | Interaction | Routing decisions and relevant snapshots freeze at gesture commitment | Accepted | Drawing Tools |
+| D-108 | Interaction | Every pointer has one logical owner; multitouch gestures may own pointer groups | Accepted | Input |
+| D-109 | Interaction | Candidate selection, recognition, arbitration, and binding resolution are coordinated | Accepted | D-106 |
+| D-110 | Interaction | Safety, focus, and existing ownership precede customizable bindings | Accepted | UI, Settings |
+| D-111 | Interaction | Stylus and touch concurrency requires guaranteed coordinate continuity | Accepted | Viewport, Drawing Tools |
+| D-112 | Interaction | Platform palm rejection precedes conservative shared fallback policy | Accepted | Platforms |
+| D-113 | Interaction | Temporary overrides use tokens and affect only future gestures | Accepted | Input |
+| D-114 | Interaction | Lifecycle disruption cancels uncommitted interactions without partial mutation | Accepted | Commands |
+| D-115 | Interaction | Keyboard dispatch is focus-aware and focused editors own their undo context | Accepted | Text, UI |
+| D-116 | Interaction | Essential actions retain accessible fallback and reset paths | Accepted | Accessibility, Settings |
+| D-117 | Interaction | Shared behavior resolves from capabilities while native details remain in adapters | Accepted | Platforms |
+| D-118 | Interaction | Plugin actions use restricted dispatch and unavailable bindings are preserved | Accepted | Plugins |
+| D-119 | Interaction | Interaction architecture belongs under `lib/core/interaction/` using neutral contracts | Accepted | Core |
+| D-120 | Interaction | Exact defaults, thresholds, calibration, diagnostics, native work, and dependencies remain deferred | Deferred | Settings, Testing, Platforms |
 
 ## Deferred Object System Questions
 
@@ -418,6 +470,38 @@ The detailed Drawing Tool System architecture is recorded in [lib/drawing/tools/
 - Dart `perfect_freehand`, Scribble, and similar Flutter packages require benchmarking, provenance, maintenance, and compatibility review.
 - No Drawing Tool dependency is accepted.
 
+## Deferred Interaction Mapping Questions
+
+- Exact profile serialization
+- Settings synchronization
+- Device-profile identity
+- Profile-editing UI
+- Gesture thresholds
+- Palm heuristics
+- Complete default bindings
+- Stylus and touch concurrency defaults
+- Plugin permissions and loading
+- Accessibility API integration
+- Device calibration
+- Rotation gestures
+- Diagnostic logging and device inspection
+- Per-workspace versus global profiles
+- Exact native adapter requirements
+- Exact Interaction Mapping dependencies
+
+## Interaction Mapping Open-Source Record
+
+- Flutter is BSD-3-Clause and is the framework foundation.
+- Flutter's recognizers and Gesture Arena do not replace AL NOTE's mapping profiles or cross-device policy.
+- Rnote is GPL-3.0-or-later and is a behavioral reference.
+- Xournal++ is displayed as GPL-2.0; direct reuse requires file-level and dependency auditing.
+- Krita describes the application as GPLv3 and is a conceptual profile and action reference; direct code reuse requires file-level auditing.
+- W3C Pointer Events is the Web behavioral reference.
+- Android stylus APIs are platform references behind adapters.
+- Windows Pointer and Ink remain behind a Windows adapter if needed.
+- libinput is a Linux behavioral reference, not a shared-logic dependency.
+- No new Interaction Mapping dependency is accepted.
+
 ## Roadmap
 
-The Interaction Mapping System subsystem is next.
+The Text Object System subsystem is next.
