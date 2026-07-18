@@ -22,7 +22,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | Application State and Document Sessions | Accepted with modifications | Owns logical document sessions, shared state, view associations, lifecycle coordination, and restoration |
 | User Interface Architecture | Accepted with modifications | Owns adaptive presentation, semantic Action surfaces, focus, accessibility, and platform-responsive UI composition |
 | Settings and Preferences | Accepted with modifications | Owns typed preferences, scopes, profiles, presets, validation, migration, transactions, and change observation |
-| Plugin System | Next subsystem | Will define plugin identity, packaging, trust, permissions, loading, and extension registration |
+| Plugin System | Accepted with modifications | Owns bounded declarative packages, identities, validation, trust coordination, atomic registries, lifecycle, and preservation |
+| Search and Indexing | Next subsystem | Will define document search, indexing, query, freshness, and provider boundaries |
 | Recognition, Mathematics, and Optional Sync/Cloud | Post-v1 | Official future goals preserved by version-1 architecture without premature implementation |
 
 ## Object System
@@ -524,6 +525,37 @@ Settings stores user-configurable defaults, preferences, profiles, and presets w
 
 The detailed Settings architecture is recorded in [lib/app/settings/README.md](lib/app/settings/README.md).
 
+## Plugin System
+
+Version-1 external plugins are bounded, validated, declarative packages that configure existing AL NOTE-owned behavior without executing plugin-supplied code.
+
+### Accepted Ownership Boundaries
+
+- The Plugin System owns package identity, manifest validation, publisher identity, lifecycle coordination, namespace enforcement, declarative contribution validation, atomic registry publication, compatibility, failure isolation, safe mode, and structured audit events.
+- External plugins cannot provide runtime Dart, native libraries, processes, scripts, WebAssembly, widgets, renderers, hit testing, Tools, handlers, executable migrations, background tasks, or direct platform access.
+- Trusted Dart extensions are reviewed and compiled into AL NOTE; they are not runtime external plugins.
+- `.alnote-plugin` packages use a bounded deterministic archive contract with complete staged validation.
+- Raw archive identity remains separate from canonical signed-content identity.
+- Plugin identities use controlled reverse-domain namespaces while `alnote.*` remains reserved.
+- Version-1 packages are self-contained and cannot depend on other plugins.
+- Installation, signature verification, trust, permission, and activation remain distinct.
+- Declarative plugins receive no runtime capabilities.
+- Contributions publish only as complete immutable registry generations.
+- Active operations pin affected plugin versions and registry generations; idle Sessions adopt the current generation.
+- Installation and updates are transactional, retain rollback candidates, and support safe mode.
+- Disabling or uninstalling never deletes document content or silently removes inactive Settings.
+- Missing plugins leave namespaced persistent records inert and preserved.
+- Version 1 permits only host-supported structural migrations.
+- Settings and UI contributions use host-owned typed and declarative contracts.
+- Document mutation continues through Commands and existing domain boundaries.
+- Compatibility is capability-based and may vary by platform.
+- Local validation, activation, disabling, and rollback work offline when required inputs are present.
+- Licensing, notices, provenance, and curated GPL compatibility review are required.
+- A future capability-mediated WebAssembly boundary remains deferred.
+- No external Plugin System dependency is accepted.
+
+The detailed Plugin System architecture is recorded in [lib/app/plugins/README.md](lib/app/plugins/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -823,6 +855,38 @@ The detailed Settings architecture is recorded in [lib/app/settings/README.md](l
 | D-298 | Settings | Every persistence adapter must pass shared tests for resolution, validation, migration, corruption, concurrency, import, security, and failure behavior. | Accepted | Testing |
 | D-299 | Settings | Platform-independent Settings ownership belongs under `lib/app/settings/`; concrete persistence remains behind platform adapters. | Accepted | Repository architecture |
 | D-300 | Settings | No Settings backend or dependency is accepted; SQLite, IndexedDB, and narrowly scoped platform stores remain audited candidates. | Accepted | Open-source evaluation |
+| D-301 | Plugins | Version-1 external plugins are bounded declarative packages and cannot execute plugin-supplied code. | Accepted | Security |
+| D-302 | Plugins | Trusted Dart extensions are compiled and shipped as part of AL NOTE rather than loaded as runtime external plugins. | Accepted | Application build |
+| D-303 | Plugins | Arbitrary runtime Dart, native dynamic libraries, installation scripts, and process spawning are prohibited. | Accepted | Security |
+| D-304 | Plugins | A capability-mediated WebAssembly boundary is reserved for future study, with no executable runtime or dependency accepted. | Deferred | Future plugins |
+| D-305 | Plugins | Version-1 contributions are limited to validated declarations that configure existing host-owned behavior. | Accepted | Extension registries |
+| D-306 | Plugins | External declarative plugins cannot provide executable object behavior, rendering, hit testing, Tools, handlers, migrations, widgets, or search. | Accepted | Domain boundaries |
+| D-307 | Plugins | External packages use a bounded deterministic `.alnote-plugin` archive contract with staged complete validation. | Accepted | Storage, Security |
+| D-308 | Plugins | Exact archive-byte identity is separate from canonical signed-content identity. | Accepted | Signing |
+| D-309 | Plugins | Plugin manifests carry stable identity, compatibility, contribution, licensing, provenance, and resource declarations. | Accepted | Package format |
+| D-310 | Plugins | Plugin and contribution identities use controlled reverse-domain namespaces, with `alnote.*` reserved. | Accepted | Identity conventions |
+| D-311 | Plugins | Version-1 plugins are self-contained; plugin-to-plugin dependencies and dependency resolution are deferred. | Deferred | Future plugins |
+| D-312 | Plugins | Installation, signature verification, trust, permission, and activation are distinct states. | Accepted | Security |
+| D-313 | Plugins | Signatures establish key and artifact continuity but do not establish safety or trust. | Accepted | Security |
+| D-314 | Plugins | Declarative version-1 plugins receive no runtime document, filesystem, network, clipboard, secret, or background capabilities. | Accepted | Security |
+| D-315 | Plugins | Future executable capabilities must be deny-by-default, scoped, revocable, auditable, expiring where applicable, and bound to exact identities. | Deferred | Future security |
+| D-316 | Plugins | Package staging performs bounded structural, path, resource, compatibility, and integrity validation without execution or network access. | Accepted | Security |
+| D-317 | Plugins | Plugin contributions publish only as complete immutable atomic registry generations. | Accepted | Registries |
+| D-318 | Plugins | Active operations pin exact plugin versions and registry generations, while idle Sessions adopt the current generation. | Accepted | Sessions |
+| D-319 | Plugins | Installation and updates are transactional, retain rollback candidates, support safe mode, and require renewed authorization for identity-sensitive changes. | Accepted | Lifecycle |
+| D-320 | Plugins | Disabling or uninstalling a plugin never deletes document content and preserves inactive Settings unless explicitly removed. | Accepted | Storage, Settings |
+| D-321 | Plugins | Persistent plugin-owned records use stable namespaced identities and remain inert and preserved when their plugin is unavailable. | Accepted | Storage |
+| D-322 | Plugins | Version 1 permits only host-supported structural migrations; executable migrations require a future isolated proposal-and-validation design. | Accepted | Migration |
+| D-323 | Plugins | Plugin Settings use host-supported typed definitions, validation, transactions, persistence, and namespace controls. | Accepted | Settings |
+| D-324 | Plugins | Plugin UI contributions are declarative, host-rendered, accessibility-controlled, plugin-string-scoped, and unable to impersonate trusted security UI. | Accepted | UI, Security |
+| D-325 | Plugins | Plugin contributions preserve host Action, Interaction Mapping, Tool, Command, Import, Export, and document-mutation boundaries. | Accepted | Domain architecture |
+| D-326 | Plugins | Plugin lifecycle operations use structured failure and cancellation with centralized resource limits and failure containment. | Accepted | Security |
+| D-327 | Plugins | Plugin compatibility and activation are capability-based and may vary explicitly by platform. | Accepted | Platforms |
+| D-328 | Plugins | Plugin packaging records SPDX-oriented licensing, notices, dependency and asset provenance, with curated distribution requiring documented GPL compatibility review. | Accepted | Licensing |
+| D-329 | Plugins | Local installation, validation, activation, disabling, and rollback operate offline when required inputs are locally available. | Accepted | Platforms |
+| D-330 | Plugins | The Plugin System emits privacy-safe structured audit events while Security owns their storage, retention, and access policy. | Accepted | Security |
+| D-331 | Plugins | Package parsing, activation, lifecycle, preservation, and capability behavior require adversarial and cross-platform conformance testing. | Accepted | Testing |
+| D-332 | Plugins | `lib/app/plugins/` owns Plugin System architecture, with no external plugin-system dependency accepted. | Accepted | Repository architecture |
 
 ## Deferred Object System Questions
 
@@ -1266,8 +1330,36 @@ No external Import or Export dependency is accepted.
 - LibreOffice is a conceptual layered-configuration reference and is unsuitable for direct reuse.
 - No Settings dependency is accepted.
 
+## Deferred Plugin System Questions
+
+- Executable external plugins
+- WebAssembly runtime selection and host API
+- Runtime Dart and native plugin loading
+- Plugin-to-plugin dependencies and resolution
+- Marketplace, catalog, discovery, and online updates
+- Certificate authorities and transparency services
+- Signing algorithms, envelope, and canonicalization
+- Archive and cryptography dependencies
+- Exact SBOM format and automated license decisions
+- Executable plugin migrations
+- Plugin-defined renderers, hit testing, Tools, handlers, Search, indexing, and recognition
+- Sync-distributed plugins
+- Final numerical limits
+- Security audit storage and retention
+- Final plugin-management UI
+- Formal sandbox-security claims
+
+## Plugin System Open-Source Record
+
+- Version-1 external plugins are declarative and use only AL NOTE-owned interpreters.
+- Trusted Dart extensions remain compiled application source.
+- A future WebAssembly boundary may be studied, but no runtime is selected.
+- `.alnote-plugin` is conceptually ZIP-based, but no archive dependency is accepted.
+- SPDX-oriented declarations support review but do not automatically determine legal compatibility.
+- No plugin, archive, signature, cryptography, WebAssembly, marketplace, or sandboxing dependency is accepted.
+
 ## Roadmap
 
-- Settings and Preferences — Accepted with modifications
-- Plugin System — Next subsystem
+- Plugin System — Accepted with modifications
+- Search and Indexing — Next subsystem
 - Recognition, Math Recognition, Symbolic Math, and optional Sync/Cloud — Post-v1
