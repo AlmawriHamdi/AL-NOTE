@@ -19,7 +19,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | Shape Object System | Accepted with modifications | Owns built-in shape kinds, intrinsic geometry, styles, validation, and migrations |
 | PDF System | Accepted with modifications | Owns immutable PDF sources, page references, bindings, and engine-neutral PDF contracts |
 | Import and Export System | Accepted with modifications | Owns external-content orchestration, immutable plans and snapshots, and safe publication |
-| Application State and Document Sessions | Next subsystem | Will define open-document sessions, active state, lifecycle, and multi-window coordination |
+| Application State and Document Sessions | Accepted with modifications | Owns logical document sessions, shared state, view associations, lifecycle coordination, and restoration |
+| User Interface Architecture | Next subsystem | Will define presentation, navigation, accessibility, and platform-responsive UI boundaries |
 | Recognition, Mathematics, and Optional Sync/Cloud | Post-v1 | Official future goals preserved by version-1 architecture without premature implementation |
 
 ## Object System
@@ -418,6 +419,39 @@ Detailed architecture is recorded in:
 - [lib/documents/import/README.md](lib/documents/import/README.md)
 - [lib/documents/export/README.md](lib/documents/export/README.md)
 
+## Application State and Document Sessions
+
+Application State coordinates logical open documents, attached views, focused-view state, lifecycle distribution, application-wide limits, and bounded workspace restoration.
+
+### Accepted Ownership Boundaries
+
+- One Document Session represents one logical open working document.
+- Application State owns the Session registry, view associations, focused-view coordination, lifecycle distribution, and application-wide limits.
+- A Session coordinates the immutable document root, Commands, document-wide history, saved-state identity, Storage source, external fingerprint, Recovery writer, PDF unlock state, asynchronous operations, and attached views.
+- Persistent document, Session, view, application, Settings, Recovery, and restoration state remain separate.
+- Runtime Session IDs, restoration metadata, history, selections, Tools, viewports, passwords, caches, and fingerprints never enter persistent `.alnote` content.
+- Canonically equivalent sources normally share one logical Session unless a separate copy is explicitly requested.
+- Multiple views may share one Session while navigation, selection, Tools, editors, viewports, input ownership, and previews remain view-specific.
+- Commands from every attached view publish one shared immutable root; undo and redo remain document-scoped.
+- Active references are repaired deterministically using stable identities, previous ordering, valid parentage, and explicit no-target states.
+- Lifecycle, readiness, access, fidelity, and external-source state remain independent axes.
+- Dirty state depends only on current and saved content-state identity.
+- Save and Save As publish immutable captured states while newer editing may continue.
+- Canonical publications are serialized per Session.
+- Export remains non-mutating and uses one immutable snapshot.
+- Import destinations, capabilities, staged resources, and freshness are revalidated before Command publication.
+- External-source state remains separate from dirty state and never causes silent overwrite or reload.
+- Read-only and degraded remain independent.
+- PDF unlocking secrets remain per-resource, Session-scoped, and memory-only.
+- Close and conflict handling use structured, freshness-validated decision requests independent of UI presentation.
+- Recovery protects committed work while workspace restoration reconstructs Sessions and views.
+- Platform lifecycle callbacks remain best-effort adapter signals rather than durability guarantees.
+- Operations use structured results, cooperative cancellation, and freshness validation.
+- Resource use, restoration, concurrency, and dependencies remain bounded by centralized security policies.
+- No state-management or window-management dependency is accepted.
+
+The detailed architecture is recorded in [lib/documents/sessions/README.md](lib/documents/sessions/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -646,6 +680,28 @@ Detailed architecture is recorded in:
 | D-227 | Export | Export metadata uses privacy-safe defaults | Accepted | Security, Privacy |
 | D-228 | Import/Export | Plugin importers and exporters remain declarative and constrained | Accepted | Plugin System |
 | D-229 | Import/Export | Additional formats, cloud sources, and advanced export features are postponed | Deferred | Post-v1 systems |
+| D-230 | Sessions | Application State owns the registry of logical Document Sessions, view associations, focused-view coordination, lifecycle distribution, and application-wide limits. | Accepted | Application architecture |
+| D-231 | Sessions | Runtime Session IDs are opaque, process-lifetime identities distinct from document, source, view, and durable restoration identities. | Accepted | Security |
+| D-232 | Sessions | Durable workspace restoration uses separate versioned Restoration Entry identities; restored documents receive new runtime Session IDs. | Accepted | Recovery, Storage |
+| D-233 | Sessions | Opening an already-open canonical source normally reuses its logical session; separate working copies require an explicit operation. | Accepted | Storage |
+| D-234 | Sessions | Multiple views may share one logical session, immutable root, Commands, history, saved state, Recovery writer, source state, and document-scoped jobs. | Accepted | Commands, Recovery |
+| D-235 | Sessions | Navigation, active Tool, selection, viewport, input ownership, editors, and previews remain view-specific temporary state. | Accepted | Drawing, Interaction |
+| D-236 | Sessions | Persistent document, session, view, application, Settings, Recovery, and restoration state remain separate ownership domains. | Accepted | Global boundaries |
+| D-237 | Sessions | Active view references are repaired deterministically by stable identity, previous ordering, valid parentage, and explicit no-target states. | Accepted | Pages, Layers |
+| D-238 | Sessions | Lifecycle, readiness, access, fidelity, and external-source state are independent axes rather than one combined enumeration. | Accepted | Session model |
+| D-239 | Sessions | Command revisions, content identities, session revisions, view revisions, saved identities, Recovery sequences, source epochs, and job freshness remain distinct. | Accepted | Commands, Recovery |
+| D-240 | Sessions | Dirty state is determined only by comparing the current content-state identity with the last successfully saved content-state identity. | Accepted | Commands, Storage |
+| D-241 | Sessions | Save and Save As operate on immutable captured states while later edits may continue; successful publication marks only the captured state as saved. | Accepted | Storage, Commands |
+| D-242 | Sessions | Canonical publications are serialized per logical session; stale or failed Save As operations cannot rebind the session source. | Accepted | Storage |
+| D-243 | Sessions | Import destinations and staged resources are revalidated immediately before Command publication; stale plans fail unless deterministic revalidation is authorized. | Accepted | Import, Commands |
+| D-244 | Sessions | Export uses one immutable snapshot and never changes document state, dirty state, Recovery, or Command History. | Accepted | Export |
+| D-245 | Sessions | External-source changes remain separate from dirty state and prohibit silent reload or overwrite; overwrite authorization is fingerprint-bound and expiring. | Accepted | Storage, Security |
+| D-246 | Sessions | Unsaved-change and conflict handling use structured, freshness-validated decision requests independent of UI presentation. | Accepted | UI, Storage |
+| D-247 | Sessions | Recovery protects committed document work while bounded workspace restoration reconstructs sessions and views; neither replaces the other. | Accepted | Recovery |
+| D-248 | Sessions | Read-only and degraded states are independent; non-writable or locked sources do not automatically prohibit safe in-memory annotation editing. | Accepted | PDF, Storage |
+| D-249 | Sessions | PDF unlocking state is session-scoped per resource, memory-only, and excluded from documents, Recovery, restoration, history, logs, and disk caches. | Accepted | PDF, Security |
+| D-250 | Sessions | Platform lifecycle and restoration APIs remain best-effort adapters; forced termination safety depends on previously completed Recovery data. | Accepted | Recovery, Platforms |
+| D-251 | Sessions | Session restoration, concurrency, resource use, cancellation, stale results, and dependencies are bounded by centralized security and capability policies. | Accepted | Security, Platforms |
 
 ## Deferred Object System Questions
 
@@ -1006,8 +1062,34 @@ Every dependency and bundled binary requires a pinned transitive-license, securi
 
 No external Import or Export dependency is accepted.
 
+## Deferred Application State and Document Sessions Questions
+
+- Exact Dart types
+- State-management package
+- Window-management package
+- Exact restoration encoding
+- Exact numerical resource limits
+- Cross-process editing locks
+- Remote-source semantics
+- Sync and collaboration
+- Persistent Settings schema
+- UI presentation
+- Plugin loading and trust
+- Default restoration of viewport and active Tool
+- Long-lived background saving on mobile and Web
+
+## Application State and Document Sessions Open-Source Record
+
+- Flutter is BSD-3-Clause and may provide lifecycle, focus, exit-request, and restoration primitives behind AL NOTE-owned adapters.
+- Flutter lifecycle callbacks are not durability guarantees.
+- Rnote is GPL-3.0-or-later and is a conceptual multi-document handwriting reference.
+- Xournal++ is GPL-2.0-or-later and is a conceptual autosave and handwriting-document reference; direct reuse requires file-level auditing.
+- Krita is GPLv3-compatible and is a conceptual multi-view, recovery, and document-lifecycle reference.
+- LibreOffice provides useful Save, AutoRecovery, and multi-document concepts, but direct reuse is unsuitable and individual licensing still requires auditing.
+- No state-management or window-management dependency is accepted.
+
 ## Roadmap
 
-- Import and Export System — Accepted with modifications
-- Application State and Document Sessions — Next subsystem
+- Application State and Document Sessions — Accepted with modifications
+- User Interface Architecture — Next subsystem
 - Recognition, Math Recognition, Symbolic Math, and optional Sync/Cloud — Post-v1
