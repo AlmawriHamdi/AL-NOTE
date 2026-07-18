@@ -21,7 +21,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | Import and Export System | Accepted with modifications | Owns external-content orchestration, immutable plans and snapshots, and safe publication |
 | Application State and Document Sessions | Accepted with modifications | Owns logical document sessions, shared state, view associations, lifecycle coordination, and restoration |
 | User Interface Architecture | Accepted with modifications | Owns adaptive presentation, semantic Action surfaces, focus, accessibility, and platform-responsive UI composition |
-| Settings and Preferences | Next subsystem | Will define persistent user preferences, profiles, defaults, and settings ownership |
+| Settings and Preferences | Accepted with modifications | Owns typed preferences, scopes, profiles, presets, validation, migration, transactions, and change observation |
+| Plugin System | Next subsystem | Will define plugin identity, packaging, trust, permissions, loading, and extension registration |
 | Recognition, Mathematics, and Optional Sync/Cloud | Post-v1 | Official future goals preserved by version-1 architecture without premature implementation |
 
 ## Object System
@@ -491,6 +492,38 @@ The User Interface presents immutable application, Session, and view state and e
 
 The detailed User Interface architecture is recorded in [lib/ui/README.md](lib/ui/README.md).
 
+## Settings and Preferences
+
+Settings stores user-configurable defaults, preferences, profiles, and presets without becoming document, Session, Recovery, credential, security-policy, capability, or build-time state.
+
+### Accepted Ownership Boundaries
+
+- Version 1 supports persistent user and device-local scopes; persistent workspace scope remains deferred.
+- Built-in Settings use stable `alnote.settings.*` keys and code-owned typed definitions.
+- Plugin namespace allocation remains deferred to the Plugin System.
+- Effective values resolve validated preview, permitted device override, user override, and built-in default before mandatory constraints are enforced.
+- One logical repository contains separately versioned domain records.
+- AL NOTE owns transactional repository, snapshot, change-feed, external-change, adapter, and secret-reference contracts.
+- Stored records contain versioned overrides rather than authoritative copies of defaults.
+- Validation applies during loading, drafts, imports, external changes, and plugin-record activation.
+- Migrations are deterministic, bounded, transactional, tested, and last-known-good preserving.
+- Unknown and absent-plugin Settings remain bounded, preserved, inactive, and non-executable.
+- Consumers receive immutable snapshots and typed changes with declared application timing.
+- Preview, Apply, Cancel, and Reset use private validated draft transactions.
+- Interaction profiles and Tool presets capture immutable snapshots for active sequences and gestures.
+- Appearance and accessibility preferences cannot weaken mandatory accessibility requirements.
+- Recovery and creation defaults remain preferences; applied creation defaults become document content.
+- Import and Export defaults enter explicit validated operation plans.
+- Preference profiles use a separate bounded, versioned, secret-free format.
+- Ordinary Settings never store secrets; only opaque Security-owned references may be retained.
+- Cross-process and cross-tab writes use optimistic revisions without silent last-writer-wins.
+- Corruption is preserved for recovery or diagnosis and is never silently overwritten.
+- Settings parsing, storage, migration, imports, namespaces, and events are resource-bounded.
+- Eligible user records preserve boundaries for future Sync without implementing transport or merge.
+- No Settings backend or dependency is accepted.
+
+The detailed Settings architecture is recorded in [lib/app/settings/README.md](lib/app/settings/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -763,6 +796,33 @@ The detailed User Interface architecture is recorded in [lib/ui/README.md](lib/u
 | D-271 | UI | Multiple-window and split-view support remain capability-dependent; the architecture supports them without requiring identical version-1 behavior on every platform. | Accepted | Sessions, Platforms |
 | D-272 | UI | Future plugin UI contributions are declarative and constrained; unrestricted widget injection and platform or Session access are prohibited. | Accepted | Plugin System |
 | D-273 | UI | UI contracts remain testable with fakes, and no third-party state-management, docking, windowing, shortcut, or UI-extension dependency is accepted. | Accepted | Testing, Open-source evaluation |
+| D-274 | Settings | Settings owns typed user preferences, device-local overrides, profiles, presets, validation, migration, transactions, and change observation without becoming document, Session, Recovery, or security-policy state. | Accepted | Global boundaries |
+| D-275 | Settings | Version 1 supports persistent user and device-local scopes; persistent workspace scope remains deferred. | Accepted | Sessions, Future Sync |
+| D-276 | Settings | Built-in Settings use stable `alnote.settings.*` keys; plugin namespace allocation remains owned by the future Plugin System. | Accepted | Identity conventions, Plugins |
+| D-277 | Settings | Every Setting has a code-owned typed definition covering version, default, permitted scopes, validation, sensitivity, timing, limits, migration, and ownership. | Accepted | Validation |
+| D-278 | Settings | Effective values resolve preview, permitted device override, user override, and built-in default, then apply mandatory security, preservation, capability, accessibility, and resource constraints. | Accepted | Security, Platforms |
+| D-279 | Settings | One logical repository uses separately versioned domain records rather than one unstructured object or one physical file per Setting. | Accepted | Persistence |
+| D-280 | Settings | Settings persistence uses AL NOTE-owned transactional repository and adapter contracts that report actual durability and atomicity capabilities. | Accepted | Platforms |
+| D-281 | Settings | `shared_preferences` is not the canonical structured Settings store and may only be reconsidered for noncritical bootstrap hints. | Accepted | Open-source evaluation |
+| D-282 | Settings | Stored values, drafts, imports, external changes, and plugin records are validated; migrations are deterministic, bounded, transactional, and last-known-good preserving. | Accepted | Persistence, Plugins |
+| D-283 | Settings | Unknown and absent-plugin Settings remain bounded, preserved, inactive, and non-executable until an approved owner validates them. | Accepted | Plugins, Security |
+| D-284 | Settings | Consumers observe immutable snapshots and typed changes; every Setting declares safe application timing and cannot retroactively alter active operations. | Accepted | Application State |
+| D-285 | Settings | Preview, Apply, Cancel, and Reset operate through private validated draft transactions; reset removes overrides rather than storing copied defaults. | Accepted | UI |
+| D-286 | Settings | Interaction Mapping profiles are structured Settings; input sequences capture a profile snapshot at start and gesture ownership freezes after commitment. | Accepted | Interaction Mapping |
+| D-287 | Settings | Tool presets are versioned Settings records; active gestures retain their starting preset snapshot and committed content remains self-sufficient. | Accepted | Drawing Tools |
+| D-288 | Settings | Appearance and accessibility preferences remain outside documents and cannot weaken operating-system accessibility requirements or mandatory UI accessibility rules. | Accepted | UI, Accessibility |
+| D-289 | Settings | Recovery and document-creation defaults remain preferences; applied creation defaults become document data while Recovery data never becomes Settings. | Accepted | Recovery, Documents |
+| D-290 | Settings | Import and Export defaults are captured into explicit validated plans and cannot bypass preflight, safety, preservation, or limits. | Accepted | Import, Export |
+| D-291 | Settings | Ordinary Settings never contain secrets; only opaque secret references may be stored and resolved through a Security-owned contract. | Accepted | Security |
+| D-292 | Settings | Cross-process and cross-tab commits use optimistic revisions; deterministic non-overlapping changes may rebase, while conflicts require structured resolution and never silent last-writer-wins. | Accepted | Platforms |
+| D-293 | Settings | Preference profiles use a separate bounded, versioned, secret-free format owned by Settings and reuse platform source and destination capabilities without becoming document formats. | Accepted | Platforms, Security |
+| D-294 | Settings | Settings parsing, storage, imports, migrations, namespaces, and change feeds are resource-bounded and cannot weaken mandatory invariants. | Accepted | Security |
+| D-295 | Settings | Eligible user-scope records preserve stable identity, scope, revisions, provenance, and deterministic encoding for future Sync without implementing transport or merge. | Accepted | Future Sync |
+| D-296 | Settings | Load failure preserves damaged data, attempts verified last-known-good recovery, otherwise uses temporary defaults, and never silently overwrites corruption. | Accepted | Persistence |
+| D-297 | Settings | Individual and category reset remove known overrides; factory reset preserves unknown plugin records unless their separate removal is explicitly confirmed. | Accepted | Plugins, UI |
+| D-298 | Settings | Every persistence adapter must pass shared tests for resolution, validation, migration, corruption, concurrency, import, security, and failure behavior. | Accepted | Testing |
+| D-299 | Settings | Platform-independent Settings ownership belongs under `lib/app/settings/`; concrete persistence remains behind platform adapters. | Accepted | Repository architecture |
+| D-300 | Settings | No Settings backend or dependency is accepted; SQLite, IndexedDB, and narrowly scoped platform stores remain audited candidates. | Accepted | Open-source evaluation |
 
 ## Deferred Object System Questions
 
@@ -1180,8 +1240,34 @@ No external Import or Export dependency is accepted.
 - WAI-ARIA Authoring Practices guide Web semantics where applicable.
 - No third-party UI dependency is accepted.
 
+## Deferred Settings and Preferences Questions
+
+- Persistent workspace scope
+- Remote Settings synchronization
+- Account profiles
+- Cross-device conflict merging
+- Complete secret-store architecture
+- Plugin trust, sandboxing, and lifecycle
+- Exact Settings encoding
+- Exact database backend and package
+- Final numeric limits
+- Final default values
+- Settings-screen design
+
+## Settings and Preferences Open-Source Record
+
+- Flutter `shared_preferences` is BSD-3-Clause and cross-platform but is intended for simple key-value data and does not guarantee durable completion; it is not accepted as the canonical Settings store.
+- SQLite is public domain and is a leading native transactional candidate, but no Flutter binding or bundled binary is accepted.
+- IndexedDB is the leading transactional Web candidate, but no Dart or Flutter adapter is accepted.
+- Platform preference stores may be considered only for narrow noncritical uses.
+- Rnote is GPL-3.0-or-later and is a conceptual Settings and Tool-preset reference.
+- Xournal++ is a conceptual Settings, stylus, and PDF-workflow reference; direct reuse requires exact file-level licensing review.
+- Krita is a conceptual Tool-preset, backup, and configuration-reset reference.
+- LibreOffice is a conceptual layered-configuration reference and is unsuitable for direct reuse.
+- No Settings dependency is accepted.
+
 ## Roadmap
 
-- User Interface Architecture — Accepted with modifications
-- Settings and Preferences — Next subsystem
+- Settings and Preferences — Accepted with modifications
+- Plugin System — Next subsystem
 - Recognition, Math Recognition, Symbolic Math, and optional Sync/Cloud — Post-v1
