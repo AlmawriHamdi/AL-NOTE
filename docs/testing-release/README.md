@@ -306,3 +306,17 @@ CodeQL does not support Dart. No automatic dependency merging is accepted. No ex
 - Recognition and Math Recognition
 - Symbolic Math
 - Sync and Cloud
+
+## Phase 0 verification baseline
+
+The repository baseline is expected to run:
+
+- `dart format --output=none --set-exit-if-changed lib test`
+- `flutter analyze --fatal-infos`
+- `flutter test`
+- `flutter build linux --debug`
+- `flutter build windows --debug`
+- `flutter build apk --debug`
+- `flutter build web`
+
+CI workflows must pin GitHub Actions by full commit SHA and must not introduce unreviewed runtime dependencies.

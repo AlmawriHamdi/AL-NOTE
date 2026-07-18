@@ -1,0 +1,25 @@
+name: al_note
+description: AL NOTE is an open-source, cross-platform handwriting, note-taking, and PDF annotation application.
+publish_to: none
+version: 0.1.0+1
+
+license: GPL-3.0-or-later
+homepage: https://github.com/AlmawriHamdi/AL-NOTE
+repository: https://github.com/AlmawriHamdi/AL-NOTE
+issue_tracker: https://github.com/AlmawriHamdi/AL-NOTE/issues
+
+environment:
+  sdk: 3.12.2
+  flutter: 3.44.6
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: 6.0.0
+
+flutter:
+  uses-material-design: true

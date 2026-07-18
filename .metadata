@@ -1,0 +1,30 @@
+# This file tracks properties of this Flutter project.
+# Used by Flutter tool to assess capabilities and perform upgrades etc.
+version:
+  revision: "flutter-3.44.6"
+  channel: "stable"
+
+project_type: app
+
+migration:
+  platforms:
+    - platform: root
+      create_revision: flutter-3.44.6
+      base_revision: flutter-3.44.6
+    - platform: android
+      create_revision: flutter-3.44.6
+      base_revision: flutter-3.44.6
+    - platform: linux
+      create_revision: flutter-3.44.6
+      base_revision: flutter-3.44.6
+    - platform: web
+      create_revision: flutter-3.44.6
+      base_revision: flutter-3.44.6
+    - platform: windows
+      create_revision: flutter-3.44.6
+      base_revision: flutter-3.44.6
+
+  unmanaged_files:
+    - 'lib/main.dart'
+    - 'linux/CMakeLists.txt'
+    - 'windows/CMakeLists.txt'
