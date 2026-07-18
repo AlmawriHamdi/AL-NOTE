@@ -14,7 +14,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | Autosave and Recovery | Accepted with modifications | Owns recovery scheduling, checkpoints, journals, reconstruction, and cleanup |
 | Drawing Tool System | Accepted with modifications | Converts assigned normalized input into previews and atomic Command Requests |
 | Interaction Mapping System | Accepted with modifications | Owns semantic action mapping, arbitration, pointer ownership, and binding profiles |
-| Text Object System | Next subsystem | Will define persistent text objects, editing boundaries, and layout contracts |
+| Text Object System | Accepted with modifications | Owns persistent Unicode text, constrained formatting, layout, and editing contracts |
+| Image Object System | Next subsystem | Will define persistent image objects, resources, decoding, and display contracts |
 
 ## Object System
 
@@ -199,6 +200,39 @@ The Interaction Mapping System converts normalized input into one authorized sem
 
 The detailed Interaction Mapping architecture is recorded in [lib/core/interaction/README.md](lib/core/interaction/README.md).
 
+## Text Object System
+
+The Text Object System provides searchable, accessible, editable Unicode text as transformable Page Objects using the built-in identity `alnote.text`.
+
+### Accepted Ownership Boundaries
+
+- Text Objects use the accepted common Object envelope without duplicating the type-schema version.
+- Version 1 uses constrained rich text with ordered paragraphs and styled runs.
+- Logical Unicode text and explicit paragraph boundaries are authoritative.
+- Soft wrapping, glyphs, caret maps, and layout fragments are derived.
+- Character styles provide controlled built-in formatting.
+- Paragraph styles include alignment, direction, line height, and optional BCP 47 language hints.
+- Persistent ranges use paragraph position, Unicode-scalar boundaries, and expected object revision.
+- Ordinary editing respects extended grapheme-cluster boundaries.
+- Text boxes support bounded auto-size, fixed-width automatic-height, and fixed-box modes.
+- Box resizing reflows text while common transform scaling does not.
+- Fonts use open-licensed bundled baselines, legal embedded resources, system requests, and controlled fallback.
+- Arbitrary system fonts are never embedded automatically.
+- AL NOTE owns a platform-independent layout contract over maintained Unicode-aware services.
+- Editor sessions own temporary drafts, caret, selection, IME, and layout state.
+- Persistent edits commit through Commands with bounded latency.
+- Command History provides semantic typing coalescing without weakening Recovery.
+- Stale edits are rejected and preserved without automatic merge or rebase.
+- Clipboard input is sanitized before Command submission.
+- Rendering, Search, accessibility, hit-testing, and export consume controlled Text contracts.
+- Corrupt or unknown payloads remain preserved; fallback display does not silently rewrite them.
+- Version 1 authoritative styles and layout semantics are built-in only.
+- Structured mathematics remains separate from ordinary Unicode Text Objects.
+- Text Object architecture belongs under `lib/documents/objects/text/`.
+- No external editor library is accepted.
+
+The detailed Text Object System architecture is recorded in [lib/documents/objects/text/README.md](lib/documents/objects/text/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -318,6 +352,25 @@ The detailed Interaction Mapping architecture is recorded in [lib/core/interacti
 | D-118 | Interaction | Plugin actions use restricted dispatch and unavailable bindings are preserved | Accepted | Plugins |
 | D-119 | Interaction | Interaction architecture belongs under `lib/core/interaction/` using neutral contracts | Accepted | Core |
 | D-120 | Interaction | Exact defaults, thresholds, calibration, diagnostics, native work, and dependencies remain deferred | Deferred | Settings, Testing, Platforms |
+| D-121 | Text | Built-in Text Objects use `alnote.text` and the common Object envelope | Accepted | Objects |
+| D-122 | Text | Version 1 uses constrained rich text with ordered paragraphs and styled runs | Accepted | D-121 |
+| D-123 | Text | Logical Unicode text and explicit paragraph boundaries are authoritative; soft wraps are derived | Accepted | Serialization |
+| D-124 | Text | Version 1 ranges use paragraph position, Unicode-scalar boundaries, and expected object revision | Accepted | Commands |
+| D-125 | Text | Text boxes support bounded auto-size, fixed-width auto-height, and fixed-box modes | Accepted | Geometry |
+| D-126 | Text | Box resizing reflows text while common transform scaling does not | Accepted | Objects, Selection |
+| D-127 | Text | Glyphs, wraps, caret maps, and layout fragments are derived data | Accepted | Rendering |
+| D-128 | Text | Fonts use bundled open-licensed baselines, legal embedded resources, and controlled fallback | Accepted | Resources, Storage |
+| D-129 | Text | AL NOTE owns a platform-independent layout contract over maintained text services | Accepted | Rendering, Platforms |
+| D-130 | Text | Editor sessions own drafts, caret, ranges, IME, and temporary editing state | Accepted | Interaction, Sessions |
+| D-131 | Text | Persistent edits commit with bounded latency and History provides semantic coalescing | Accepted | Commands, Recovery |
+| D-132 | Text | Stale edits are rejected and preserved without automatic merge or rebase | Accepted | Commands |
+| D-133 | Text | Clipboard input is sanitized into plain, internal, or constrained built-in rich text | Accepted | Security, Import |
+| D-134 | Text | Rendering, Search, accessibility, hit-testing, and export consume controlled Text contracts | Accepted | Drawing, Search, Export |
+| D-135 | Text | Corrupt or unknown Text payloads remain preserved; repair is explicit | Accepted | Storage, Recovery |
+| D-136 | Text | Version 1 authoritative Text styles and layout semantics are built-in only | Accepted | Plugins |
+| D-137 | Text | Structured mathematics remains separate from ordinary Unicode Text Objects | Accepted | Math Recognition, Symbolic Math |
+| D-138 | Text | Text Object architecture belongs under `lib/documents/objects/text/` | Accepted | Objects |
+| D-139 | Text | Exact fonts, editor libraries, layout profile, advanced formatting, and dependencies remain deferred | Deferred | Testing, Platforms, Settings |
 
 ## Deferred Object System Questions
 
@@ -502,6 +555,44 @@ The detailed Interaction Mapping architecture is recorded in [lib/core/interacti
 - libinput is a Linux behavioral reference, not a shared-logic dependency.
 - No new Interaction Mapping dependency is accepted.
 
+## Deferred Text Object System Questions
+
+- Lists and indentation
+- Hyperlinks
+- Text highlighting
+- Semantic headings
+- Superscript and subscript
+- Collaborative text anchors
+- Automatic stale-draft merging
+- Embedded-font subsetting
+- Exact bundled fonts
+- Advanced OpenType features
+- Vertical writing
+- Spell-check configuration
+- Text flow between objects
+- Inline objects
+- Structured mathematics
+- Deterministic export layout profile
+- Exact editor and layout dependencies
+- Exact resource limits
+- Full language-tagging policy
+
+## Text Object System Open-Source Record
+
+- Flutter is BSD-3-Clause and may provide editing, IME, and engine integration behind adapters.
+- Skia uses a permissive BSD-style license and is a layout and rendering reference.
+- HarfBuzz is MIT-licensed and is a shaping reference.
+- ICU and Unicode algorithms provide permissively licensed behavioral baselines.
+- Rnote is GPL-3.0-or-later and is a note-application reference.
+- Xournal++ is displayed as GPL-2.0; direct reuse requires file-level licensing review.
+- ProseMirror is MIT-licensed, but its browser document model is too broad.
+- Quill and Delta offer useful change concepts but are not the version-1 persistent format.
+- Flutter Quill is MIT-licensed and may be evaluated only as an editing adapter.
+- AppFlowy Editor currently reports dual AGPL-3.0/MPL-2.0 licensing and is not selected.
+- Super Editor and Fleather require exact license, maintenance, IME, and platform verification before adoption.
+- No external editor library is accepted.
+- No editor library may define AL NOTE's persistent Text format.
+
 ## Roadmap
 
-The Text Object System subsystem is next.
+The Image Object System subsystem is next.
