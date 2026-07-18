@@ -20,7 +20,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | PDF System | Accepted with modifications | Owns immutable PDF sources, page references, bindings, and engine-neutral PDF contracts |
 | Import and Export System | Accepted with modifications | Owns external-content orchestration, immutable plans and snapshots, and safe publication |
 | Application State and Document Sessions | Accepted with modifications | Owns logical document sessions, shared state, view associations, lifecycle coordination, and restoration |
-| User Interface Architecture | Next subsystem | Will define presentation, navigation, accessibility, and platform-responsive UI boundaries |
+| User Interface Architecture | Accepted with modifications | Owns adaptive presentation, semantic Action surfaces, focus, accessibility, and platform-responsive UI composition |
+| Settings and Preferences | Next subsystem | Will define persistent user preferences, profiles, defaults, and settings ownership |
 | Recognition, Mathematics, and Optional Sync/Cloud | Post-v1 | Official future goals preserved by version-1 architecture without premature implementation |
 
 ## Object System
@@ -452,6 +453,44 @@ Application State coordinates logical open documents, attached views, focused-vi
 
 The detailed architecture is recorded in [lib/documents/sessions/README.md](lib/documents/sessions/README.md).
 
+## User Interface Architecture
+
+The User Interface presents immutable application, Session, and view state and emits the semantic Actions already accepted by Interaction Mapping.
+
+### Accepted Ownership Boundaries
+
+- Flutter Widgets and presentation controllers never directly mutate persistent documents.
+- UI and concrete platform adapters are outer layers that depend inward on AL NOTE-owned contracts.
+- Application composition selects and injects concrete platform implementations.
+- The UI owns visual composition, adaptive layout, presentation state, focus scopes, Action presentation, accessibility semantics, progress, status, and structured-decision presentation.
+- The UI does not own persistent document truth, Document Sessions, Command rules, gesture arbitration, Tool behavior, Storage, Recovery, Import, Export, persistent Settings, or platform-service implementations.
+- Document View is the reusable view-specific presentation unit for tabs, panes, windows, and mobile document surfaces.
+- Session-wide state remains separate from view, window, panel, overlay, focus, and preference state.
+- Compact, medium, and expanded layouts are chosen from available space and capabilities rather than operating-system identity.
+- Notebook, Page, Layer, selection, and Tool surfaces invoke shared semantic Actions across all layouts.
+- UI descriptors add labels, icons, enablement, selection state, scopes, and placement hints without creating a competing Action registry.
+- Persistent UI operations publish through validated Command Requests.
+- Copy remains non-mutating; cut and destructive paste replacements publish through Commands.
+- Active editors have first shortcut precedence and retain standard editing shortcuts.
+- Canvas input passes through normalization, Interaction Mapping, gesture ownership, and Tool or Action routing.
+- Canvas widgets do not duplicate drawing gesture arbitration.
+- Content, previews, Selection, feedback, contextual controls, and accessibility focus occupy separate non-mutating presentation planes.
+- A future overlay plane may support snapping, but snapping remains deferred.
+- Tools expose only backend-neutral declarative option descriptors, never unrestricted Flutter widgets.
+- Structured-decision presentation preserves tokens, permitted resolutions, freshness, expiration, cancellation, and validation.
+- Read-only, loading, saving, Recovery, degraded, external-change, missing-resource, and unknown-content states receive explicit non-destructive presentation.
+- WCAG 2.2 AA is the Web design and testing target, but formal conformance is not claimed without an audit.
+- Canvas semantics do not falsely represent handwriting as recognized text.
+- Localization, RTL, theme, density, text scale, reduced motion, and responsive arrangement remain outside document content.
+- Drag-and-drop, clipboard, pickers, and sharing cross typed subsystem boundaries.
+- High-frequency repaint, virtualization, lazy thumbnails, culling, bounded prefetch, and throttling prevent broad unnecessary rebuilding.
+- Platform adapters expose capabilities rather than domain policy.
+- Multiple-window and split-view support remain capability-dependent.
+- Future plugin UI contributions remain declarative and constrained.
+- No third-party state-management, docking, windowing, shortcut, or UI-extension dependency is accepted.
+
+The detailed User Interface architecture is recorded in [lib/ui/README.md](lib/ui/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -702,6 +741,28 @@ The detailed architecture is recorded in [lib/documents/sessions/README.md](lib/
 | D-249 | Sessions | PDF unlocking state is session-scoped per resource, memory-only, and excluded from documents, Recovery, restoration, history, logs, and disk caches. | Accepted | PDF, Security |
 | D-250 | Sessions | Platform lifecycle and restoration APIs remain best-effort adapters; forced termination safety depends on previously completed Recovery data. | Accepted | Recovery, Platforms |
 | D-251 | Sessions | Session restoration, concurrency, resource use, cancellation, stale results, and dependencies are bounded by centralized security and capability policies. | Accepted | Security, Platforms |
+| D-252 | UI | UI uses Widgets, presentation controllers, semantic Action dispatch, and application/domain contracts without directly mutating documents. | Accepted | Sessions, Commands |
+| D-253 | UI | UI and concrete platform adapters are outer layers that depend inward on AL NOTE-owned contracts; domain subsystems never depend on concrete adapters. | Accepted | Global architecture |
+| D-254 | UI | Document View is the reusable view-specific presentation unit for tabs, panes, windows, and mobile document surfaces. | Accepted | Sessions |
+| D-255 | UI | Session-wide state remains separate from window, view, overlay, and preference presentation state. | Accepted | Sessions, Settings |
+| D-256 | UI | Layout adapts by available space, capabilities, input modes, text scale, and accessibility settings rather than operating-system identity. | Accepted | Platforms |
+| D-257 | UI | The application shell presents workspaces, windows, views, status, decisions, localization, theme, and accessibility without owning Document Sessions. | Accepted | Application State |
+| D-258 | UI | Notebook, Page, Layer, selection, and Tool navigation use shared semantic Actions across compact, medium, and expanded layouts. | Accepted | Documents, Interaction |
+| D-259 | UI | UI surfaces reuse the accepted semantic Action identities; UI descriptors add presentation metadata without creating a competing Action registry. | Accepted | Interaction Mapping |
+| D-260 | UI | Persistent UI operations publish only through validated Command Requests; UI and widget-local history never replace document Commands. | Accepted | Commands |
+| D-261 | UI | Windows and Document Views use explicit focus scopes, deterministic focus restoration, and editor-first shortcut precedence. | Accepted | Interaction Mapping, Accessibility |
+| D-262 | UI | Canvas input passes through normalization and Interaction Mapping without duplicate widget-level drawing arbitration. | Accepted | Input, Interaction Mapping |
+| D-263 | UI | Page content, Tool previews, Selection, feedback, contextual controls, and accessibility focus use separate non-mutating presentation planes; snapping remains deferred. | Accepted | Drawing, Selection |
+| D-264 | UI | Structured decision presenters preserve tokens, resolutions, freshness, cancellation, and validation while remaining independent of session-core UI. | Accepted | Sessions |
+| D-265 | UI | Read-only, loading, saving, Recovery, degraded, external-change, missing-resource, and unknown-content states receive explicit non-destructive presentation. | Accepted | Sessions, Recovery |
+| D-266 | UI | WCAG 2.2 AA is the Web design and testing target; Canvas semantics provide meaningful document, Page, Tool, selection, Object, and warning representation without false recognition claims. | Accepted | Accessibility |
+| D-267 | UI | Localization, RTL layout, theme, density, text scale, reduced motion, and responsive arrangement remain presentation concerns outside document content. | Accepted | Settings |
+| D-268 | UI | Drag/drop, clipboard, pickers, and sharing use typed boundaries; cut and destructive paste mutations publish through Commands. | Accepted | Import, Export, Storage, Commands |
+| D-269 | UI | Localized rebuilding, high-frequency repaint isolation, virtualization, lazy thumbnails, culling, bounded prefetch, and throttling are required performance boundaries. | Accepted | Drawing, Sessions |
+| D-270 | UI | Windowing, native menus, pickers, clipboard, drag/drop, sharing, accessibility preferences, and browser restrictions remain capability-based platform adapters. | Accepted | Platforms |
+| D-271 | UI | Multiple-window and split-view support remain capability-dependent; the architecture supports them without requiring identical version-1 behavior on every platform. | Accepted | Sessions, Platforms |
+| D-272 | UI | Future plugin UI contributions are declarative and constrained; unrestricted widget injection and platform or Session access are prohibited. | Accepted | Plugin System |
+| D-273 | UI | UI contracts remain testable with fakes, and no third-party state-management, docking, windowing, shortcut, or UI-extension dependency is accepted. | Accepted | Testing, Open-source evaluation |
 
 ## Deferred Object System Questions
 
@@ -1088,8 +1149,39 @@ No external Import or Export dependency is accepted.
 - LibreOffice provides useful Save, AutoRecovery, and multi-document concepts, but direct reuse is unsuitable and individual licensing still requires auditing.
 - No state-management or window-management dependency is accepted.
 
+## Deferred User Interface Architecture Questions
+
+- Final visual design and branding
+- Exact responsive breakpoints
+- Final default shortcuts
+- User-configurable panel arrangements
+- State-management package
+- Window-management and docking package
+- Exact split-view availability
+- Exact multiple-window platform support
+- Workspace layout restoration
+- Search UI
+- Plugin loading and trust
+- Recognition-derived Canvas descriptions
+- Formal accessibility-conformance claim
+- Platform-native menu implementation details
+- Exact Tool-option descriptor schema
+
+## User Interface Architecture Open-Source Record
+
+- Flutter is BSD-3-Clause and is the accepted UI framework.
+- Flutter Widgets, Semantics, Focus, Actions, Shortcuts, localization, and adaptive facilities may be reused behind AL NOTE-owned boundaries.
+- Flutter architectural guidance is informative rather than a mandatory domain architecture.
+- Rnote is a compatible conceptual reference for stylus-first and adaptive note UI; direct reuse requires exact-file auditing.
+- Xournal++ is a conceptual handwriting and PDF workflow reference; direct reuse requires exact licensing review.
+- Krita is a conceptual reference for Canvas focus, Tool options, panels, workspaces, and large-canvas behavior.
+- LibreOffice is a conceptual reference for command dispatch, accessibility, localization, multiple views, and platform abstraction; direct reuse is unsuitable.
+- WCAG 2.2 is the Web accessibility design and testing baseline.
+- WAI-ARIA Authoring Practices guide Web semantics where applicable.
+- No third-party UI dependency is accepted.
+
 ## Roadmap
 
-- Application State and Document Sessions — Accepted with modifications
-- User Interface Architecture — Next subsystem
+- User Interface Architecture — Accepted with modifications
+- Settings and Preferences — Next subsystem
 - Recognition, Math Recognition, Symbolic Math, and optional Sync/Cloud — Post-v1
