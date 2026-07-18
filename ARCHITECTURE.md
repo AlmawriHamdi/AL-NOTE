@@ -23,7 +23,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | User Interface Architecture | Accepted with modifications | Owns adaptive presentation, semantic Action surfaces, focus, accessibility, and platform-responsive UI composition |
 | Settings and Preferences | Accepted with modifications | Owns typed preferences, scopes, profiles, presets, validation, migration, transactions, and change observation |
 | Plugin System | Accepted with modifications | Owns bounded declarative packages, identities, validation, trust coordination, atomic registries, lifecycle, and preservation |
-| Search and Indexing | Next subsystem | Will define document search, indexing, query, freshness, and provider boundaries |
+| Search and Indexing | Accepted with modifications | Owns derived searchable projections, scanning, memory indexing, query semantics, ranking, results, and freshness reporting |
+| Security and Privacy Architecture | Next subsystem | Will define security policy, threat boundaries, sensitive-data handling, audit ownership, and privacy controls |
 | Recognition, Mathematics, and Optional Sync/Cloud | Post-v1 | Official future goals preserved by version-1 architecture without premature implementation |
 
 ## Object System
@@ -556,6 +557,41 @@ Version-1 external plugins are bounded, validated, declarative packages that con
 
 The detailed Plugin System architecture is recorded in [lib/app/plugins/README.md](lib/app/plugins/README.md).
 
+## Search and Indexing
+
+Searchable projections and indexes are derived, rebuildable views of immutable authoritative content and never become authoritative document state.
+
+### Accepted Ownership Boundaries
+
+- Version 1 guarantees Search over the current Page, current document, and all open Document Sessions.
+- Closed-document collections, filesystem crawling, remote Search, Cloud Search, and synchronized indexes remain deferred.
+- Text and accepted metadata are authoritative searchable sources.
+- PDF-derived text remains a provenance-bearing derived projection supplied by PDF System.
+- Handwriting, image pixels, image-only PDFs, and recognition suggestions are not treated as recognized text.
+- Built-in content owners expose immutable bounded projections through AL NOTE-owned contracts.
+- Unknown, unsupported, unavailable, and missing-handler content receives structured omission reasons.
+- Version 1 uses bounded direct scanning as its semantic reference and a pure-Dart in-memory inverted index as its primary optimization.
+- Optional persistent indexes are sensitive disposable caches outside `.alnote`.
+- No external Search backend or dependency is accepted.
+- Query semantics are typed, bounded, and backend-independent.
+- Normalization preserves mappings to original grapheme-safe source ranges.
+- Ranking and tie-breaking are deterministic.
+- Open-Session Search aggregates independent per-Session identities and generations without global atomicity.
+- Search observes committed immutable transitions and never publishes Commands.
+- Candidate generations publish atomically per independently indexed document or source.
+- Lifecycle, freshness, completeness, availability, and persistence remain independent axes.
+- Locked, omitted, unsupported, unavailable, stale, or partial content cannot be misreported as authoritative no-results.
+- Queries use request identities, pin immutable inputs, cooperate with cancellation, and reject superseded late results.
+- Sessions coordinate document jobs and source freshness while Search owns query and indexing semantics.
+- Recovery never depends on Search data.
+- Indexes, snippets, queries, and extracted text are sensitive.
+- Persistent plaintext indexes require equivalent protection for encrypted documents and unlocked protected PDFs.
+- All projection, indexing, query, result, cache, concurrency, and cancellation work is bounded.
+- Platform behavior is capability-based.
+- Direct scanning is the conformance oracle.
+
+The detailed Search and Indexing architecture is recorded in [lib/search/README.md](lib/search/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -887,6 +923,38 @@ The detailed Plugin System architecture is recorded in [lib/app/plugins/README.m
 | D-330 | Plugins | The Plugin System emits privacy-safe structured audit events while Security owns their storage, retention, and access policy. | Accepted | Security |
 | D-331 | Plugins | Package parsing, activation, lifecycle, preservation, and capability behavior require adversarial and cross-platform conformance testing. | Accepted | Testing |
 | D-332 | Plugins | `lib/app/plugins/` owns Plugin System architecture, with no external plugin-system dependency accepted. | Accepted | Repository architecture |
+| D-333 | Search | Searchable projections and indexes are derived, rebuildable views and never authoritative document state. | Accepted | Global boundaries |
+| D-334 | Search | Version 1 guarantees Search over the current Page, current document, and all open Document Sessions. | Accepted | Sessions |
+| D-335 | Search | Closed-document collections, filesystem crawling, remote search, Cloud search, and synchronized indexes remain deferred. | Deferred | Future Search |
+| D-336 | Search | Version-1 Search indexes authoritative Text and metadata, while PDF text remains a provenance-bearing derived projection and recognition-derived text remains excluded. | Accepted | Text, PDF |
+| D-337 | Search | Built-in content owners expose immutable bounded searchable projections through AL NOTE-owned contracts. | Accepted | Objects |
+| D-338 | Search | Unknown, unsupported, unavailable, and missing-handler content is omitted with structured reasons rather than interpreted by Search. | Accepted | Preservation |
+| D-339 | Search | PDF text extraction remains owned by PDF System, and unlocked protected-PDF text cannot enter persistent plaintext indexes without equivalent protection and explicit policy. | Accepted | PDF, Security |
+| D-340 | Search | Version 1 uses bounded direct scanning as its semantic reference and an AL NOTE-owned pure-Dart in-memory inverted index as its primary optimization. | Accepted | Search engine |
+| D-341 | Search | Persistent indexes are optional capability-dependent sensitive caches outside `.alnote`, bound to opaque document and compatibility identities and always safely rebuildable. | Accepted | Storage, Security |
+| D-342 | Search | No Search backend or dependency is accepted; SQLite FTS5, MiniSearch, Tantivy, Lucene, Joplin, and Xournal++ remain studies or references, while Hivez is rejected for version 1. | Accepted | Open-source evaluation |
+| D-343 | Search | Public query semantics use a typed bounded backend-independent model supporting text, phrases, final-token prefixes, sensitivity controls, and scoped filters. | Accepted | Query model |
+| D-344 | Search | Boolean expression trees, arbitrary wildcards, regex, fuzzy matching, proximity syntax, stemming, and semantic search remain deferred. | Deferred | Future Search |
+| D-345 | Search | One versioned normalization contract preserves mappings from matching representations to original grapheme-safe source ranges. | Accepted | Unicode |
+| D-346 | Search | Ranking and tie-breaking are deterministic, documented, and independent of backend-specific scores. | Accepted | Query model |
+| D-347 | Search | Immutable result occurrences carry query, content, source, projection, range, generation, freshness, completeness, and resolvability identities. | Accepted | Results |
+| D-348 | Search | Open-Session Search aggregates independent per-Session results and generations without claiming global atomicity. | Accepted | Sessions |
+| D-349 | Search | Search incrementally observes committed immutable document transitions and performs broader rebuilding when change descriptions are incomplete. | Accepted | Commands |
+| D-350 | Search | Candidate index changes publish atomically per independently indexed document or source and never expose incomplete builds as current. | Accepted | Index lifecycle |
+| D-351 | Search | Search lifecycle, freshness, completeness, availability, and persistence state remain independent axes. | Accepted | Search state |
+| D-352 | Search | Stale, partial, locked, unsupported, omitted, or unavailable content is disclosed and cannot be misreported as an authoritative no-results outcome. | Accepted | Results |
+| D-353 | Search | Queries use explicit request revisions, pin immutable inputs, cooperate with cancellation, and discard superseded late results. | Accepted | Sessions |
+| D-354 | Search | Sessions coordinate document-scoped Search jobs and source freshness while Search owns indexing and query semantics. | Accepted | Sessions |
+| D-355 | Search | Save does not establish Search freshness, while Save As creates a distinct validated persistent-cache association. | Accepted | Storage |
+| D-356 | Search | Recovery never depends on Search data, and Search rebuilds only from Recovery’s reconstructed committed document root. | Accepted | Recovery |
+| D-357 | Search | Indexes, queries, snippets, and extracted text are sensitive; ordinary logging excludes them and query history is disabled by default. | Accepted | Security, Privacy |
+| D-358 | Search | Persistent plaintext indexes are prohibited for encrypted documents or unlocked protected PDFs unless equivalent protection is explicitly established. | Accepted | Security, PDF |
+| D-359 | Search | Projection, extraction, indexing, query, result, cache, concurrency, and cancellation work is centrally resource-bounded. | Accepted | Security |
+| D-360 | Search | Search persistence and execution are capability-based across Linux, Windows, Android, and Web, including explicit multi-process and multi-tab coordination. | Accepted | Platforms |
+| D-361 | Search | Search exposes presentation-neutral progress, freshness, completeness, warning, result, navigation, cancellation, and accessibility contracts. | Accepted | UI, Accessibility |
+| D-362 | Search | Search failures and cancellation use structured outcomes; corrupt derived caches are discarded or quarantined without risking document content. | Accepted | Failure handling |
+| D-363 | Search | Direct scanning acts as the semantic oracle for indexed-backend conformance, supplemented by adversarial, property, fuzz, Unicode, and cross-platform tests. | Accepted | Testing |
+| D-364 | Search | Search and Indexing architecture belongs under `lib/search/`, with no external Search dependency accepted. | Accepted | Repository architecture |
 
 ## Deferred Object System Questions
 
@@ -1358,8 +1426,37 @@ No external Import or Export dependency is accepted.
 - SPDX-oriented declarations support review but do not automatically determine legal compatibility.
 - No plugin, archive, signature, cryptography, WebAssembly, marketplace, or sandboxing dependency is accepted.
 
+## Deferred Search and Indexing Questions
+
+- Closed and registered document collections
+- User-folder and filesystem indexing
+- Remote, Cloud, and synchronized Search
+- Tags without an authoritative model
+- OCR and handwriting, Math, or symbol recognition
+- Recognition provenance
+- Semantic and vector Search
+- Boolean, proximity, fuzzy, regex, and stemming features
+- Language-specific analyzers
+- Executable plugin Search providers
+- Encrypted persistent-index design
+- Search-result Export
+- Exact resource limits
+- SQLite FTS5, Tantivy, and other persistent backend adoption
+- Final Search UI
+
+## Search and Indexing Open-Source Record
+
+- SQLite FTS5 remains a possible future native persistent-backend study.
+- MiniSearch is a Web architectural reference.
+- Tantivy remains a possible future large native-collection study.
+- Lucene is an architectural reference.
+- Joplin is a behavioral reference.
+- Xournal++ is a PDF-search behavioral reference.
+- Hivez is rejected for version 1 because its storage coupling, adoption, semantic control, and maturity do not justify foundational use.
+- No third-party Search dependency is accepted.
+
 ## Roadmap
 
-- Plugin System — Accepted with modifications
-- Search and Indexing — Next subsystem
+- Search and Indexing — Accepted with modifications
+- Security and Privacy Architecture — Next subsystem
 - Recognition, Math Recognition, Symbolic Math, and optional Sync/Cloud — Post-v1
