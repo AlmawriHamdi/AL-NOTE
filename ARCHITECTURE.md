@@ -25,7 +25,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | Plugin System | Accepted with modifications | Owns bounded declarative packages, identities, validation, trust coordination, atomic registries, lifecycle, and preservation |
 | Search and Indexing | Accepted with modifications | Owns derived searchable projections, scanning, memory indexing, query semantics, ranking, results, and freshness reporting |
 | Security and Privacy Architecture | Accepted with modifications | Owns mandatory security and privacy policy, classification, protection contracts, redaction, audit policy, limits, and safe mode |
-| Performance, Concurrency, and Background Work | Next subsystem | Will define scheduling, bounded concurrency, cancellation, worker execution, memory pressure, and responsiveness |
+| Performance, Concurrency, and Background Work | Accepted with modifications | Owns typed Job scheduling, admission, scopes, fairness, cancellation, progress, backpressure, and resource coordination |
+| Platform Integration and Capability Adapters | Next subsystem | Will define portable platform contracts, capability reporting, concrete adapters, and cross-platform degradation |
 | Recognition, Mathematics, and Optional Sync/Cloud | Post-v1 | Official future goals preserved by version-1 architecture without premature implementation |
 
 ## Object System
@@ -628,6 +629,45 @@ Security and Privacy defines mandatory cross-cutting policy and portable protect
 
 The detailed Security and Privacy architecture is recorded in [lib/core/security/README.md](lib/core/security/README.md).
 
+## Performance, Concurrency, and Background Work
+
+A portable typed Job System coordinates substantial asynchronous work, admission, cancellation, fairness, and freshness without replacing subsystem ownership or authorizing publication.
+
+### Accepted Ownership Boundaries
+
+- Only substantial work needing scheduling, admission, cancellation, progress, supersession, fairness, or worker execution becomes a Job.
+- Jobs use immutable typed requests, results, payload contracts, and publication contracts.
+- Every Job belongs to an application, Session, view, operation, or parent scope.
+- Detached work is rare, application-owned, cancellable, bounded, and unable to retain scoped resources indefinitely.
+- Scheduling uses centrally registered intent classes without hard real-time, preemption, or fixed-latency claims.
+- Global and per-Session limits, fairness, aging, and reserved persistence capacity prevent monopolization.
+- Flutter retains frame and input-loop ownership, and UI-isolate work remains bounded.
+- Required input samples remain preserved while predictions and previews remain non-authoritative.
+- Rendering requests use identity-complete inputs and reject stale results.
+- Execution uses asynchronous I/O, native isolates, Web Worker adapters, and cooperative chunking according to measured capabilities.
+- `Isolate.run`, `compute`, and `TransferableTypedData` are execution tools rather than architectural schedulers or Security boundaries.
+- Worker pools remain bounded and benchmark-gated.
+- Workers receive immutable, typed, bounded, narrowly authorized inputs.
+- Preparation remains separate from owner-controlled validation and serialized publication.
+- Background work and graceful shutdown are best effort and never guaranteed after termination.
+- Restartable work persists only validated declarative checkpoints.
+- Cancellation occurs at bounded semantic boundaries and preserves publication integrity.
+- Supersession and coalescing apply only to eligible derived work.
+- Every producer-consumer boundary defines bounded backpressure and overload behavior.
+- Required committed transitions, Recovery, publication results, and Security audit events are never silently dropped.
+- Resource admission consumes immutable Security policy and reservations release exactly once.
+- Memory pressure sacrifices derived and opportunistic work before authoritative state or required Recovery.
+- Progress is typed, throttled, coalesced, bounded, and redacted.
+- Result owners revalidate freshness before display, caching, proposal, reuse, or publication.
+- Multiple Sessions receive fair bounded service.
+- Multi-process and multi-tab coordination does not claim global consistency or atomicity.
+- Retry requires retryability, idempotency, fresh authorization, bounded attempts, and cancellation awareness.
+- Diagnostics remain local, redacted, bounded, and excluded from telemetry.
+- Scheduler correctness uses deterministic tests and measured per-platform benchmarks.
+- No external scheduling or background-work dependency is accepted.
+
+The detailed architecture is recorded in [lib/core/jobs/README.md](lib/core/jobs/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -1021,6 +1061,38 @@ The detailed Security and Privacy architecture is recorded in [lib/core/security
 | D-392 | Security | Security requires automated adversarial testing plus independent review of cryptography, threat models, isolation, release processes, and high-risk UX. | Accepted | Testing |
 | D-393 | Security | Portable Security and Privacy ownership belongs under `lib/core/security/`, while concrete platform implementations remain adapters. | Accepted | Repository architecture |
 | D-394 | Security | No Security dependency is accepted; cryptographic packages and SBOM tools remain studies, platform facilities remain capability foundations, and standards remain guidance. | Accepted | Open-source evaluation |
+| D-395 | Jobs | The portable Job System owns substantial-work scheduling, admission, lifecycle, cancellation, fairness, progress, and diagnostics without owning domain meaning or publication. | Accepted | Global architecture |
+| D-396 | Jobs | Jobs use immutable typed requests and results while subsystem-specific payloads and publication contracts remain authoritative. | Accepted | Domain boundaries |
+| D-397 | Jobs | Only work requiring scheduling, admission, cancellation, progress, supersession, fairness, or worker execution becomes a Job; bounded ordinary operations remain direct typed calls. | Accepted | Job model |
+| D-398 | Jobs | Jobs use structured application, Session, view, user-operation, and parent scopes with parent-child lifetime and resource propagation. | Accepted | Sessions |
+| D-399 | Jobs | Detached work is rare, explicitly application-owned, independently cancellable, and unable to retain scoped state or resources indefinitely. | Accepted | Lifecycle |
+| D-400 | Jobs | Scheduling uses centrally registered intent classes with controlled promotion and no hard real-time, preemption, or fixed-latency claim. | Accepted | Scheduler |
+| D-401 | Jobs | Global and per-Session limits, fairness, aging, and reserved persistence capacity prevent monopolization and starvation. | Accepted | Sessions |
+| D-402 | Jobs | UI and frame responsiveness require bounded UI-isolate work while Flutter retains frame and input-loop ownership. | Accepted | UI |
+| D-403 | Jobs | Input scheduling preserves semantically required samples and keeps prediction and previews non-authoritative. | Accepted | Drawing, Interaction |
+| D-404 | Jobs | Rendering and view work use identity-complete requests, reject stale results, and share immutable computation only among matching live consumers. | Accepted | Rendering, Sessions |
+| D-405 | Jobs | Execution uses asynchronous I/O, native isolate workers, Web Worker adapters, and cooperative chunking according to measured capability. | Accepted | Platforms |
+| D-406 | Jobs | `Isolate.run` and Flutter `compute` are execution primitives rather than schedulers and do not independently provide Job cancellation or fairness. | Accepted | Dart, Flutter |
+| D-407 | Jobs | `TransferableTypedData` is a benchmark-gated native transfer optimization, not an authorization, secrecy, or universal ownership boundary. | Accepted | Dart |
+| D-408 | Jobs | Long-lived workers and pools are bounded, capability-derived, health-monitored, and adopted only when benchmarks justify their lifecycle cost. | Accepted | Platforms |
+| D-409 | Jobs | Worker inputs are immutable, bounded, typed, and narrowly authorized; mutable Sessions, UI objects, broad platform authority, and secret-store handles are prohibited. | Accepted | Security |
+| D-410 | Jobs | CPU preparation remains separate from owner-controlled freshness validation and serialized publication. | Accepted | Commands, Storage |
+| D-411 | Jobs | Version 1 treats background work and graceful shutdown as best effort and never guarantees execution after process, application, or browser termination. | Accepted | Lifecycle |
+| D-412 | Jobs | Restartable work persists only validated declarative checkpoints and never closures, worker memory, secrets, live handles, or stale tokens. | Accepted | Storage, Security |
+| D-413 | Jobs | Cancellation is cooperative at bounded semantic boundaries, preserves publication integrity, and safely rejects late uninterruptible native results. | Accepted | Cancellation |
+| D-414 | Jobs | Typed supersession and coalescing apply only to eligible derived work and cannot casually replace Commands, final publication, required Recovery, or required audit events. | Accepted | Commands, Recovery |
+| D-415 | Jobs | Every producer-consumer boundary defines bounded queues, admission, backpressure, overload, and cancellation behavior. | Accepted | Resource policy |
+| D-416 | Jobs | Committed changes, required Recovery information, required publication results, and Security-required audit events are never silently dropped. | Accepted | Recovery, Security |
+| D-417 | Jobs | Resource reservations consume immutable Security policy, use explicit admission outcomes, and release exactly once. | Accepted | Security |
+| D-418 | Jobs | Memory pressure triggers deterministic degradation that sacrifices derived and opportunistic work before active input, authoritative state, or required Recovery. | Accepted | Security, Recovery |
+| D-419 | Jobs | Progress is typed, bounded, throttled, coalesced, and redacted before presentation. | Accepted | UI, Privacy |
+| D-420 | Jobs | Every asynchronous result carries required identity and freshness evidence and is revalidated by its owner before display, caching, reuse, proposal, or publication. | Accepted | Sessions |
+| D-421 | Jobs | Multiple Sessions receive bounded fair service, while multiple views share results only under complete identity compatibility. | Accepted | Sessions |
+| D-422 | Jobs | Multiple-process and multiple-tab coordination uses limited capabilities without claiming global consistency, atomicity, locking, or worker ownership. | Accepted | Platforms |
+| D-423 | Jobs | Retry requires explicit retryability, idempotency, fresh authorization and policy, bounded attempts, cancellation awareness, and no superseding request. | Accepted | Security |
+| D-424 | Jobs | Performance diagnostics remain local, bounded, redacted, identity-safe, and excluded from telemetry or automatic upload. | Accepted | Privacy |
+| D-425 | Jobs | Scheduler correctness uses fake clocks and deterministic tests, while platform-specific responsiveness and resource targets require measured benchmarks. | Accepted | Testing |
+| D-426 | Jobs | Portable Job System ownership belongs under `lib/core/jobs/`, with no external scheduling or background-work dependency accepted. | Accepted | Repository architecture |
 
 ## Deferred Object System Questions
 
@@ -1548,8 +1620,29 @@ No external Import or Export dependency is accepted.
 - OWASP ASVS, OWASP MASVS, OWASP File Upload guidance, NIST cryptographic guidance, SLSA, and W3C specifications remain guidance only.
 - No Security, cryptography, secure-storage, audit, SBOM, or supply-chain dependency is accepted.
 
+## Deferred Performance, Concurrency, and Background Work Questions
+
+- Exact worker counts, queue sizes, memory budgets, and performance targets
+- Persistent Android Jobs and foreground services
+- Native subprocess workers
+- Cross-process document locking
+- Shared cross-tab workers and cache coherence
+- Desktop process isolation
+- Advanced GPU scheduling
+- Recognition, Sync, Cloud, and executable-plugin workloads
+- Final deployment configuration
+- External scheduler selection
+
+## Performance, Concurrency, and Background Work Open-Source Record
+
+- Dart `Future`, `Stream`, async/await, isolate APIs, Flutter frame APIs, and Web Worker facilities are accepted foundations.
+- `package:async`, `package:pool`, and Android WorkManager remain studies.
+- Flutter `compute`, Kotlin structured concurrency, Rnote, and Xournal++ remain references.
+- `TransferableTypedData` remains a benchmark-gated SDK optimization.
+- No external scheduler, worker-pool, cancellation, admission, or background-work dependency is accepted.
+
 ## Roadmap
 
-- Security and Privacy Architecture — Accepted with modifications
-- Performance, Concurrency, and Background Work — Next subsystem
+- Performance, Concurrency, and Background Work — Accepted with modifications
+- Platform Integration and Capability Adapters — Next subsystem
 - Recognition, Math Recognition, Symbolic Math, and optional Sync/Cloud — Post-v1
