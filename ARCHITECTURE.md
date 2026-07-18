@@ -1904,8 +1904,29 @@ CodeQL for supported non-Dart languages and workflow scanning, OSV Scanner, Reno
 
 CodeQL does not support Dart. No automatic dependency merging is accepted. No external Dart testing dependency is accepted. Package formats do not become supported until packaged conformance passes. Attestations and automated scans provide evidence rather than architectural acceptance or certification.
 
+## Final Architecture Consistency Audit
+
+- Audit status: Passed
+- Version-1 architecture baseline: Frozen for implementation
+- Decision ledger: D-006 through D-500
+- Blocking contradictions: None found
+- Exact implementation selections: Controlled by phase gates
+- Next activity: Codex Phase 0
+
+The audit confirmed that every version-1 subsystem is Accepted with modifications and that subsystem ownership boundaries are compatible.
+
+Persistent document mutation remains Command-only. Documents, Sessions, views, application state, Settings, Recovery, and derived data remain separate. Platform adapters remain outside portable domain policy, and the UI cannot mutate documents directly.
+
+Job scheduling remains separate from result ownership and publication. Security and Privacy policy remains mandatory across every subsystem. Testing and release qualification remains separate from implementation correctness.
+
+Recognition, Math Recognition, Symbolic Math, Sync, and Cloud remain post-v1. No blocking architectural contradiction was found.
+
+Exact SDK, storage, archive, Recovery, font, text, image, PDF, plugin, platform, Security, packaging, and signing selections remain controlled implementation decisions under the accepted architecture. Every dependency requires license, provenance, maintenance, platform, Security, and packaged-build review before adoption.
+
+See `docs/implementation-roadmap/README.md` for the ordered Codex implementation roadmap.
+
 ## Roadmap
 
-- Testing, Packaging, CI, and Release Architecture — Accepted with modifications
-- Final Architecture Consistency Audit and Codex Implementation Roadmap — Next phase
+- Version-1 Architecture Baseline — Frozen for implementation
+- Codex Phase 0: Repository and Toolchain Baseline — Next
 - Recognition, Math Recognition, Symbolic Math, and optional Sync/Cloud — Post-v1
