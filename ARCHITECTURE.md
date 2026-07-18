@@ -17,7 +17,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | Text Object System | Accepted with modifications | Owns persistent Unicode text, constrained formatting, layout, and editing contracts |
 | Image Object System | Accepted with modifications | Owns persistent image payloads, resource references, orientation, crop, and image boundaries |
 | Shape Object System | Accepted with modifications | Owns built-in shape kinds, intrinsic geometry, styles, validation, and migrations |
-| PDF System | Next subsystem | Will define PDF source, page, annotation, rendering, and export boundaries |
+| PDF System | Accepted with modifications | Owns immutable PDF sources, page references, bindings, and engine-neutral PDF contracts |
+| Import and Export System | Next subsystem | Will define external format ingestion, conversion, publication, and export contracts |
 | Recognition, Mathematics, and Optional Sync/Cloud | Post-v1 | Official future goals preserved by version-1 architecture without premature implementation |
 
 ## Object System
@@ -331,6 +332,43 @@ The Shape Object System provides editable, deterministic, vector-quality geometr
 
 The detailed Shape Object System architecture is recorded in [lib/documents/objects/shape/README.md](lib/documents/objects/shape/README.md).
 
+## PDF System
+
+The PDF System preserves original PDF bytes as immutable resources while all new editable annotations remain ordinary AL NOTE Page Objects stored separately from the source.
+
+### Accepted Ownership Boundaries
+
+- Standalone PDFs use the existing Standalone PDF document form and a document-level immutable source binding.
+- Each displayed PDF page becomes an ordinary AL NOTE Page with one constrained source layer and editable layers above it.
+- Source layers and movable PDF Page Objects share a versioned `PdfPageReference`.
+- Page references persist resource UUID, zero-based page index, resolved source box, effective rotation, displayed dimensions, and unknown fields.
+- PDF source layers use the stable `alnote.pdf.source` binding.
+- The PDF System owns binding semantics while the Layer System retains general layer ownership.
+- Movable PDF pages use Object type `alnote.pdf.page`.
+- Version 1 creates one independent Object per selected source page.
+- PDF-local coordinates use points with top-left origin, positive Y downward, and effective rotation applied.
+- Valid CropBox is the default, with MediaBox fallback.
+- Source-layer mapping, box, rotation, and dimensions remain fixed after creation.
+- Multiple Pages, layers, and Objects may share one immutable PDF resource.
+- Existing native PDF annotations remain preserved in original bytes and render read-only through safe appearances.
+- Active content and unsafe PDF actions remain disabled.
+- Passwords and unlocking state remain session-only secrets.
+- Rendering, extraction, links, outlines, accessibility interpretations, tiles, and backend handles remain derived.
+- PDF preparation is asynchronous, followed by atomic Command publication.
+- Normal export creates a new sanitized PDF and never modifies the original resource.
+- Safe vector source content is reused where practical.
+- Native appearances and AL NOTE Objects are flattened exactly once.
+- Unsafe actions, embedded files, unsupported interactivity, and original signature claims are omitted.
+- Missing, locked, corrupt, unsupported, quarantined, or backend-unavailable PDFs preserve all references and annotations through placeholders.
+- Persistent PDF changes use Commands; rendering, extraction, passwords, and caches do not enter history.
+- Backends and plugins use engine-neutral restricted contracts.
+- Parsing, rendering, extraction, and export enforce configurable resource limits.
+- AL NOTE reuses a mature PDF engine rather than implementing a parser or renderer.
+- No PDF backend or export dependency is accepted yet.
+- PDF architecture belongs under `lib/documents/pdf/`.
+
+The detailed PDF System architecture is recorded in [lib/documents/pdf/README.md](lib/documents/pdf/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -508,6 +546,30 @@ The detailed Shape Object System architecture is recorded in [lib/documents/obje
 | D-176 | Shapes | Shape payload contracts, validation, and migration belong conceptually under `lib/documents/objects/shape/`; rendering and hit-testing implementations remain in their accepted Drawing subsystem areas. | Accepted | Repository architecture |
 | D-177 | Shapes | No external Shape or geometry dependency is accepted; Flutter, Skia, SVG, `vector_math`, and path packages remain references or evaluation candidates behind AL NOTE-owned contracts. | Accepted | Open-source evaluation |
 | D-178 | Shapes | General paths, curves, advanced fills, effects, Boolean operations, constraints, connectors, stable vertex identities, text-bearing shapes, and Shape Recognition remain deferred. | Deferred | Future Shape extensions |
+| D-179 | PDF | Original PDF bytes remain immutable resources, while all new editable annotations remain ordinary AL NOTE Objects. | Accepted | Resources, Objects |
+| D-180 | PDF | Source layers and movable PDF Objects share one versioned `PdfPageReference` containing resource UUID, zero-based page index, resolved source box, effective rotation, displayed dimensions, and preserved unknown fields. | Accepted | D-179 |
+| D-181 | PDF | A standalone PDF uses the existing Standalone PDF document form, a document-level source binding, and ordinary AL NOTE Pages whose constrained source layers reference the immutable PDF. | Accepted | Document Engine, D-180 |
+| D-182 | PDF | PDF source layers use a stable `alnote.pdf.source` binding; the PDF System owns binding semantics while the Layer System retains layer identity, ordering, locking, visibility, and lifecycle ownership. | Accepted | Layer System |
+| D-183 | PDF | Movable PDF pages use Object type `alnote.pdf.page`; version 1 creates one Object per selected source page and defers movable multipage containers. | Accepted | Object System, D-180 |
+| D-184 | PDF | Canonical PDF-local coordinates use PDF points with top-left origin, positive Y downward, and effective page rotation already applied. | Accepted | Geometry |
+| D-185 | PDF | Page references persist the selected box kind, resolved source-user-space box coordinates, normalized effective rotation, and displayed dimensions; valid CropBox is default with MediaBox fallback. | Accepted | D-180, D-184 |
+| D-186 | PDF | Version-1 source-layer page mapping, box, rotation, and dimensions remain fixed after page creation; later remapping requires separately designed annotation-preservation behavior. | Accepted | Pages, Commands |
+| D-187 | PDF | Multiple Pages, source layers, and PDF Page Objects may share the same immutable PDF resource; duplication creates new Object or Page identities without duplicating bytes. | Accepted | Resources, Commands |
+| D-188 | PDF | Existing native PDF annotations remain preserved in original bytes, render read-only when safe appearances exist, and are not automatically converted into AL NOTE Objects. | Accepted | D-179 |
+| D-189 | PDF | JavaScript, launch actions, form actions, multimedia, 3D content, and embedded-file execution are disabled; safe links are exposed only as validated navigation metadata. | Accepted | Security |
+| D-190 | PDF | PDF passwords and unlocking state are session-only secrets and never enter storage, logs, history, recovery, or disk caches. | Accepted | Security, Sessions |
+| D-191 | PDF | Rendering, text extraction, links, outlines, accessibility data, thumbnails, tiles, and backend handles are separate derived capabilities and never authoritative PDF state. | Accepted | Drawing Engine, Search |
+| D-192 | PDF | Opening standalone PDFs, importing notebook pages, and inserting movable PDF pages use asynchronous preparation followed by atomic resource-and-document publication through Commands. | Accepted | Commands, Import |
+| D-193 | PDF | Normal PDF export creates a new sanitized PDF, reuses safe vector source-page content where possible, flattens native appearances and AL NOTE Objects exactly once, and uses bounded raster fallback only when required. | Accepted | Export, Security |
+| D-194 | PDF | Normal export omits executable content, unsafe actions, embedded files, interactive forms, unsupported native annotation dictionaries, and original digital-signature claims; output encryption is not inherited automatically. | Accepted | D-193 |
+| D-195 | PDF | Internal links may be recreated after validation; external HTTP/HTTPS links require explicit policy, while file, shell, launch, and custom URI actions remain blocked. | Accepted | Security, Export |
+| D-196 | PDF | Missing, locked, corrupt, unsupported, quarantined, or backend-unavailable PDFs preserve Pages, source layers, Objects, dimensions, references, and annotations through stable placeholders. | Accepted | Storage, Drawing Engine |
+| D-197 | PDF | Persistent PDF resource, binding, Page, layer, box, crop, and Object changes use Commands; password entry, rendering, extraction, and caches do not enter history. | Accepted | Command System |
+| D-198 | PDF | PDF contracts remain engine-neutral; plugins and backends cannot place engine handles in persistent data, execute PDF actions, bypass validation, or publish mutations directly. | Accepted | Plugins, Drawing Engine |
+| D-199 | PDF | PDF parsing, rendering, extraction, and export enforce configurable byte, page, dimension, recursion, object, decompression, font, image, memory, time, and concurrency limits in cancellable workers where practical. | Accepted | Security, Platforms |
+| D-200 | PDF | AL NOTE must reuse a mature PDF engine rather than create a parser or renderer; PDFium, `pdfrx`, and PDF.js are leading candidates, but no backend dependency is accepted until audits and conformance tests pass. | Accepted | Open-source evaluation |
+| D-201 | PDF | PDF model, coordinate, binding, rendering-contract, extraction-contract, import/export-contract, security, and backend-interface ownership belongs conceptually under `lib/documents/pdf/`; platform implementations remain behind adapters. | Accepted | Repository architecture |
+| D-202 | PDF | Editable native annotations, forms, signatures, multipage movable containers, OCR, archival conformance, advanced color, source-layer remapping, password persistence, output encryption, and exact rendering/export dependencies remain deferred. | Deferred | Future PDF extensions |
 
 ## Deferred Object System Questions
 
@@ -789,8 +851,43 @@ The detailed Shape Object System architecture is recorded in [lib/documents/obje
 - `path_parsing` is MIT and may later be evaluated for import and export adapters.
 - No external Shape dependency is accepted.
 
+## Deferred PDF System Questions
+
+- Editable native PDF annotations
+- AcroForm and XFA editing
+- Digital signatures
+- Multipage movable Objects
+- OCR
+- Corrected reading order
+- Search indexing
+- PDF/A and PDF/X conformance
+- Professional print color management
+- Password persistence
+- Output encryption
+- Incremental modification of original PDFs
+- Source-layer box or rotation remapping
+- PDF resource subsetting
+- Exact backend dependency
+- Exact export composer dependency
+- Interactive native annotation export
+
+## PDF System Open-Source Record
+
+- PDFium uses permissive core licensing with bundled third-party notices that require a complete audit.
+- PDF.js is Apache-2.0 and is a strong Web backend candidate.
+- `pdfrx` is an MIT Flutter wrapper around PDFium and is the leading four-platform integration candidate, subject to binary provenance, security, API, and license audits.
+- MuPDF is AGPL or commercial and is rejected as the default unless AL NOTE intentionally accepts the additional AGPL obligations.
+- Poppler is a useful desktop reference but not the preferred four-platform default.
+- The Dart `pdf` package is Apache-2.0 and is an export-generation candidate, but source-page reuse and sanitization capabilities require testing.
+- qpdf is Apache-2.0 and is a content-preserving transformation reference or possible native helper, but it is not a universal Web dependency.
+- Rnote is a GPL-3.0-or-later architectural reference.
+- Xournal++ is a behavioral reference requiring file-level license review.
+- Syncfusion PDF is not an open-source dependency and is rejected.
+- No PDF dependency is accepted yet.
+- AL NOTE will not implement a PDF parser or renderer from scratch.
+
 ## Roadmap
 
-- Shape Object System — Accepted with modifications
-- PDF System — Next subsystem
+- PDF System — Accepted with modifications
+- Import and Export System — Next subsystem
 - Recognition, mathematics, and optional Sync/Cloud — Post-v1
