@@ -26,7 +26,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | Search and Indexing | Accepted with modifications | Owns derived searchable projections, scanning, memory indexing, query semantics, ranking, results, and freshness reporting |
 | Security and Privacy Architecture | Accepted with modifications | Owns mandatory security and privacy policy, classification, protection contracts, redaction, audit policy, limits, and safe mode |
 | Performance, Concurrency, and Background Work | Accepted with modifications | Owns typed Job scheduling, admission, scopes, fairness, cancellation, progress, backpressure, and resource coordination |
-| Platform Integration and Capability Adapters | Next subsystem | Will define portable platform contracts, capability reporting, concrete adapters, and cross-platform degradation |
+| Platform Integration and Capability Adapters | Accepted with modifications | Owns capability identities, portable contracts, adapter lifecycle, platform normalization, opaque resources, and conformance |
+| Testing, Packaging, CI, and Release Architecture | Next subsystem | Will define testing strategy, build and packaging pipelines, CI, signing, publication, and release verification |
 | Recognition, Mathematics, and Optional Sync/Cloud | Post-v1 | Official future goals preserved by version-1 architecture without premature implementation |
 
 ## Object System
@@ -668,6 +669,112 @@ A portable typed Job System coordinates substantial asynchronous work, admission
 
 The detailed architecture is recorded in [lib/core/jobs/README.md](lib/core/jobs/README.md).
 
+## Platform Integration and Capability Adapters
+
+AL NOTE uses capability-driven ports and adapters. Portable application and domain code depends only on versioned, AL NOTE-owned capability contracts. Concrete Linux, Windows, Android, and Web adapters implement those contracts at the outer platform boundary.
+
+### Accepted Ownership Boundaries
+
+- `lib/platform/` owns capability identities, contracts, discovery, immutable snapshots, adapter lifecycle, platform-fact normalization, opaque resources, structured outcomes, and conformance.
+- Dependencies point inward from platform APIs and concrete adapters through AL NOTE-owned contracts to application and domain policy.
+- Only the application composition root constructs and registers concrete adapters.
+- Platform adapters report facts and execute narrow authorized operations without owning document mutation, Commands, Save, Import, Export, Recovery, Sessions, Security decisions, UI decisions, or Job scheduling policy.
+- Concrete platform integration remains an outer layer; `lib/core/platform/` is rejected.
+- Future contract, adapter, composition, and testing directories are implementation guidance and are not created by this decision.
+
+### Capability and Resource Rules
+
+- Capabilities use stable `alnote.platform.*` identities, versioned contracts, immutable snapshots, implementation evidence, limits, constraints, degradation, and health.
+- Snapshots are evidence rather than authorization or resource reservations.
+- Availability and permission may change at runtime, and sensitive operations revalidate both.
+- Version 1 defines required or explicitly degraded baseline capabilities while enhanced platform behavior remains optional.
+- Adapter operations use immutable typed requests, capability-specific results, explicit cancellation states, cleanup, execution restrictions, and redacted diagnostics.
+- Resources, destinations, authorizations, and secrets use opaque, scoped, bounded, expiring where appropriate, and revocable tokens.
+- Portable code assumes no universal filesystem path, atomic replacement, locking, identity, observation, or durability semantics.
+- Android resources remain content-URI capabilities.
+- Web acquisition and publication use authorized handles when available and bounded upload or download degradation otherwise.
+- Fingerprints are strength-qualified evidence, and external-change observation remains advisory.
+- Temporary resources record ownership, purpose, bounds, expiration, cleanup, and Recovery classification.
+
+### Platform Service Boundaries
+
+- Pickers separately acquire authorization for single-open, multi-open, destination creation, and folder selection without owning Open, Save, Import, or Export policy.
+- Sharing reports presentation or handoff outcomes without claiming recipient storage or processing.
+- Clipboard and drag-and-drop use bounded typed untrusted representations and cannot mutate documents.
+- Private storage provides namespaced revision-aware byte-record contracts while Settings, Recovery, and Sessions retain schemas and policy.
+- Settings, Recovery, restoration, and capability metadata remain logically isolated even when sharing a physical backend.
+- Secret and cryptographic services use opaque references and capability-specific guarantees with no plaintext fallback or unverified hardware claim.
+- Lifecycle events are advisory and never guaranteed finalization opportunities.
+- Single-primary-window operation is the version-1 baseline; multiple OS windows remain optional and distinct from multiple views and split views.
+- Flutter remains the primary portable input source. Platform extensions report facts, Interaction Mapping owns input meaning, and UI owns semantics and presentation.
+- PDF, image, font, rendering, isolate, worker, and native concurrency mechanisms remain behind backend-neutral capability contracts.
+- The Job System retains admission and scheduling policy.
+- Version-1 networking is limited to user-initiated external HTTPS handoff.
+- Exact release configuration belongs to Testing, Packaging, CI, and Release Architecture.
+
+### Failure and Conformance
+
+- Shared classifications preserve capability-specific evidence, including honest pending-cancellation reporting.
+- Raw platform exception strings do not cross portable boundaries.
+- Every contract requires deterministic fakes, shared conformance suites, fault injection, integration tests, browser-matrix tests, and packaged smoke tests.
+- Capability matrices express tested expectations and degradation rather than unconditional runtime guarantees.
+- Tokens, permissions, diagnostics, external input, and native binaries remain governed by Security policy, redaction, limits, and supply-chain controls.
+
+Detailed architecture is recorded in:
+
+- [lib/platform/README.md](lib/platform/README.md)
+
+### Platform Integration Open-Source Record
+
+Accepted foundations:
+
+- Dart and Flutter SDK mechanisms
+- Native operating-system APIs behind AL NOTE-owned adapters
+- Standards-based browser APIs behind AL NOTE-owned adapters
+
+Candidates remaining under study:
+
+- `file_selector`
+- `path_provider`
+- `share_plus`
+- `url_launcher`
+- `super_clipboard`
+- `super_drag_and_drop`
+- `flutter_secure_storage`
+- SQLite bindings
+- IndexedDB adapters
+- `pdfrx` and PDFium
+- PDF.js
+- Dart `image`
+- Dart `archive`
+- `window_manager`
+- `desktop_multi_window`
+
+No external Platform Integration dependency is accepted.
+
+Compatible wrapper licensing does not establish the licensing, provenance, or security acceptability of bundled binaries.
+
+Platform support claims require verification in packaged release builds.
+
+### Deferred Matters
+
+- Encrypted `.alnote` containers and algorithm selection
+- General networking and remote acquisition
+- Accounts, authentication, Sync, Cloud, and automatic update services
+- Multiple-window implementation
+- Native-menu dependency selection
+- File and protocol association details
+- Hardware-backed key requirements
+- PDFium versus PDF.js adoption
+- Canonical database backend
+- Rich clipboard and drag-out baseline
+- Exact image codecs
+- Exact font discovery and embedding policy
+- Android persistent background services
+- Browser multi-tab coordination
+- Exact permissions, entitlements, and packaging configuration
+- Exact external dependency selection
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -1093,6 +1200,40 @@ The detailed architecture is recorded in [lib/core/jobs/README.md](lib/core/jobs
 | D-424 | Jobs | Performance diagnostics remain local, bounded, redacted, identity-safe, and excluded from telemetry or automatic upload. | Accepted | Privacy |
 | D-425 | Jobs | Scheduler correctness uses fake clocks and deterministic tests, while platform-specific responsiveness and resource targets require measured benchmarks. | Accepted | Testing |
 | D-426 | Jobs | Portable Job System ownership belongs under `lib/core/jobs/`, with no external scheduling or background-work dependency accepted. | Accepted | Repository architecture |
+| D-427 | Platform Integration | Platform Integration owns capability identities, contracts, discovery, adapter lifecycle, normalization, and conformance under `lib/platform/`. | Accepted | Repository architecture |
+| D-428 | Platform Integration | Portable layers depend only on AL NOTE-owned platform contracts; concrete adapters and external APIs remain outer dependencies. | Accepted | Dependency direction |
+| D-429 | Platform Integration | Concrete adapter construction and registration occur only through the application composition root. | Accepted | Composition |
+| D-430 | Platform Integration | Capabilities use stable `alnote.platform.*` identities, contract versions, immutable snapshots, implementation evidence, limits, and health. | Accepted | Capability model |
+| D-431 | Platform Integration | Capability availability may change at runtime, and sensitive operations revalidate capabilities and authorization before execution. | Accepted | Runtime behavior |
+| D-432 | Platform Integration | Version 1 defines required or explicitly degraded baseline capabilities while preserving optional enhanced platform behavior. | Accepted | Version-1 scope |
+| D-433 | Platform Integration | Adapter operations use immutable typed requests, capability-specific results, explicit cancellation, cleanup, and redacted diagnostics. | Accepted | Adapter contracts |
+| D-434 | Platform Integration | Platform adapters report facts and execute narrow operations without owning domain or application policy. | Accepted | Ownership |
+| D-435 | Platform Integration | Resources, destinations, authorizations, and secrets use opaque, scoped, revocable, and bounded tokens. | Accepted | Resource security |
+| D-436 | Platform Integration | Resource descriptors report independent access, identity, replacement, observation, locking, flush, durability, permission, and expiration evidence. | Accepted | Resource semantics |
+| D-437 | Platform Integration | AL NOTE claims no universal path, atomic-replacement, locking, identity, or durability semantics across supported platforms. | Accepted | Portability |
+| D-438 | Platform Integration | Android document resources remain content-URI capabilities and are never assumed to be filesystem paths. | Accepted | Android |
+| D-439 | Platform Integration | Web acquisition and publication use authorized handles when available and bounded upload or download degradation otherwise. | Accepted | Web |
+| D-440 | Platform Integration | Resource fingerprints are strength-qualified evidence, and external-change observation remains optional and advisory. | Accepted | External changes |
+| D-441 | Platform Integration | Temporary resources have explicit ownership, bounds, expiration, cleanup, and Recovery classification. | Accepted | Temporary resources |
+| D-442 | Platform Integration | Pickers acquire user authorization through separate open, multi-open, destination, and folder contracts without owning Open, Save, Import, or Export policy. | Accepted | Pickers |
+| D-443 | Platform Integration | Sharing and external handoff report only presentation or handoff outcomes and never claim recipient storage or processing. | Accepted | Sharing |
+| D-444 | Platform Integration | Clipboard and drag-and-drop use bounded typed untrusted representations and cannot mutate documents directly. | Accepted | Clipboard and drag-and-drop |
+| D-445 | Platform Integration | Private storage exposes namespaced transactional and revision-aware byte-record contracts while Settings, Recovery, and restoration retain schema and policy. | Accepted | Private storage |
+| D-446 | Platform Integration | Settings, Recovery, restoration, and capability metadata remain logically isolated even when a physical storage backend is shared. | Accepted | Storage isolation |
+| D-447 | Platform Integration | Secret and cryptographic services use opaque references and capability-specific guarantees with no plaintext fallback or unverified hardware claim. | Accepted | Secrets |
+| D-448 | Platform Integration | Lifecycle events are advisory, bounded, and never treated as guaranteed finalization opportunities. | Accepted | Lifecycle |
+| D-449 | Platform Integration | Single-primary-window operation is the version-1 baseline; multiple OS windows remain optional and distinct from multiple views or split views. | Accepted | Windows |
+| D-450 | Platform Integration | Flutter is the primary portable input source while platform extensions report facts and Interaction Mapping retains semantic ownership. | Accepted | Input |
+| D-451 | Platform Integration | Platform accessibility and environment adapters report observable facts while UI retains semantic and presentation ownership. | Accepted | Accessibility |
+| D-452 | Platform Integration | PDF, image, font, and rendering integrations remain behind backend-neutral contracts with identity, limits, cancellation, and degradation. | Accepted | Rendering backends |
+| D-453 | Platform Integration | Platform execution adapters expose isolate, worker, chunking, and native concurrency mechanisms while the Job System retains scheduling policy. | Accepted | Jobs |
+| D-454 | Platform Integration | Version-1 networking is limited to user-initiated external HTTPS handoff; general networking and remote services remain deferred. | Accepted | Networking |
+| D-455 | Platform Integration | Platform permissions, entitlements, CSP, associations, and native-binary requirements are recorded here while exact release configuration belongs to the release subsystem. | Accepted | Packaging boundary |
+| D-456 | Platform Integration | Adapter outcomes use shared classifications without replacing capability-specific evidence, including honest pending-cancellation reporting. | Accepted | Failures |
+| D-457 | Platform Integration | Every platform contract requires deterministic fakes, shared conformance suites, fault injection, integration tests, and packaged smoke coverage. | Accepted | Testing |
+| D-458 | Platform Integration | Cross-platform capability matrices express tested expectations and degradation, not unconditional runtime guarantees. | Accepted | Capability matrices |
+| D-459 | Platform Integration | No external Platform Integration package or native binary is accepted; all named candidates remain implementation studies. | Accepted | Dependencies |
+| D-460 | Platform Integration | Platform tokens, diagnostics, permissions, external input, and native binaries remain subject to Security policy, redaction, resource limits, and supply-chain controls. | Accepted | Security |
 
 ## Deferred Object System Questions
 
@@ -1644,5 +1785,6 @@ No external Import or Export dependency is accepted.
 ## Roadmap
 
 - Performance, Concurrency, and Background Work — Accepted with modifications
-- Platform Integration and Capability Adapters — Next subsystem
+- Platform Integration and Capability Adapters — Accepted with modifications
+- Testing, Packaging, CI, and Release Architecture — Next subsystem
 - Recognition, Math Recognition, Symbolic Math, and optional Sync/Cloud — Post-v1
