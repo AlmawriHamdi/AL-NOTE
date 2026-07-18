@@ -27,7 +27,7 @@ This document records architecture approved by the Main Architect, the subsystem
 | Security and Privacy Architecture | Accepted with modifications | Owns mandatory security and privacy policy, classification, protection contracts, redaction, audit policy, limits, and safe mode |
 | Performance, Concurrency, and Background Work | Accepted with modifications | Owns typed Job scheduling, admission, scopes, fairness, cancellation, progress, backpressure, and resource coordination |
 | Platform Integration and Capability Adapters | Accepted with modifications | Owns capability identities, portable contracts, adapter lifecycle, platform normalization, opaque resources, and conformance |
-| Testing, Packaging, CI, and Release Architecture | Next subsystem | Will define testing strategy, build and packaging pipelines, CI, signing, publication, and release verification |
+| Testing, Packaging, CI, and Release Architecture | Accepted with modifications | Owns project-wide testing gates, CI orchestration, packaging qualification, artifact identity, provenance, signing coordination, publication, and withdrawal |
 | Recognition, Mathematics, and Optional Sync/Cloud | Post-v1 | Official future goals preserved by version-1 architecture without premature implementation |
 
 ## Object System
@@ -775,6 +775,46 @@ Platform support claims require verification in packaged release builds.
 - Exact permissions, entitlements, and packaging configuration
 - Exact external dependency selection
 
+## Testing, Packaging, CI, and Release Architecture
+
+AL NOTE uses separate source-verification, cross-platform integration and conformance, release-package construction, installed-artifact verification, and independent post-publication verification stages. Unit tests are necessary but are not release proof, and a successful upload does not prove correct publication.
+
+### Accepted Ownership Boundaries
+
+- This subsystem owns project-wide test policy and terminology, quality gates, supported-platform matrices, CI orchestration, controlled-build policy, packaging and release-candidate qualification, artifact identity, release manifests, SBOMs, license inventories, checksums, provenance, signing coordination, release channels, publication records, rollback, withdrawal, exceptions, and waivers.
+- Existing subsystems retain their invariants, domain tests, Security policy, format rules, capability contracts, plugin validation, scheduling behavior, UI behavior, and approval responsibilities.
+- Future test, integration, conformance, resource, benchmark, workflow, packaging, and release-tool locations remain separate without being created during architecture recording.
+- Unit, component, contract, property, model, serialization, migration, compatibility, golden, widget, integration, end-to-end, conformance, packaged-smoke, performance, stress, fault-injection, fuzzing, accessibility, Recovery, and leak testing remain distinct categories with explicit ownership and blocking status.
+- Pull-request, main, nightly, release-candidate, release, and post-publication gates require different evidence; flaky or inconclusive results cannot silently pass.
+- Tests control time, randomness, scheduling, storage, capabilities, permissions, lifecycle, locale, display state, and input sources; network access is denied by default.
+- Randomized failures preserve generator identity, seeds, minimized input, revision, platform, and toolchain, while tests verify namespace and resource cleanup.
+- Model and property testing verifies Commands, replacement, rejection, Undo, Redo, transactions, identity, ordering, isolation, conflicts, Import publication, and immutable Export inputs.
+- File-format qualification verifies canonical bytes, determinism, round trips, unknown preservation, migrations, compatibility, corruption limits, integrity, traversal protection, decompression limits, and cross-platform fixtures.
+- Application, format, object-schema, plugin-package, and platform-contract versions remain independent and use machine-readable tested compatibility ranges.
+- Recovery, Save, Save As, Import, Export, staging, cleanup, and publication boundaries receive interruption and fault-injection testing without claims stronger than platform guarantees.
+- Supported-platform claims require a tiered qualification matrix, release-mode packages, shipped architectures, and representative real hardware rather than Flutter support alone.
+- Chromium is the primary frequent Web target; Firefox participates in main, nightly, and release qualification; Safari and WebKit remain unverified until maintained qualification exists.
+- Rendering uses exact goldens only in controlled environments and otherwise uses semantic, structural, geometric, or reviewed tolerance-based evidence.
+- Performance qualification records classified environments and statistical evidence; noisy results are inconclusive pending controlled rerun, and no hard real-time guarantee is made.
+- Accessibility and localization are release gates, with WCAG 2.2 AA as the Web target without an unaudited conformance claim.
+- External representations are hostile inputs and receive bounded synthetic fuzzing and adversarial testing without automatic private-data upload.
+- GitHub Actions is the initial hosted CI orchestrator, separate from application runtime architecture, using least privilege, fork isolation, protected environments, complete result aggregation, and immutable full-SHA action pins.
+- Signing occurs in a protected human-approved stage after qualification; untrusted code and ordinary artifacts never receive signing credentials.
+- Toolchains, dependencies, build tools, browsers, and runner identities are pinned or recorded; caches are non-authoritative, and reproducibility is measured rather than claimed.
+- Dependabot proposes reviewed updates without automatic merging. CodeQL does not support Dart and is not AL NOTE's Dart analyzer.
+- Releases require an SPDX-compatible primary SBOM and SLSA-compatible provenance evidence without premature certification claims.
+- Qualified initial targets are Flatpak plus a portable Linux archive, signed MSIX plus a portable Windows ZIP, signed Android APK plus an App Bundle when required, and a hosting-independent versioned Web bundle.
+- Package formats are not supported until packaged conformance passes.
+- GPL-3.0-or-later releases connect every object-code artifact to corresponding source, build information, notices, dependency evidence, native-source obligations, SBOM, and provenance.
+- Application versions, platform build numbers, format versions, schema versions, plugin versions, and platform-contract versions remain distinct.
+- Signing records qualified unsigned and final signed identities without rebuilding source.
+- Only artifacts named by the authoritative release manifest are official, and publication is incomplete until every remote artifact is independently fetched and verified.
+- Version 1 provides manual update discovery and installation without polling, automatic download, automatic installation, or a custom update protocol.
+- Rollback and withdrawal preserve qualification evidence, compatibility warnings, and audit history without claiming global atomicity.
+- Failures, quarantines, quality gates, and waivers are structured, explicit, narrow, time-bounded, revision-specific, and auditable.
+
+See `docs/testing-release/README.md` for the complete accepted subsystem record.
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -1234,6 +1274,46 @@ Platform support claims require verification in packaged release builds.
 | D-458 | Platform Integration | Cross-platform capability matrices express tested expectations and degradation, not unconditional runtime guarantees. | Accepted | Capability matrices |
 | D-459 | Platform Integration | No external Platform Integration package or native binary is accepted; all named candidates remain implementation studies. | Accepted | Dependencies |
 | D-460 | Platform Integration | Platform tokens, diagnostics, permissions, external input, and native binaries remain subject to Security policy, redaction, resource limits, and supply-chain controls. | Accepted | Security |
+| D-461 | Testing and Release | Release confidence uses separate source, integration, package, installed-artifact, and post-publication verification stages. | Accepted | Testing |
+| D-462 | Testing and Release | Testing and Release Architecture owns project-wide gates, matrices, CI orchestration, packaging qualification, artifact identity, provenance, signing coordination, publication records, and withdrawal procedures. | Accepted | Release |
+| D-463 | Testing and Release | Tests, conformance suites, fixtures, benchmarks, packaging, CI, and release tooling have separate future repository locations without creating implementation paths during architecture recording. | Accepted | Repository |
+| D-464 | Testing and Release | AL NOTE uses a defined taxonomy of unit, component, contract, property, model, format, migration, widget, integration, conformance, packaged, performance, security, accessibility, Recovery, and leak tests. | Accepted | Testing |
+| D-465 | Testing and Release | Pull request, main, nightly, release-candidate, release, and post-publication stages have distinct blocking evidence. | Accepted | Quality gates |
+| D-466 | Testing and Release | Tests use controlled clocks, randomness, scheduling, storage, capabilities, permissions, lifecycle, locale, display, and input sources with network denied by default. | Accepted | Determinism |
+| D-467 | Testing and Release | Randomized tests preserve reproducible seeds and minimized failures, while all tests verify isolation and resource cleanup. | Accepted | Testing |
+| D-468 | Testing and Release | Commands and document invariants require model- and property-based verification of replacement, rejection, Undo, Redo, identity, ordering, isolation, and publication. | Accepted | Commands |
+| D-469 | Testing and Release | File-format qualification requires canonical bytes, round trips, unknown preservation, migrations, corruption limits, integrity checks, and cross-platform fixtures. | Accepted | Storage |
+| D-470 | Testing and Release | Application, document-format, object-schema, plugin-package, and platform-contract versions remain independent and have machine-readable tested compatibility ranges. | Accepted | Compatibility |
+| D-471 | Testing and Release | Recovery and publication boundaries require interruption and fault-injection tests without claims stronger than platform guarantees. | Accepted | Recovery |
+| D-472 | Testing and Release | Platform support is based on a tiered declared qualification matrix rather than Flutter framework support alone. | Accepted | Platforms |
+| D-473 | Testing and Release | Web support uses an explicit qualified browser matrix, and Safari or WebKit support is not claimed until maintained testing exists. | Accepted | Web |
+| D-474 | Testing and Release | Native qualification covers declared minimum and current environments, shipped architectures, release-mode packages, and representative real hardware. | Accepted | Platforms |
+| D-475 | Testing and Release | Rendering verification uses controlled exact goldens only where stable and semantic, structural, geometric, or tolerance-based evidence elsewhere. | Accepted | Rendering |
+| D-476 | Testing and Release | Performance qualification records classified environments and statistical evidence without hard real-time guarantees. | Accepted | Performance |
+| D-477 | Testing and Release | Accessibility and localization checks are release gates, with WCAG 2.2 AA as the Web target and no unaudited conformance claim. | Accepted | Accessibility |
+| D-478 | Testing and Release | Security testing treats every external representation as hostile and uses bounded synthetic fuzzing and adversarial corpora without private-data upload. | Accepted | Security |
+| D-479 | Testing and Release | GitHub Actions is the initial hosted CI orchestrator and remains separate from AL NOTE runtime architecture. | Accepted | CI |
+| D-480 | Testing and Release | CI uses least privilege, fork isolation, protected environments, and no privileged execution or checkout of untrusted code. | Accepted | CI security |
+| D-481 | Testing and Release | Every externally sourced Action and reusable workflow is audited, origin-verified, and pinned to a full immutable commit SHA. | Accepted | Supply chain |
+| D-482 | Testing and Release | Signing and publication require protected human-approved stages, and signing credentials never enter untrusted workflows or ordinary artifacts. | Accepted | Signing |
+| D-483 | Testing and Release | Toolchains, dependencies, build tools, browsers, and runner identities are pinned or recorded, while caches remain non-authoritative. | Accepted | Toolchains |
+| D-484 | Testing and Release | Build reproducibility is measured and documented but is not claimed until evidence proves it. | Accepted | Reproducibility |
+| D-485 | Testing and Release | Every package, plugin, binary, tool, Action, compiler, and bundled resource requires version, checksum, source, license, transitive, provenance, maintenance, and vulnerability records. | Accepted | Dependencies |
+| D-486 | Testing and Release | Dependabot is the initial reviewed update-proposal service, with no automatic dependency merging. | Accepted | Dependencies |
+| D-487 | Testing and Release | CodeQL is not a Dart analyzer and may be evaluated only for officially supported languages and GitHub Actions workflows. | Accepted | Security tooling |
+| D-488 | Testing and Release | Release SBOMs use an SPDX-compatible primary representation, with exact version and generator deferred and optional CycloneDX interoperability. | Accepted | SBOM |
+| D-489 | Testing and Release | Releases require SLSA-compatible provenance evidence and may use GitHub artifact attestations without claiming certification or inherent artifact quality. | Accepted | Provenance |
+| D-490 | Testing and Release | Flatpak is the qualified initial Linux package target with a portable archive secondary, subject to sandbox, portal, platform, and GPL conformance. | Accepted | Linux packaging |
+| D-491 | Testing and Release | Signed MSIX and portable ZIP are the qualified initial Windows targets, subject to packaged conformance and unresolved tooling and certificate selection. | Accepted | Windows packaging |
+| D-492 | Testing and Release | Android qualification produces a signed APK and an App Bundle only when a selected channel requires it, without selecting an application store. | Accepted | Android packaging |
+| D-493 | Testing and Release | Web releases use hosting-independent versioned static bundles with HTTPS, CSP, coherent caches, complete manifests, and whole-release rollback. | Accepted | Web packaging |
+| D-494 | Testing and Release | Every object-code release is linked to corresponding source, build information, notices, dependency evidence, and native-binary source obligations supporting GPL-3.0-or-later compliance. | Accepted | Licensing |
+| D-495 | Testing and Release | Application versions, build numbers, format versions, schema versions, plugin versions, and platform-contract versions remain distinct, with documented public contracts using Semantic Versioning. | Accepted | Versioning |
+| D-496 | Testing and Release | Signing follows qualification without rebuilding source, records unsigned and signed identities, and final manifests hash the signed artifacts. | Accepted | Signing |
+| D-497 | Testing and Release | Publication succeeds only after every official remote artifact is independently fetched and verified against the release manifest. | Accepted | Publication |
+| D-498 | Testing and Release | Version 1 uses manual update discovery and installation without polling, automatic download, automatic installation, or a custom update protocol. | Accepted | Updates |
+| D-499 | Testing and Release | Rollback and withdrawal use qualified artifacts, compatibility warnings, preserved audit records, and no false global atomicity. | Accepted | Rollback |
+| D-500 | Testing and Release | Release failures, flaky outcomes, quality gates, quarantines, and waivers are structured, explicit, time-bounded, revision-specific, and auditable. | Accepted | Governance |
 
 ## Deferred Object System Questions
 
@@ -1782,8 +1862,50 @@ No external Import or Export dependency is accepted.
 - `TransferableTypedData` remains a benchmark-gated SDK optimization.
 - No external scheduler, worker-pool, cancellation, admission, or background-work dependency is accepted.
 
+## Deferred Testing, Packaging, CI, and Release Questions
+
+- Automatic update service
+- Distribution-store selection
+- Exact supported OS and browser versions
+- Safari and WebKit qualification infrastructure
+- Linux ARM64 artifacts
+- AppImage adoption and Debian-family packaging
+- Windows installer formats beyond MSIX
+- Exact MSIX tooling, publisher identity, and certificate
+- Exact Android SDK levels, signing provider, and distribution channel
+- Exact Web host
+- Exact property-testing, fuzzing, golden, and browser-automation tools
+- Exact SBOM generator, version, and serialization
+- Exact provenance and signing tools
+- Formal accessibility certification
+- Proven reproducibility target
+- Wasm toolchain and qualification matrix
+- Recognition and Math Recognition
+- Symbolic Math
+- Sync and Cloud
+
+## Testing, Packaging, CI, and Release Open-Source Record
+
+Accepted foundations and services:
+
+- Flutter and Dart testing foundations
+- Flutter `integration_test`
+- GitHub Actions as the initial hosted CI orchestrator
+- GitHub Dependabot as a reviewed update-proposal service
+- SPDX-compatible SBOM representation
+- SLSA-compatible provenance model
+- GitHub artifact attestations where supported
+- Flatpak as a qualified initial Linux packaging target
+- MSIX as a qualified initial Windows packaging target
+- Android SDK and Gradle release tooling with exact pins
+- Hosting-independent Flutter Web release bundles
+
+CodeQL for supported non-Dart languages and workflow scanning, OSV Scanner, Renovate, exact SPDX and CycloneDX generators, property-testing and fuzzing tools, golden helpers, browser automation and binary acquisition, AppImage, Debian packaging, exact MSIX tooling, signing providers, and Web hosting remain under study or deferred.
+
+CodeQL does not support Dart. No automatic dependency merging is accepted. No external Dart testing dependency is accepted. Package formats do not become supported until packaged conformance passes. Attestations and automated scans provide evidence rather than architectural acceptance or certification.
+
 ## Roadmap
 
-- Platform Integration and Capability Adapters — Accepted with modifications
-- Testing, Packaging, CI, and Release Architecture — Next subsystem
+- Testing, Packaging, CI, and Release Architecture — Accepted with modifications
+- Final Architecture Consistency Audit and Codex Implementation Roadmap — Next phase
 - Recognition, Math Recognition, Symbolic Math, and optional Sync/Cloud — Post-v1
