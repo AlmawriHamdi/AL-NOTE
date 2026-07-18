@@ -16,7 +16,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | Interaction Mapping System | Accepted with modifications | Owns semantic action mapping, arbitration, pointer ownership, and binding profiles |
 | Text Object System | Accepted with modifications | Owns persistent Unicode text, constrained formatting, layout, and editing contracts |
 | Image Object System | Accepted with modifications | Owns persistent image payloads, resource references, orientation, crop, and image boundaries |
-| Shape Object System | Next subsystem | Will define persistent geometric shapes, style, editing, and rendering contracts |
+| Shape Object System | Accepted with modifications | Owns built-in shape kinds, intrinsic geometry, styles, validation, and migrations |
+| PDF System | Next subsystem | Will define PDF source, page, annotation, rendering, and export boundaries |
 | Recognition, Mathematics, and Optional Sync/Cloud | Post-v1 | Official future goals preserved by version-1 architecture without premature implementation |
 
 ## Object System
@@ -291,6 +292,45 @@ Stored handwriting → Math Recognition → structured mathematics → Symbolic 
 
 These future subsystems remain undesigned. Their specialist assignments must perform open-source and licensing evaluation before proposing internal architecture or dependencies.
 
+## Shape Object System
+
+The Shape Object System provides editable, deterministic, vector-quality geometric Page Objects using the built-in Object type `alnote.shape`.
+
+### Accepted Ownership Boundaries
+
+- Built-in shapes use permanent string-based `shapeKind` identifiers.
+- Version 1 supports `line`, `rectangle`, `ellipse`, `polygon`, and `polyline`.
+- Arrows, rounded rectangles, and circles are variations rather than separate persistent kinds.
+- Lines, rectangles, and ellipses retain parametric geometry.
+- Polygons and polylines retain ordered vertices.
+- General authoritative paths remain deferred.
+- The Shape payload contains intrinsic geometry, explicit stroke and fill records, Shape opacity, and preserved unknown fields.
+- The common Object envelope owns `typeSchemaVersion`; the Shape payload does not duplicate it.
+- Styles use backend-neutral finite RGBA values, enabled states, solid fills, caps, joins, miter limits, and bounded dash semantics.
+- Rectangles may use one uniform nonnegative corner radius.
+- Arrowheads are bounded endpoint decorations rather than separate Objects or geometry kinds.
+- Whole-object Selection transforms update only the common Object transform.
+- Direct Shape editing replaces intrinsic geometry through Commands.
+- Whole-object transforms affect the composed geometry and appearance without automatically baking transforms.
+- Geometry, visual, and interaction bounds remain distinct.
+- Interaction tolerance is transient and never serialized.
+- Hit testing uses Page-space broad-phase rejection followed by inverse-transform local tests.
+- Rendering and export consume backend-neutral semantic Shape data.
+- Rasterization is a last resort and never replaces persistent geometry.
+- Persistent changes use replacement-oriented Commands.
+- Duplication creates a new Object UUID while copying geometry, style, transform, and unknown fields.
+- Version-1 vertices have no independent identity.
+- Degenerate, unsupported, unknown, and unsafe data remain distinguished.
+- Unknown Shape kinds are preserved and never silently converted to fallback rectangles.
+- Plugin-defined shapes use their own namespaced Object type keys.
+- Plugins cannot add private kinds under `alnote.shape`.
+- Configurable validation limits bound geometry and processing work.
+- Shape payloads, validation, and migration belong under `lib/documents/objects/shape/`.
+- Rendering and hit-testing implementations remain in their accepted Drawing areas.
+- No external Shape or geometry dependency is accepted.
+
+The detailed Shape Object System architecture is recorded in [lib/documents/objects/shape/README.md](lib/documents/objects/shape/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -449,6 +489,25 @@ These future subsystems remain undesigned. Their specialist assignments must per
 | D-157 | Images | Future OCR data remains outside the Image Object and identifies the Object, resource UUID/hash, payload revision, orientation, crop, transform revision, engine version, and source-space regions. | Accepted | D-141 |
 | D-158 | Images | Future Sync addresses immutable bytes by hash and logical resources by UUID; remote URLs and cloud locators do not belong in the v1 Image payload. | Accepted | D-141 |
 | D-159 | Images | GIF/WebP/BMP portability, animation, SVG, HEIF/HEIC, AVIF, TIFF, HDR, destructive filters, and external resource links remain deferred. | Deferred | D-146 |
+| D-160 | Shapes | Built-in shapes use one core-controlled Object type key, `alnote.shape`, with permanent string-based `shapeKind` identifiers. | Accepted | Object System |
+| D-161 | Shapes | Version 1 supports `line`, `rectangle`, `ellipse`, `polygon`, and `polyline`; arrows, rounded rectangles, and circles are variations rather than separate persistent kinds. | Accepted | D-160 |
+| D-162 | Shapes | Lines, rectangles, and ellipses retain parametric geometry; polygons and polylines retain ordered vertices; authoritative general paths are deferred. | Accepted | D-161 |
+| D-163 | Shapes | The Shape payload contains `shapeKind`, intrinsic geometry, explicit stroke and fill records, Shape opacity, and preserved unknown fields; the common Object envelope owns `typeSchemaVersion`. | Accepted | D-160, Object System |
+| D-164 | Shapes | Shape styles are backend-neutral and use finite RGBA color values, enabled states, solid fills, stroke width, caps, joins, miter limit, and bounded dash semantics. | Accepted | Drawing graphics contracts |
+| D-165 | Shapes | Version-1 rectangles may use one uniform nonnegative corner radius; per-corner and elliptical corner radii remain deferred. | Accepted | D-161, D-162 |
+| D-166 | Shapes | Arrowheads are bounded endpoint decorations on lines or polylines, use stable core-controlled kinds, derive default size from stroke width, and are not separate Object or geometry kinds. | Accepted | D-161, D-164 |
+| D-167 | Shapes | Selection-based whole-object transforms update only the common Object transform; direct Shape geometry editing replaces intrinsic geometry through Commands. | Accepted | Selection System, Command System |
+| D-168 | Shapes | Whole-object transforms apply to the composed geometry and appearance, while direct geometry edits leave stroke width, dash lengths, opacity, and arrowhead sizing unchanged. Automatic transform baking is deferred. | Accepted | D-167 |
+| D-169 | Shapes | Geometry, visual, and interaction bounds remain distinct; interaction tolerance is transient and caches are non-authoritative. | Accepted | Object System, Drawing Engine |
+| D-170 | Shapes | Hit testing uses page-space broad-phase rejection followed by inverse-transform local-space tests for fills, strokes, and arrowheads. | Accepted | Hit-Testing System |
+| D-171 | Shapes | Rendering and export receive backend-neutral semantic Shape geometry and styles; vector conversion is allowed when required, while rasterization is a last resort and never replaces persistent source geometry. | Accepted | Drawing Engine, Export |
+| D-172 | Shapes | Persistent Shape changes use replacement-oriented Commands; duplication creates a new Object UUID while copying geometry, style, transform, and unknown fields. Version-1 vertices have no independent identity. | Accepted | Object System, Command System |
+| D-173 | Shapes | Degenerate, unsupported, and unknown Shape data is distinguished from unsafe data and preserved without silently converting it into another Shape kind. | Accepted | Storage, Object System |
+| D-174 | Shapes | Plugin-defined shapes use their own namespaced Object type keys and may reuse approved public geometry/style contracts; plugins cannot add private kinds beneath `alnote.shape`. | Accepted | Object System, future Plugin System |
+| D-175 | Shapes | Shape validation enforces configurable bounds on coordinates, vertices, stroke widths, dash data, arrowheads, migration expansion, and geometry-processing work. | Accepted | Storage, Security |
+| D-176 | Shapes | Shape payload contracts, validation, and migration belong conceptually under `lib/documents/objects/shape/`; rendering and hit-testing implementations remain in their accepted Drawing subsystem areas. | Accepted | Repository architecture |
+| D-177 | Shapes | No external Shape or geometry dependency is accepted; Flutter, Skia, SVG, `vector_math`, and path packages remain references or evaluation candidates behind AL NOTE-owned contracts. | Accepted | Open-source evaluation |
+| D-178 | Shapes | General paths, curves, advanced fills, effects, Boolean operations, constraints, connectors, stable vertex identities, text-bearing shapes, and Shape Recognition remain deferred. | Deferred | Future Shape extensions |
 
 ## Deferred Object System Questions
 
@@ -700,8 +759,38 @@ These future subsystems remain undesigned. Their specialist assignments must per
 - Xournal++ is a behavioral reference; direct reuse requires file-level license review.
 - No external Image dependency is accepted yet.
 
+## Deferred Shape Object System Questions
+
+- General and compound paths
+- Bézier curves and splines
+- Arcs, stars, callouts, and connectors
+- Gradients, patterns, textures, and effects
+- Per-corner or elliptical rectangle radii
+- Stable vertex UUIDs
+- Stroke alignment
+- Variable-width strokes
+- Non-scaling stroke modes
+- Boolean geometry
+- Parametric constraints
+- Text inside shapes
+- Recognition-generated shapes
+- Transform baking
+- Parametric-to-path conversion
+
+## Shape Object System Open-Source Record
+
+- Rnote is GPL-3.0-or-later and is an architectural reference.
+- Xournal++ is displayed as GPL-2.0; direct reuse requires exact file-level licensing review.
+- Krita is GPL v3 and is a conceptual reference whose full vector model is too complex for version 1.
+- Flutter `Path` and `Paint` are rendering-adapter concepts only.
+- Skia is BSD-3-Clause and is a rendering reference, not a persistent-data API.
+- SVG provides useful semantic and export terminology but is not AL NOTE's internal file model.
+- `vector_math` is BSD-3-Clause and may be evaluated behind AL NOTE-owned geometry contracts.
+- `path_parsing` is MIT and may later be evaluated for import and export adapters.
+- No external Shape dependency is accepted.
+
 ## Roadmap
 
-- Image Object System — Accepted with modifications
-- Shape Object System — Next subsystem
+- Shape Object System — Accepted with modifications
+- PDF System — Next subsystem
 - Recognition, mathematics, and optional Sync/Cloud — Post-v1
