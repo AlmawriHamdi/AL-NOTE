@@ -1784,7 +1784,6 @@ No external Import or Export dependency is accepted.
 
 ## Roadmap
 
-- Performance, Concurrency, and Background Work — Accepted with modifications
 - Platform Integration and Capability Adapters — Accepted with modifications
 - Testing, Packaging, CI, and Release Architecture — Next subsystem
 - Recognition, Math Recognition, Symbolic Math, and optional Sync/Cloud — Post-v1

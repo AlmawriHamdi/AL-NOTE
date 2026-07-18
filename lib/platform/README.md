@@ -6,7 +6,7 @@ Accepted with modifications.
 
 ## Purpose
 
-Platform Integration defines the portable capability contracts through which AL NOTE interacts with Linux, Windows, Android, Web, Flutter plugins, browser APIs, operating-system APIs, FI, and native libraries.
+Platform Integration defines the portable capability contracts through which AL NOTE interacts with Linux, Windows, Android, Web, Flutter plugins, browser APIs, operating-system APIs, FFI, and native libraries.
 
 AL NOTE uses capability-driven ports and adapters. Portable application and domain code depends only on versioned, AL NOTE-owned capability contracts. Concrete platform adapters implement those contracts at the outer platform boundary.
 
