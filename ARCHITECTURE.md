@@ -24,7 +24,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | Settings and Preferences | Accepted with modifications | Owns typed preferences, scopes, profiles, presets, validation, migration, transactions, and change observation |
 | Plugin System | Accepted with modifications | Owns bounded declarative packages, identities, validation, trust coordination, atomic registries, lifecycle, and preservation |
 | Search and Indexing | Accepted with modifications | Owns derived searchable projections, scanning, memory indexing, query semantics, ranking, results, and freshness reporting |
-| Security and Privacy Architecture | Next subsystem | Will define security policy, threat boundaries, sensitive-data handling, audit ownership, and privacy controls |
+| Security and Privacy Architecture | Accepted with modifications | Owns mandatory security and privacy policy, classification, protection contracts, redaction, audit policy, limits, and safe mode |
+| Performance, Concurrency, and Background Work | Next subsystem | Will define scheduling, bounded concurrency, cancellation, worker execution, memory pressure, and responsiveness |
 | Recognition, Mathematics, and Optional Sync/Cloud | Post-v1 | Official future goals preserved by version-1 architecture without premature implementation |
 
 ## Object System
@@ -592,6 +593,41 @@ Searchable projections and indexes are derived, rebuildable views of immutable a
 
 The detailed Search and Indexing architecture is recorded in [lib/search/README.md](lib/search/README.md).
 
+## Security and Privacy Architecture
+
+Security and Privacy defines mandatory cross-cutting policy and portable protection contracts without replacing existing subsystem ownership.
+
+### Accepted Ownership Boundaries
+
+- Every external and persisted input remains untrusted until validated.
+- AL NOTE makes no absolute security or sandboxing claims.
+- Data classification follows content through copies, caches, temporary storage, Recovery, Export, backups, and future transport.
+- Version 1 does not claim application-level encrypted `.alnote` support.
+- Portable encrypted documents require a separate independently reviewed container design.
+- Secrets use opaque references and asynchronous capability-based secret-store contracts without plaintext fallback.
+- Platform secret protection remains capability-dependent.
+- Cryptographic operations use replaceable reviewed contracts, but no algorithm suite or dependency is accepted.
+- Passwords and keys remain memory-minimized and excluded from ordinary persistence and diagnostics.
+- Authorization tokens are opaque, scoped, expiring, freshness-validated, revocable, and replay-resistant.
+- Version 1 has no telemetry or automatic crash, diagnostic, or network reporting.
+- Mandatory redaction excludes content, secrets, queries, snippets, private paths, and tracking identities.
+- Security owns bounded privacy-safe audit policy and storage requirements.
+- Immutable subsystem-specific resource ceilings cannot be raised through Settings.
+- File, archive, clipboard, drag-and-drop, sharing, and temporary data remain untrusted and bounded.
+- Derived sensitive data receives protection equivalent to its source classification.
+- Protected sources cannot create persistent plaintext derived data without equivalent protection.
+- Security behavior remains capability-based across Linux, Windows, Android, and Web.
+- Web deployments require tested secure-context, origin, CSP, messaging, worker, storage, cache, and XSS controls.
+- Dependencies, CI, builds, releases, provenance, SBOMs, vulnerabilities, and disclosure follow auditable supply-chain policy.
+- Safe mode is deterministic, visible, non-destructive, and cannot bypass validation.
+- Security decisions use accessible host-owned structured requests.
+- Failure and cancellation cannot cause partial publication, authorization, or plaintext fallback.
+- Parser contracts preserve future isolation boundaries without claiming version-1 process sandboxing.
+- Automated adversarial tests and independent high-risk review are required.
+- No Security dependency is accepted.
+
+The detailed Security and Privacy architecture is recorded in [lib/core/security/README.md](lib/core/security/README.md).
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -955,6 +991,36 @@ The detailed Search and Indexing architecture is recorded in [lib/search/README.
 | D-362 | Search | Search failures and cancellation use structured outcomes; corrupt derived caches are discarded or quarantined without risking document content. | Accepted | Failure handling |
 | D-363 | Search | Direct scanning acts as the semantic oracle for indexed-backend conformance, supplemented by adversarial, property, fuzz, Unicode, and cross-platform tests. | Accepted | Testing |
 | D-364 | Search | Search and Indexing architecture belongs under `lib/search/`, with no external Search dependency accepted. | Accepted | Repository architecture |
+| D-365 | Security | Security and Privacy owns mandatory cross-cutting policy and portable protection contracts without replacing existing subsystem owners. | Accepted | Global architecture |
+| D-366 | Security | All external and persisted inputs are treated as untrusted, and AL NOTE makes no absolute security or sandboxing claims. | Accepted | Threat model |
+| D-367 | Security | Security classifications follow content through caches, copies, temporary data, Recovery, Export, backups, and future transport. | Accepted | Privacy |
+| D-368 | Security | Version 1 does not claim application-level encrypted `.alnote` support; portable encrypted documents require a separate reviewed container specification. | Accepted | Storage |
+| D-369 | Security | Storage preserves backend-neutral protected-container detection and transformation boundaries without accepting a concrete encrypted format or field layout. | Accepted | Storage |
+| D-370 | Security | Secrets use opaque references and capability-based asynchronous secret-store contracts with no plaintext fallback. | Accepted | Settings, Platforms |
+| D-371 | Security | Windows, Android, Linux, and Web secret protection is capability-dependent and cannot be represented as equivalent guarantees. | Accepted | Platforms |
+| D-372 | Security | Cryptographic operations use replaceable reviewed, versioned, domain-separated contracts, with no algorithm suite or dependency accepted. | Accepted | Cryptography |
+| D-373 | Security | Passwords and keys remain memory-minimized, excluded from ordinary persistence and diagnostics, and subject only to best-effort zeroization in managed runtimes. | Accepted | Sessions |
+| D-374 | Security | Authorization tokens are opaque, scoped, resource- and operation-bound, freshness-validated, expiring, revocable, replay-resistant, and normally memory-only. | Accepted | Authorization |
+| D-375 | Privacy | Version 1 contains no telemetry, automatic crash upload, diagnostic upload, or automatic network reporting. | Accepted | Privacy |
+| D-376 | Privacy | Mandatory centralized redaction excludes content, secrets, queries, snippets, private paths, and persistent tracking identities from ordinary diagnostics. | Accepted | Diagnostics |
+| D-377 | Security | Security owns bounded privacy-safe audit storage and policy; audit failure cannot authorize an otherwise denied operation. | Accepted | Audit |
+| D-378 | Security | Mandatory resource ceilings use immutable subsystem-specific policy snapshots, may be lowered by platform or user policy, and cannot be raised through Settings. | Accepted | Settings, Platforms |
+| D-379 | Security | Untrusted files use content detection, bounded staged processing, collision and traversal defenses, revalidation, and existing safe-publication boundaries. | Accepted | Storage, Import |
+| D-380 | Security | Clipboard, drag-and-drop, and sharing payloads remain untrusted regardless of origin markers and reuse Import, Export, and Command boundaries. | Accepted | UI, Import, Export |
+| D-381 | Security | Temporary sensitive data uses private randomized bounded staging, explicit ownership and lifetime, best-effort cleanup, and no secure-deletion claim. | Accepted | Platforms |
+| D-382 | Privacy | Derived sensitive data receives protection and retention constraints equivalent to its sensitive source classification. | Accepted | Search, Recovery |
+| D-383 | Security | Protected source material cannot create persistent plaintext Recovery, Search, thumbnail, extraction, or staging data without equivalent protection. | Accepted | Recovery, Search |
+| D-384 | Security | Security protections and degradation are capability-based across Linux, Windows, Android, and Web. | Accepted | Platforms |
+| D-385 | Security | Web deployment requires reviewed secure-context, origin, CSP, messaging, worker, storage, cache, and XSS controls validated against the actual build. | Accepted | Web |
+| D-386 | Security | Dependencies, CI, native artifacts, builds, releases, provenance, SBOMs, vulnerabilities, and disclosure follow a minimized auditable supply-chain policy with distribution-specific authentication. | Accepted | Supply chain |
+| D-387 | Security | Safe mode is deterministic, visible, non-destructive, and unable to bypass ordinary validation or publication boundaries. | Accepted | Application State |
+| D-388 | Security | Security decisions use host-owned, accessible, freshness-bound structured requests that plugins cannot impersonate. | Accepted | UI, Plugins |
+| D-389 | Security | Security failures and cancellation use structured outcomes and cannot cause partial publication, authorization, or plaintext fallback. | Accepted | Failure handling |
+| D-390 | Security | Parser and decoder contracts preserve future isolation boundaries without claiming version-1 process sandboxing. | Accepted | Parsers |
+| D-391 | Privacy | Audit and diagnostic identities, timestamps, and correlation remain bounded and privacy-safe rather than persistent user surveillance. | Accepted | Audit |
+| D-392 | Security | Security requires automated adversarial testing plus independent review of cryptography, threat models, isolation, release processes, and high-risk UX. | Accepted | Testing |
+| D-393 | Security | Portable Security and Privacy ownership belongs under `lib/core/security/`, while concrete platform implementations remain adapters. | Accepted | Repository architecture |
+| D-394 | Security | No Security dependency is accepted; cryptographic packages and SBOM tools remain studies, platform facilities remain capability foundations, and standards remain guidance. | Accepted | Open-source evaluation |
 
 ## Deferred Object System Questions
 
@@ -1455,8 +1521,35 @@ No external Import or Export dependency is accepted.
 - Hivez is rejected for version 1 because its storage coupling, adoption, semantic control, and maturity do not justify foundational use.
 - No third-party Search dependency is accepted.
 
+## Deferred Security and Privacy Questions
+
+- Encrypted `.alnote` container and field layout
+- Algorithm suite, KDF, nonces, and framing
+- Key slots, recipients, password changes, and rotation
+- Encrypted Recovery and Search indexes
+- Protected thumbnails
+- Hardware-backed key migration
+- Cryptographic and secure-storage dependencies
+- Parser process isolation
+- Executable-plugin sandboxing
+- Accounts, Sync, Cloud, authentication, and network protocols
+- Telemetry
+- Exact resource limits
+- Audit encoding
+- SBOM format
+- Release signing and provenance
+- Incident-response operations
+- Final Security UI
+
+## Security and Privacy Open-Source Record
+
+- `package:cryptography`, libsodium, secure-storage packages, Argon2id implementations, SPDX tools, and CycloneDX tools remain studies.
+- Android Keystore, Windows current-user DPAPI, Linux Secret Service, and Web Crypto remain capability-based platform foundations.
+- OWASP ASVS, OWASP MASVS, OWASP File Upload guidance, NIST cryptographic guidance, SLSA, and W3C specifications remain guidance only.
+- No Security, cryptography, secure-storage, audit, SBOM, or supply-chain dependency is accepted.
+
 ## Roadmap
 
-- Search and Indexing — Accepted with modifications
-- Security and Privacy Architecture — Next subsystem
+- Security and Privacy Architecture — Accepted with modifications
+- Performance, Concurrency, and Background Work — Next subsystem
 - Recognition, Math Recognition, Symbolic Math, and optional Sync/Cloud — Post-v1
