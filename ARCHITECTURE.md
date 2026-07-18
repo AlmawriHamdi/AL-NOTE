@@ -15,7 +15,9 @@ This document records architecture approved by the Main Architect, the subsystem
 | Drawing Tool System | Accepted with modifications | Converts assigned normalized input into previews and atomic Command Requests |
 | Interaction Mapping System | Accepted with modifications | Owns semantic action mapping, arbitration, pointer ownership, and binding profiles |
 | Text Object System | Accepted with modifications | Owns persistent Unicode text, constrained formatting, layout, and editing contracts |
-| Image Object System | Next subsystem | Will define persistent image objects, resources, decoding, and display contracts |
+| Image Object System | Accepted with modifications | Owns persistent image payloads, resource references, orientation, crop, and image boundaries |
+| Shape Object System | Next subsystem | Will define persistent geometric shapes, style, editing, and rendering contracts |
+| Recognition, Mathematics, and Optional Sync/Cloud | Post-v1 | Official future goals preserved by version-1 architecture without premature implementation |
 
 ## Object System
 
@@ -233,6 +235,62 @@ The Text Object System provides searchable, accessible, editable Unicode text as
 
 The detailed Text Object System architecture is recorded in [lib/documents/objects/text/README.md](lib/documents/objects/text/README.md).
 
+## Image Object System
+
+The Image Object System provides persistent raster images as transformable Page Objects using the built-in identity `alnote.image`.
+
+### Accepted Ownership Boundaries
+
+- Each Image Object references one immutable generic document resource.
+- The common Object envelope owns `typeSchemaVersion`; the Image payload does not duplicate it.
+- The payload records the resource UUID, verified encoded dimensions, oriented intrinsic size, explicit orientation, normalized crop, rendering intent, and optional user-authored alternative text.
+- Resource hashes and generic media metadata remain owned by the resource manifest.
+- Unknown type-specific Image fields remain preserved inside the payload according to Storage rules.
+- Original encoded bytes and persistent Image fields are authoritative.
+- Decoded pixels, thumbnails, caches, color conversions, alpha masks, and OCR results are derived.
+- PNG and JPEG are the only guaranteed version-1 image formats.
+- Explicit orientation preserves original bytes and prevents double auto-orientation.
+- Crop coordinates use normalized oriented-source space before the common Object transform.
+- Cropping is nondestructive.
+- Movement, rotation, and positive scaling use the common Object transform.
+- Default physical size uses trustworthy bounded resolution metadata or 96 DPI.
+- Default placement preserves aspect ratio, fits down to the Page, and does not automatically upscale.
+- Background and movable images use the same Image Object type.
+- Background constraints belong to the Layer System rather than an `isBackground` payload field.
+- Import validates bounded bytes before an atomic Command publishes the resource and object.
+- Duplicate Image Objects receive new Object UUIDs while sharing immutable resource bytes.
+- Rendering, decoding, caching, color conversion, and precise hit testing remain derived and behind controlled contracts.
+- Missing, corrupt, unsupported, or quarantined resources preserve the object and display a stable placeholder.
+- Normal external export strips sensitive source metadata by default.
+- Future OCR remains outside the Image Object and uses explicit source identity and revision information.
+- Future Sync addresses immutable bytes by hash and logical resources by UUID.
+- Remote URLs and cloud locators do not belong in the version-1 Image payload.
+- No external Image dependency is accepted.
+
+The detailed Image Object System architecture is recorded in [lib/documents/objects/image/README.md](lib/documents/objects/image/README.md).
+
+## Post-v1 Compatibility Boundaries
+
+Handwriting Recognition and OCR, Math Recognition, the Symbolic Math Engine, and optional Sync or Cloud are official post-v1 goals. They are not required for the first build.
+
+Version 1 preserves:
+
+- Raw vector strokes
+- Original image pixels
+- Stable coordinates and transforms
+- Immutable resource identities
+- Versioned schemas
+- Unknown data
+- Extension boundaries
+
+This preservation allows future systems to be added without implementing them prematurely.
+
+Handwritten mathematics will eventually use cooperating boundaries:
+
+Stored handwriting → Math Recognition → structured mathematics → Symbolic Math Engine → evaluated or solved result
+
+These future subsystems remain undesigned. Their specialist assignments must perform open-source and licensing evaluation before proposing internal architecture or dependencies.
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -371,6 +429,26 @@ The detailed Text Object System architecture is recorded in [lib/documents/objec
 | D-137 | Text | Structured mathematics remains separate from ordinary Unicode Text Objects | Accepted | Math Recognition, Symbolic Math |
 | D-138 | Text | Text Object architecture belongs under `lib/documents/objects/text/` | Accepted | Objects |
 | D-139 | Text | Exact fonts, editor libraries, layout profile, advanced formatting, and dependencies remain deferred | Deferred | Testing, Platforms, Settings |
+| D-140 | Roadmap | Handwriting Recognition/OCR, Math Recognition, the Symbolic Math Engine, and optional Sync/Cloud are official post-v1 goals and are not required for the first build. | Accepted | Existing document architecture |
+| D-141 | Roadmap | V1 must preserve raw strokes, original image pixels, stable coordinates and transforms, immutable resource identities, versioned schemas, unknown data, and extension boundaries needed by post-v1 recognition, mathematics, and synchronization systems, without implementing those systems prematurely. | Accepted | D-140 |
+| D-142 | Images | Use built-in type key `alnote.image`; each Image Object references one immutable generic document resource. | Accepted | Object System, Storage |
+| D-143 | Images | The Image payload is versioned by the common Object envelope's `typeSchemaVersion` and does not duplicate that version field. | Accepted | D-142 |
+| D-144 | Images | Persist the resource UUID, verified encoded pixel dimensions, oriented intrinsic document size, explicit orientation, normalized crop, rendering intent, and optional user-authored alt text. The resource hash and media metadata remain owned by the resource manifest. | Accepted | D-142, D-143 |
+| D-145 | Images | Original encoded bytes and persistent Image fields are authoritative; decoded pixels, thumbnails, mipmaps, tiles, alpha masks, color conversions, and OCR results are derived. | Accepted | D-142 |
+| D-146 | Images | PNG and JPEG are the only guaranteed v1 import, storage, display, and export formats. Additional and animated formats require later four-platform conformance approval. | Accepted | D-145 |
+| D-147 | Images | Persist explicit display orientation while preserving original resource bytes; prevent decoder auto-orientation from applying the transform twice. | Accepted | D-144 |
+| D-148 | Images | Encoded pixel dimensions are measured before orientation. Crop coordinates use normalized oriented-source space, followed by the common local-to-page Object transform. | Accepted | D-147 |
+| D-149 | Images | Cropping is nondestructive. Movement, rotation, and positive scaling use the common Object transform; reflection and destructive editing remain deferred. | Accepted | D-148, Selection System |
+| D-150 | Images | Default physical size uses trustworthy bounded resolution metadata, otherwise 96 DPI, preserves aspect ratio, and scales down to fit the page without automatic upscaling. | Accepted | D-144 |
+| D-151 | Images | Movable and background images use the same Image Object type; constrained background placement is owned by the Layer System rather than an `isBackground` payload field. | Accepted | Layer System |
+| D-152 | Images | Import prepares and validates bounded bytes before an atomic Command inserts the resource and Image Object. Cancellation or rejection publishes no document mutation. | Accepted | Command System, Storage |
+| D-153 | Images | Duplicated Image Objects receive new Object UUIDs while sharing immutable resource bytes; resource retention and reclamation remain Resource System responsibilities. | Accepted | Object System, Command System |
+| D-154 | Images | Rendering, decoding, caching, color conversion, and precise hit testing remain outside persistent Image data and behind platform-independent contracts. | Accepted | Drawing Engine |
+| D-155 | Images | Missing, corrupt, unsupported, or quarantined resources preserve the Image Object and render a stable placeholder rather than disappearing. | Accepted | Storage, Drawing Engine |
+| D-156 | Images | Normal external exports strip sensitive source metadata by default; explicitly exporting the original resource may preserve it. Sharing privacy for `.alnote` source metadata requires later Security and Privacy policy. | Accepted | Export, Security |
+| D-157 | Images | Future OCR data remains outside the Image Object and identifies the Object, resource UUID/hash, payload revision, orientation, crop, transform revision, engine version, and source-space regions. | Accepted | D-141 |
+| D-158 | Images | Future Sync addresses immutable bytes by hash and logical resources by UUID; remote URLs and cloud locators do not belong in the v1 Image payload. | Accepted | D-141 |
+| D-159 | Images | GIF/WebP/BMP portability, animation, SVG, HEIF/HEIC, AVIF, TIFF, HDR, destructive filters, and external resource links remain deferred. | Deferred | D-146 |
 
 ## Deferred Object System Questions
 
@@ -593,6 +671,37 @@ The detailed Text Object System architecture is recorded in [lib/documents/objec
 - No external editor library is accepted.
 - No editor library may define AL NOTE's persistent Text format.
 
+## Deferred Image Object System Questions
+
+- GIF, WebP, and BMP portability
+- Animation
+- SVG
+- HEIF and HEIC
+- AVIF
+- TIFF
+- HDR and wide-gamut policy
+- Reflection
+- Destructive editing and filters
+- External resource links
+- Exact decoder dependencies
+- Exact resource limits
+- Exact color-management policy
+- Exact metadata-sanitization implementation
+- OCR implementation and dependencies
+- Sync and Cloud implementation and dependencies
+
+## Image Object System Open-Source Record
+
+- Flutter and Skia codecs are the initial rendering and bounded-decoding baseline, subject to AL NOTE validation.
+- The Dart `image` package is MIT and may be evaluated for controlled metadata, conversion, and testing work.
+- libvips is LGPL-2.1-or-later and may be considered later for low-memory desktop or server processing.
+- ImageMagick is GPLv3-compatible but should not be embedded as the unrestricted core decoder.
+- Rnote is an architectural reference.
+- Xournal++ is a behavioral reference; direct reuse requires file-level license review.
+- No external Image dependency is accepted yet.
+
 ## Roadmap
 
-The Image Object System subsystem is next.
+- Image Object System — Accepted with modifications
+- Shape Object System — Next subsystem
+- Recognition, mathematics, and optional Sync/Cloud — Post-v1
