@@ -18,7 +18,8 @@ This document records architecture approved by the Main Architect, the subsystem
 | Image Object System | Accepted with modifications | Owns persistent image payloads, resource references, orientation, crop, and image boundaries |
 | Shape Object System | Accepted with modifications | Owns built-in shape kinds, intrinsic geometry, styles, validation, and migrations |
 | PDF System | Accepted with modifications | Owns immutable PDF sources, page references, bindings, and engine-neutral PDF contracts |
-| Import and Export System | Next subsystem | Will define external format ingestion, conversion, publication, and export contracts |
+| Import and Export System | Accepted with modifications | Owns external-content orchestration, immutable plans and snapshots, and safe publication |
+| Application State and Document Sessions | Next subsystem | Will define open-document sessions, active state, lifecycle, and multi-window coordination |
 | Recognition, Mathematics, and Optional Sync/Cloud | Post-v1 | Official future goals preserved by version-1 architecture without premature implementation |
 
 ## Object System
@@ -369,6 +370,54 @@ The PDF System preserves original PDF bytes as immutable resources while all new
 
 The detailed PDF System architecture is recorded in [lib/documents/pdf/README.md](lib/documents/pdf/README.md).
 
+## Import and Export System
+
+The Import and Export System orchestrates safe external-content ingestion and privacy-aware output generation without owning format internals or directly mutating documents.
+
+### Accepted Ownership Boundaries
+
+- Open, Save, and Save As `.alnote` remain owned by Storage.
+- Opening standalone PDFs belongs to PDF plus the future Document Sessions System.
+- Import and Insert external content belong to Import.
+- PDF, PNG, and JPEG output generation belongs to Export.
+- Sharing completed artifacts belongs to platform adapters after Export.
+- Share is not an export format.
+- Guaranteed version-1 formats are PDF, PNG, and JPEG.
+- Stable identifiers use `alnote.format.pdf`, `alnote.format.png`, and `alnote.format.jpeg`.
+- Import detection inspects actual content and treats extensions and MIME types only as hints.
+- Import preparation produces immutable, temporary, nonpersistent Prepared Import Plans.
+- Staged resources use bounded, expiring, host-owned tokens.
+- Final destinations use stable Section, Page, and Layer identities.
+- Import publication occurs exclusively through Commands.
+- One PDF's selected Pages form one atomic import by default.
+- Independent source files default to separate transactions.
+- Partial success is allowed only between declared transaction groups.
+- Export operates on one immutable document revision.
+- Live edits do not alter an export already in progress.
+- Export pins its resolved renderer and type-handler set for the job's lifetime.
+- Export does not mutate the document or enter Command History.
+- Selected-object export is Page-scoped in version 1.
+- PDF construction and sanitization remain owned by the PDF System.
+- PNG is the default raster format.
+- JPEG requires an explicit opaque background and defaults to white.
+- Raster export defaults to 144 DPI and remains screen-independent.
+- Multipage raster export defaults to one output file per Page.
+- Separate output files are not globally atomic.
+- ZIP may be offered when one destination artifact is required.
+- Output uses temporary generation and safe destination commit where supported.
+- Platform adapters expose source, destination, temporary-output, commit, and sharing capabilities.
+- Shared logic does not assume filesystem paths on Android or Web.
+- Cancellation, failure, partial publication, and degradation use structured results.
+- Silent omission of content is forbidden.
+- Export metadata uses privacy-safe defaults; author metadata is opt-in.
+- Plugin importers and exporters remain declarative and constrained.
+- No external Import or Export dependency is accepted.
+
+Detailed architecture is recorded in:
+
+- [lib/documents/import/README.md](lib/documents/import/README.md)
+- [lib/documents/export/README.md](lib/documents/export/README.md)
+
 ## Decision Ledger
 
 | ID | Subsystem | Decision | Status | Dependencies |
@@ -570,6 +619,33 @@ The detailed PDF System architecture is recorded in [lib/documents/pdf/README.md
 | D-200 | PDF | AL NOTE must reuse a mature PDF engine rather than create a parser or renderer; PDFium, `pdfrx`, and PDF.js are leading candidates, but no backend dependency is accepted until audits and conformance tests pass. | Accepted | Open-source evaluation |
 | D-201 | PDF | PDF model, coordinate, binding, rendering-contract, extraction-contract, import/export-contract, security, and backend-interface ownership belongs conceptually under `lib/documents/pdf/`; platform implementations remain behind adapters. | Accepted | Repository architecture |
 | D-202 | PDF | Editable native annotations, forms, signatures, multipage movable containers, OCR, archival conformance, advanced color, source-layer remapping, password persistence, output encryption, and exact rendering/export dependencies remain deferred. | Deferred | Future PDF extensions |
+| D-203 | Import/Export | Open, Save, and Save As remain separate from Import and Export | Accepted | Storage |
+| D-204 | Import/Export | Import and Export own orchestration, not format internals | Accepted | PDF, Image, Drawing |
+| D-205 | Import/Export | PDF, PNG, and JPEG are guaranteed version-1 formats | Accepted | PDF, Image |
+| D-206 | Import/Export | Stable format identifiers use the `alnote.format.*` namespace | Accepted | Object identity conventions |
+| D-207 | Import | Detection inspects content and never trusts extensions alone | Accepted | Security |
+| D-208 | Import | Imports use immutable transient Prepared Import Plans | Accepted | Storage, Commands |
+| D-209 | Import | Staged resources use bounded, expiring host-owned tokens | Accepted | Storage resources |
+| D-210 | Import | Final destinations use stable Page, Section, and Layer identities | Accepted | Documents, Layers |
+| D-211 | Import | One PDF's selected Pages form one atomic import by default | Accepted | PDF, Commands |
+| D-212 | Import | Independent input files default to separate transactions | Accepted | Commands |
+| D-213 | Import | Import publication occurs exclusively through Commands | Accepted | Command System |
+| D-214 | Export | Every export uses one immutable document snapshot revision | Accepted | Documents, Resources |
+| D-215 | Export | Export Plans perform preflight before expensive processing | Accepted | Drawing, PDF, Image |
+| D-216 | Export | Export does not mutate documents or enter Command History | Accepted | Commands |
+| D-217 | Export | Selected-object export is page-scoped in version 1 | Accepted | Selection |
+| D-218 | Export | PDF construction and sanitization remain owned by the PDF System | Accepted | PDF |
+| D-219 | Export | Raster export uses explicit resolution and background policies | Accepted | Drawing, Image |
+| D-220 | Export | JPEG always uses an explicit opaque background | Accepted | Image |
+| D-221 | Export | Multipage raster export defaults to one file per Page | Accepted | Platform adapters |
+| D-222 | Export | ZIP is optional when one destination artifact is required | Accepted | Platform adapters |
+| D-223 | Export | Separate output files are not treated as globally atomic | Accepted | Platform adapters |
+| D-224 | Import/Export | Platform adapters expose capabilities rather than conversion policy | Accepted | Platform integration |
+| D-225 | Export | Output uses temporary generation and safe commit where available | Accepted | Platform integration |
+| D-226 | Import/Export | Cancellation, failure, and degradation use structured results | Accepted | Commands, Platform integration |
+| D-227 | Export | Export metadata uses privacy-safe defaults | Accepted | Security, Privacy |
+| D-228 | Import/Export | Plugin importers and exporters remain declarative and constrained | Accepted | Plugin System |
+| D-229 | Import/Export | Additional formats, cloud sources, and advanced export features are postponed | Deferred | Post-v1 systems |
 
 ## Deferred Object System Questions
 
@@ -886,8 +962,52 @@ The detailed PDF System architecture is recorded in [lib/documents/pdf/README.md
 - No PDF dependency is accepted yet.
 - AL NOTE will not implement a PDF parser or renderer from scratch.
 
+## Deferred Import and Export Questions
+
+- Additional import and export formats
+- Cloud sources and destinations
+- Remote acquisition and publication
+- Archive import
+- SVG import and export
+- Office-document import
+- Advanced presets
+- Cross-document import transactions
+- Editable PDF annotation export
+- PDF archival conformance
+- Animated output
+- Global atomicity for multiple separate files
+- Exact picker and sharing dependencies
+- Exact image encoder dependency
+- Exact PDF composer dependency
+- OCR-assisted import
+- Recognition-aware export
+- Sync-integrated import and export
+
+## Import and Export Open-Source Record
+
+The following remain candidates only:
+
+- Flutter `file_selector`
+- `file_picker`
+- `share_plus`
+- Dart `image`
+- Dart `archive`
+- Dart `pdf`
+- `pdfrx` and PDFium
+- PDF.js
+- qpdf
+- Rnote
+- Xournal++
+- libvips
+- ImageMagick
+- `flutter_svg`
+
+Every dependency and bundled binary requires a pinned transitive-license, security, maintenance, and platform audit before acceptance.
+
+No external Import or Export dependency is accepted.
+
 ## Roadmap
 
-- PDF System — Accepted with modifications
-- Import and Export System — Next subsystem
-- Recognition, mathematics, and optional Sync/Cloud — Post-v1
+- Import and Export System — Accepted with modifications
+- Application State and Document Sessions — Next subsystem
+- Recognition, Math Recognition, Symbolic Math, and optional Sync/Cloud — Post-v1
