@@ -15,6 +15,7 @@ concurrency:
 
 env:
   FLUTTER_COMMIT: ee80f08bbf97172ec030b8751ceab557177a34a6
+  FLUTTER_VERSION: 3.44.6
   FLUTTER_REPOSITORY: https://github.com/flutter/flutter.git
 
 jobs:
@@ -49,8 +50,8 @@ jobs:
           flutter_root="$RUNNER_TEMP/flutter"
           git init "$flutter_root"
           git -C "$flutter_root" remote add origin "$FLUTTER_REPOSITORY"
-          git -C "$flutter_root" fetch --depth=1 origin "$FLUTTER_COMMIT"
-          git -C "$flutter_root" checkout --detach "$FLUTTER_COMMIT"
+          git -C "$flutter_root" fetch --depth=1 origin "refs/tags/$FLUTTER_VERSION:refs/tags/$FLUTTER_VERSION"
+          git -C "$flutter_root" checkout --detach "$FLUTTER_VERSION"
           actual_commit="$(git -C "$flutter_root" rev-parse HEAD)"
           test "$actual_commit" = "$FLUTTER_COMMIT"
           echo "$flutter_root/bin" >> "$GITHUB_PATH"
@@ -94,8 +95,8 @@ jobs:
           flutter_root="$RUNNER_TEMP/flutter"
           git init "$flutter_root"
           git -C "$flutter_root" remote add origin "$FLUTTER_REPOSITORY"
-          git -C "$flutter_root" fetch --depth=1 origin "$FLUTTER_COMMIT"
-          git -C "$flutter_root" checkout --detach "$FLUTTER_COMMIT"
+          git -C "$flutter_root" fetch --depth=1 origin "refs/tags/$FLUTTER_VERSION:refs/tags/$FLUTTER_VERSION"
+          git -C "$flutter_root" checkout --detach "$FLUTTER_VERSION"
           actual_commit="$(git -C "$flutter_root" rev-parse HEAD)"
           test "$actual_commit" = "$FLUTTER_COMMIT"
           echo "$flutter_root/bin" >> "$GITHUB_PATH"
@@ -130,8 +131,8 @@ jobs:
           flutter_root="$RUNNER_TEMP/flutter"
           git init "$flutter_root"
           git -C "$flutter_root" remote add origin "$FLUTTER_REPOSITORY"
-          git -C "$flutter_root" fetch --depth=1 origin "$FLUTTER_COMMIT"
-          git -C "$flutter_root" checkout --detach "$FLUTTER_COMMIT"
+          git -C "$flutter_root" fetch --depth=1 origin "refs/tags/$FLUTTER_VERSION:refs/tags/$FLUTTER_VERSION"
+          git -C "$flutter_root" checkout --detach "$FLUTTER_VERSION"
           actual_commit="$(git -C "$flutter_root" rev-parse HEAD)"
           test "$actual_commit" = "$FLUTTER_COMMIT"
           echo "$flutter_root/bin" >> "$GITHUB_PATH"
@@ -165,8 +166,9 @@ jobs:
           $flutterRoot = Join-Path $env:RUNNER_TEMP 'flutter'
           git init $flutterRoot
           git -C $flutterRoot remote add origin $env:FLUTTER_REPOSITORY
-          git -C $flutterRoot fetch --depth=1 origin $env:FLUTTER_COMMIT
-          git -C $flutterRoot checkout --detach $env:FLUTTER_COMMIT
+          $flutterTagRef = "refs/tags/$($env:FLUTTER_VERSION):refs/tags/$($env:FLUTTER_VERSION)"
+          git -C $flutterRoot fetch --depth=1 origin $flutterTagRef
+          git -C $flutterRoot checkout --detach $env:FLUTTER_VERSION
           $actualCommit = (git -C $flutterRoot rev-parse HEAD).Trim()
           if ($actualCommit -ne $env:FLUTTER_COMMIT) {
             throw "Expected Flutter $env:FLUTTER_COMMIT but found $actualCommit"
