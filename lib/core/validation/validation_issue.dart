@@ -28,7 +28,43 @@ enum ValidationIssueCode {
   invalid('core.validation.invalid'),
 
   /// A redaction-safe warning applies.
-  warning('core.validation.warning');
+  warning('core.validation.warning'),
+
+  /// An identity occurs more than once.
+  duplicateIdentity('documents.validation.duplicate_identity'),
+
+  /// A value has more than one structural owner.
+  multipleOwnership('documents.validation.multiple_ownership'),
+
+  /// A document structure violates a closed invariant.
+  invalidStructure('documents.validation.invalid_structure'),
+
+  /// Source-layer roles are not in canonical order.
+  invalidLayerOrder('documents.validation.invalid_layer_order'),
+
+  /// A source-layer role occurs too many times.
+  invalidLayerRoleCount('documents.validation.invalid_layer_role_count'),
+
+  /// A page has no content-role layer.
+  missingContentLayer('documents.validation.missing_content_layer'),
+
+  /// A known Object payload is invalid.
+  invalidObjectPayload('documents.validation.invalid_object_payload'),
+
+  /// An Object type is unknown and preserved inertly.
+  unknownObjectType('documents.validation.unknown_object_type'),
+
+  /// A known Object schema is unsupported and preserved inertly.
+  unsupportedObjectSchema('documents.validation.unsupported_object_schema'),
+
+  /// A Layer type is unknown and preserved inertly.
+  unknownLayerType('documents.validation.unknown_layer_type'),
+
+  /// A referenced logical resource is unavailable.
+  missingResource('documents.validation.missing_resource'),
+
+  /// Required registered behavior is unavailable.
+  unavailableBehavior('documents.validation.unavailable_behavior');
 
   const ValidationIssueCode(this.stableCode);
 
