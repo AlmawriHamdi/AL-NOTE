@@ -136,7 +136,7 @@ void main() {
       expect(_apply(scaleThenTranslation, _point(1, 1)), _point(3, 2));
     });
 
-    test('inverse provides deterministic point round trips', () {
+    test('normal translation, rotation, and scale composition round-trips', () {
       final translation = _transform(
         TranslationTransformOperation2D(_vector(7, -3)),
       );
@@ -148,26 +148,30 @@ void main() {
               .value;
       final combined =
           (first.then(scale) as Ok<AffineTransform2D, StructuredFailure>).value;
-      final inverse =
-          (combined.inverse() as Ok<AffineTransform2D, StructuredFailure>)
-              .value;
       final original = _point(11, -8);
 
-      final transformed = _apply(combined, original);
-      final roundTrip = _apply(inverse, transformed);
+      _expectRoundTrip(combined, original, tolerance: 1e-10);
+    });
 
-      _expectPointNear(roundTrip, original);
+    test('rejects the auditor ill-conditioned four-operation sequence', () {
+      final result = _composeOperations(<TransformOperation2D>[
+        _scale(1, 1e-4, _point(0, 0)),
+        _rotation(math.pi / 4, _point(0, 0)),
+        _scale(1e-8, 1e4, _point(0, 0)),
+        _rotation(-math.pi / 3, _point(0, 0)),
+      ]);
+
+      final failure =
+          (result as Err<AffineTransform2D, StructuredFailure>).error;
+      expect(failure.code, 'core.geometry.ill_conditioned_transform');
     });
 
     test('uniform scale 1e-7 is accepted, invertible, and round-trips', () {
       final transform = _transform(_scale(1e-7, 1e-7, _point(0, 0)));
-      final inverse =
-          (transform.inverse() as Ok<AffineTransform2D, StructuredFailure>)
-              .value;
       final point = _point(3, -4);
 
       expect(transform.determinant, closeTo(1e-14, 1e-28));
-      _expectPointNear(_apply(inverse, _apply(transform, point)), point);
+      _expectRoundTrip(transform, point, tolerance: 1e-10);
     });
 
     test('uniform scale 1e7 and its inverse are accepted and round-trip', () {
@@ -178,7 +182,7 @@ void main() {
       final point = _point(3, -4);
 
       expect(inverse.determinant, closeTo(1e-14, 1e-28));
-      _expectPointNear(_apply(inverse, _apply(transform, point)), point);
+      _expectRoundTrip(transform, point, tolerance: 1e-10);
     });
 
     test('composition rejects once its inverse is not representable', () {
@@ -279,6 +283,42 @@ AffineTransform2D _transform(TransformOperation2D operation) =>
 
 Point2 _apply(AffineTransform2D transform, Point2 point) =>
     (transform.applyToPoint(point) as Ok<Point2, StructuredFailure>).value;
+
+Result<AffineTransform2D, StructuredFailure> _composeOperations(
+  Iterable<TransformOperation2D> operations,
+) {
+  var current = _transform(const IdentityTransformOperation2D());
+  for (final operation in operations) {
+    final next = AffineTransform2D.fromOperation(operation);
+    if (next is Err<AffineTransform2D, StructuredFailure>) {
+      return next;
+    }
+    final composed = current.then(
+      (next as Ok<AffineTransform2D, StructuredFailure>).value,
+    );
+    if (composed is Err<AffineTransform2D, StructuredFailure>) {
+      return composed;
+    }
+    current = (composed as Ok<AffineTransform2D, StructuredFailure>).value;
+  }
+  return Ok<AffineTransform2D, StructuredFailure>(current);
+}
+
+void _expectRoundTrip(
+  AffineTransform2D transform,
+  Point2 point, {
+  required double tolerance,
+}) {
+  final inverse =
+      (transform.inverse() as Ok<AffineTransform2D, StructuredFailure>).value;
+  final roundTrip = _apply(inverse, _apply(transform, point));
+  expect(
+    (roundTrip.approximatelyEquals(point, tolerance: tolerance)
+            as Ok<bool, StructuredFailure>)
+        .value,
+    isTrue,
+  );
+}
 
 void _expectPointNear(Point2 actual, Point2 expected) {
   expect(

@@ -7,10 +7,25 @@ import '../outcomes/structured_failure.dart';
 import 'geometry_values.dart';
 import 'transform_operations.dart';
 
+/// The inclusive scale-relative determinant bound for affine inversion.
+///
+/// For linear coefficients `a`, `b`, `c`, and `d`, each coefficient is divided
+/// by their maximum absolute magnitude before the determinant is calculated.
+/// The resulting magnitude must be at least this value.
+const double minimumNormalizedAffineDeterminant = 1e-10;
+
 /// An immutable finite invertible affine transform in page space.
 ///
 /// There is no public raw-matrix constructor. Instances originate from a
 /// controlled [TransformOperation2D], composition, or inversion.
+///
+/// Numerical conditioning is scale-relative. If `m` is the maximum absolute
+/// linear coefficient, the transform requires
+/// `|(a / m)(d / m) - (b / m)(c / m)|` to be at least
+/// [minimumNormalizedAffineDeterminant]. Normalizing before multiplication
+/// prevents coefficient squaring from overflowing or underflowing. The same
+/// criterion is applied to the calculated inverse, so every accepted transform
+/// and its inverse satisfy the documented conditioning boundary.
 final class AffineTransform2D {
   const AffineTransform2D._({
     required double m00,
@@ -213,6 +228,33 @@ final class AffineTransform2D {
         ),
       );
     }
+    if (_normalizedDeterminantMagnitude(m00, m01, m10, m11) <
+        minimumNormalizedAffineDeterminant) {
+      return Err<AffineTransform2D, StructuredFailure>(
+        _affineFailure(
+          code: 'core.geometry.ill_conditioned_transform',
+          message:
+              'The affine linear matrix is too ill-conditioned to invert '
+              'reliably.',
+        ),
+      );
+    }
+    if (_normalizedDeterminantMagnitude(
+          inverseM00,
+          inverseM01,
+          inverseM10,
+          inverseM11,
+        ) <
+        minimumNormalizedAffineDeterminant) {
+      return Err<AffineTransform2D, StructuredFailure>(
+        _affineFailure(
+          code: 'core.geometry.ill_conditioned_transform',
+          message:
+              'The affine inverse is too ill-conditioned for reliable '
+              'coordinate recovery.',
+        ),
+      );
+    }
     return Ok<AffineTransform2D, StructuredFailure>(
       AffineTransform2D._(
         m00: m00,
@@ -239,6 +281,26 @@ final class AffineTransform2D {
 
   @override
   int get hashCode => Object.hash(_m00, _m01, _m10, _m11, _tx, _ty);
+}
+
+double _normalizedDeterminantMagnitude(
+  double m00,
+  double m01,
+  double m10,
+  double m11,
+) {
+  final maximumMagnitude = math.max(
+    math.max(m00.abs(), m01.abs()),
+    math.max(m10.abs(), m11.abs()),
+  );
+  if (maximumMagnitude == 0) {
+    return 0;
+  }
+  final normalizedM00 = m00 / maximumMagnitude;
+  final normalizedM01 = m01 / maximumMagnitude;
+  final normalizedM10 = m10 / maximumMagnitude;
+  final normalizedM11 = m11 / maximumMagnitude;
+  return (normalizedM00 * normalizedM11 - normalizedM01 * normalizedM10).abs();
 }
 
 StructuredFailure _affineFailure({
