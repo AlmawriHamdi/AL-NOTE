@@ -147,5 +147,85 @@ void main() {
 
       expect(calls, 0);
     });
+
+    test('attempts later listeners before rethrowing the first exception', () {
+      final controller = CancellationController();
+      final firstError = StateError('listener failed');
+      var laterListenerCalled = false;
+      StackTrace? originalStackTrace;
+      StackTrace? observedStackTrace;
+      controller.token.addListener((reason) {
+        try {
+          throw firstError;
+        } on Object catch (_, stackTrace) {
+          originalStackTrace = stackTrace;
+          rethrow;
+        }
+      });
+      controller.token.addListener((reason) {
+        laterListenerCalled = true;
+      });
+
+      Object? observedError;
+      try {
+        controller.cancel('first');
+      } on Object catch (error, stackTrace) {
+        observedError = error;
+        observedStackTrace = stackTrace;
+      }
+
+      expect(observedError, same(firstError));
+      expect(observedStackTrace.toString(), originalStackTrace.toString());
+      expect(laterListenerCalled, isTrue);
+      expect(controller.token.isCancelled, isTrue);
+      expect(controller.token.reason, 'first');
+      expect(controller.cancel('second'), isFalse);
+    });
+
+    test('reentrant cancellation loses and preserves the first reason', () {
+      final controller = CancellationController();
+      bool? reentrantResult;
+      controller.token.addListener((reason) {
+        reentrantResult = controller.cancel('reentrant');
+      });
+
+      expect(controller.cancel('first'), isTrue);
+
+      expect(reentrantResult, isFalse);
+      expect(controller.token.reason, 'first');
+    });
+
+    test(
+      'listener addition and removal use cancellation snapshot semantics',
+      () {
+        final controller = CancellationController();
+        final events = <String>[];
+
+        void addedDuringNotification(String? reason) {
+          events.add('added:$reason');
+        }
+
+        void removedDuringNotification(String? reason) {
+          events.add('removed:$reason');
+        }
+
+        void firstListener(String? reason) {
+          events.add('first:$reason');
+          controller.token.addListener(addedDuringNotification);
+          controller.token.removeListener(removedDuringNotification);
+        }
+
+        controller.token.addListener(firstListener);
+        controller.token.addListener(removedDuringNotification);
+
+        expect(controller.cancel('winning'), isTrue);
+        expect(events, <String>[
+          'first:winning',
+          'added:winning',
+          'removed:winning',
+        ]);
+        expect(controller.token.reason, 'winning');
+      },
+    );
   });
 }

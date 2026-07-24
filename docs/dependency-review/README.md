@@ -61,8 +61,10 @@ against commit `ee80f08bbf97172ec030b8751ceab557177a34a6`.
 
 ## Phase 1 identity dependency
 
-Phase 1 adds `uuid` solely to generate and parse identifiers behind AL
-NOTE-owned identity contracts. The package is published by `yuli.dev` from
+Phase 1 uses `uuid` only inside a private adapter that formats injected random
+bytes as RFC 9562 version 4 UUID text. AL NOTE-owned validation converts that
+generated text into `UuidIdentifier`; the package is not used for public
+identifier parsing. The package is published by `yuli.dev` from
 <https://github.com/Daegalus/dart-uuid>; version `4.6.0` corresponds to tag
 commit `d602950818e4b11d097d26f5408b461f38248130`. The package and its resolved
 transitive dependencies are pure Dart.

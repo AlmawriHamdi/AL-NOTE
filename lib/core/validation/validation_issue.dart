@@ -4,6 +4,9 @@ import '../outcomes/result.dart';
 import '../outcomes/structured_failure.dart';
 import 'validation_path.dart';
 
+/// The maximum accepted length of a trusted validation issue code.
+const int maximumValidationIssueCodeLength = 128;
+
 /// The severity of a validation issue.
 enum ValidationSeverity {
   /// An error that invalidates a validation report.
@@ -11,6 +14,48 @@ enum ValidationSeverity {
 
   /// A warning that does not invalidate a validation report.
   warning,
+}
+
+/// An AL NOTE-owned stable code permitted on a validation issue.
+///
+/// The enum is deliberately closed: caller-controlled strings and rejected
+/// values cannot become stored issue codes.
+enum ValidationIssueCode {
+  /// A required value is absent.
+  required('core.validation.required'),
+
+  /// A value is structurally invalid.
+  invalid('core.validation.invalid'),
+
+  /// A redaction-safe warning applies.
+  warning('core.validation.warning');
+
+  const ValidationIssueCode(this.stableCode);
+
+  /// The stable lowercase namespaced representation of this code.
+  final String stableCode;
+
+  /// Resolves [source] only when it exactly names a predefined trusted code.
+  ///
+  /// The source is never retained. Inputs beyond
+  /// [maximumValidationIssueCodeLength] are rejected before lookup.
+  static Result<ValidationIssueCode, StructuredFailure> parseTrusted(
+    String source,
+  ) {
+    if (source.length > maximumValidationIssueCodeLength) {
+      return Err<ValidationIssueCode, StructuredFailure>(
+        _invalidIssueCodeFailure(),
+      );
+    }
+    for (final code in values) {
+      if (code.stableCode == source) {
+        return Ok<ValidationIssueCode, StructuredFailure>(code);
+      }
+    }
+    return Err<ValidationIssueCode, StructuredFailure>(
+      _invalidIssueCodeFailure(),
+    );
+  }
 }
 
 /// An immutable redaction-safe validation issue.
@@ -25,33 +70,17 @@ final class ValidationIssue {
     required this.path,
   });
 
-  static final RegExp _codePattern = RegExp(
-    r'^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$',
-  );
-
-  /// Creates a redaction-safe issue with a stable lowercase namespaced [code].
+  /// Creates a redaction-safe issue with an AL NOTE-owned trusted [code].
   static Result<ValidationIssue, StructuredFailure> create({
-    required String code,
+    required ValidationIssueCode code,
     required ValidationSeverity severity,
     required ValidationPath path,
-  }) {
-    if (!_codePattern.hasMatch(code)) {
-      return Err<ValidationIssue, StructuredFailure>(
-        StructuredFailure(
-          code: 'core.validation.invalid_issue_code',
-          category: FailureCategory.validation,
-          retryDisposition: RetryDisposition.never,
-          message: 'A validation issue code must be lowercase and namespaced.',
-        ),
-      );
-    }
-    return Ok<ValidationIssue, StructuredFailure>(
-      ValidationIssue._(code: code, severity: severity, path: path),
-    );
-  }
+  }) => Ok<ValidationIssue, StructuredFailure>(
+    ValidationIssue._(code: code, severity: severity, path: path),
+  );
 
-  /// The stable lowercase namespaced issue code.
-  final String code;
+  /// The closed AL NOTE-owned issue code.
+  final ValidationIssueCode code;
 
   /// The issue severity.
   final ValidationSeverity severity;
@@ -71,5 +100,12 @@ final class ValidationIssue {
   int get hashCode => Object.hash(code, severity, path);
 
   @override
-  String toString() => '${severity.name}:$code@$path';
+  String toString() => '${severity.name}:${code.stableCode}@$path';
 }
+
+StructuredFailure _invalidIssueCodeFailure() => StructuredFailure(
+  code: 'core.validation.invalid_issue_code',
+  category: FailureCategory.validation,
+  retryDisposition: RetryDisposition.never,
+  message: 'A validation issue code must be a predefined trusted code.',
+);

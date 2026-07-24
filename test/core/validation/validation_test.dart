@@ -6,7 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('ValidationPath', () {
     test('defensively copies segments and exposes no mutable list', () {
-      final source = <String>['document', 'title'];
+      final source = <ValidationPathSegment>[
+        ValidationPathSegment.document,
+        ValidationPathSegment.title,
+      ];
       final path =
           (ValidationPath.fromSegments(source)
                   as Ok<ValidationPath, StructuredFailure>)
@@ -14,91 +17,152 @@ void main() {
 
       source
         ..clear()
-        ..add('changed');
+        ..add(ValidationPathSegment.input);
 
-      expect(path.segments, <String>['document', 'title']);
-      expect(() => path.segments.add('changed'), throwsUnsupportedError);
+      expect(path.segments, <ValidationPathSegment>[
+        ValidationPathSegment.document,
+        ValidationPathSegment.title,
+      ]);
+      expect(
+        () => path.segments.add(ValidationPathSegment.input),
+        throwsUnsupportedError,
+      );
     });
 
     test('supports root and child paths with value equality', () {
-      final root = _path(<String>[]);
+      final root = _path(<ValidationPathSegment>[]);
       final child =
-          (root.child('document') as Ok<ValidationPath, StructuredFailure>)
+          (root.child(ValidationPathSegment.document)
+                  as Ok<ValidationPath, StructuredFailure>)
               .value;
       final nested =
-          (child.child('title') as Ok<ValidationPath, StructuredFailure>).value;
+          (child.child(ValidationPathSegment.title)
+                  as Ok<ValidationPath, StructuredFailure>)
+              .value;
 
       expect(root.segments, isEmpty);
-      expect(nested, _path(<String>['document', 'title']));
+      expect(
+        nested,
+        _path(<ValidationPathSegment>[
+          ValidationPathSegment.document,
+          ValidationPathSegment.title,
+        ]),
+      );
       expect(nested.toString(), 'document.title');
-      expect(nested.hashCode, _path(<String>['document', 'title']).hashCode);
+      expect(
+        nested.hashCode,
+        _path(<ValidationPathSegment>[
+          ValidationPathSegment.document,
+          ValidationPathSegment.title,
+        ]).hashCode,
+      );
     });
 
-    test('rejects values and unsafe diagnostic text as path segments', () {
-      for (final unsafe in <String>[
-        'Title',
-        'document.title',
-        'user@example.com',
-        '../secret',
-        'contains space',
-        '',
-      ]) {
+    test('string conversion accepts only predefined trusted path tokens', () {
+      expect(
+        ValidationPathSegment.parseTrusted('document'),
+        const Ok<ValidationPathSegment, StructuredFailure>(
+          ValidationPathSegment.document,
+        ),
+      );
+
+      final oversized = List<String>.filled(
+        maximumValidationTokenLength + 1,
+        'a',
+      ).join();
+      for (final untrusted in <String>['secret', 'password123', oversized]) {
         expect(
-          ValidationPath.fromSegments(<String>[unsafe]),
-          isA<Err<ValidationPath, StructuredFailure>>(),
-          reason: unsafe,
+          ValidationPathSegment.parseTrusted(untrusted),
+          isA<Err<ValidationPathSegment, StructuredFailure>>(),
+          reason: untrusted,
         );
       }
+    });
+
+    test('rejects paths beyond the structural depth bound', () {
+      expect(
+        ValidationPath.fromSegments(
+          List<ValidationPathSegment>.filled(
+            maximumValidationPathSegments + 1,
+            ValidationPathSegment.document,
+          ),
+        ),
+        isA<Err<ValidationPath, StructuredFailure>>(),
+      );
     });
   });
 
   group('ValidationIssue', () {
     test('contains only stable redaction-safe fields', () {
       final issue = _issue(
-        code: 'document.title_missing',
+        code: ValidationIssueCode.required,
         severity: ValidationSeverity.error,
-        path: _path(<String>['document', 'title']),
+        path: _path(<ValidationPathSegment>[
+          ValidationPathSegment.document,
+          ValidationPathSegment.title,
+        ]),
       );
 
-      expect(issue.code, 'document.title_missing');
+      expect(issue.code, ValidationIssueCode.required);
       expect(issue.severity, ValidationSeverity.error);
       expect(issue.path.toString(), 'document.title');
       expect(issue.toString(), isNot(contains('rejected title')));
     });
 
-    test('rejects unsafe or unstable issue codes', () {
+    test('string conversion accepts only predefined trusted issue codes', () {
       expect(
-        ValidationIssue.create(
-          code: 'Rejected value: secret@example.com',
-          severity: ValidationSeverity.error,
-          path: _path(<String>['document']),
+        ValidationIssueCode.parseTrusted('core.validation.required'),
+        const Ok<ValidationIssueCode, StructuredFailure>(
+          ValidationIssueCode.required,
         ),
-        isA<Err<ValidationIssue, StructuredFailure>>(),
       );
+
+      final oversized = List<String>.filled(
+        maximumValidationIssueCodeLength + 1,
+        'a',
+      ).join();
+      final issue = _issue(
+        code: ValidationIssueCode.invalid,
+        severity: ValidationSeverity.error,
+        path: _path(<ValidationPathSegment>[ValidationPathSegment.document]),
+      );
+      for (final untrusted in <String>['secret', 'password123', oversized]) {
+        expect(
+          ValidationIssueCode.parseTrusted(untrusted),
+          isA<Err<ValidationIssueCode, StructuredFailure>>(),
+          reason: untrusted,
+        );
+        expect(issue.toString(), isNot(contains(untrusted)));
+      }
     });
   });
 
   group('ValidationReport', () {
     test('orders issues by path, severity, and code deterministically', () {
-      final documentPath = _path(<String>['document']);
-      final titlePath = _path(<String>['document', 'title']);
+      final documentPath = _path(<ValidationPathSegment>[
+        ValidationPathSegment.document,
+      ]);
+      final titlePath = _path(<ValidationPathSegment>[
+        ValidationPathSegment.document,
+        ValidationPathSegment.title,
+      ]);
       final titleWarning = _issue(
-        code: 'document.title_warning',
+        code: ValidationIssueCode.warning,
         severity: ValidationSeverity.warning,
         path: titlePath,
       );
       final titleErrorB = _issue(
-        code: 'document.title_required',
+        code: ValidationIssueCode.required,
         severity: ValidationSeverity.error,
         path: titlePath,
       );
       final documentWarning = _issue(
-        code: 'document.general_warning',
+        code: ValidationIssueCode.warning,
         severity: ValidationSeverity.warning,
         path: documentPath,
       );
       final titleErrorA = _issue(
-        code: 'document.title_invalid',
+        code: ValidationIssueCode.invalid,
         severity: ValidationSeverity.error,
         path: titlePath,
       );
@@ -128,14 +192,14 @@ void main() {
 
     test('warnings remain valid while errors invalidate', () {
       final warning = _issue(
-        code: 'document.optional_warning',
+        code: ValidationIssueCode.warning,
         severity: ValidationSeverity.warning,
-        path: _path(<String>['document']),
+        path: _path(<ValidationPathSegment>[ValidationPathSegment.document]),
       );
       final error = _issue(
-        code: 'document.required_error',
+        code: ValidationIssueCode.required,
         severity: ValidationSeverity.error,
-        path: _path(<String>['document']),
+        path: _path(<ValidationPathSegment>[ValidationPathSegment.document]),
       );
 
       final warningOnly = ValidationReport(<ValidationIssue>[warning]);
@@ -152,9 +216,9 @@ void main() {
     test('defensively copies issue input and exposes immutable views', () {
       final source = <ValidationIssue>[
         _issue(
-          code: 'document.warning',
+          code: ValidationIssueCode.warning,
           severity: ValidationSeverity.warning,
-          path: _path(<String>['document']),
+          path: _path(<ValidationPathSegment>[ValidationPathSegment.document]),
         ),
       ];
       final report = ValidationReport(source);
@@ -181,9 +245,9 @@ void main() {
       );
       final report = ValidationReport(<ValidationIssue>[
         _issue(
-          code: 'document.required_error',
+          code: ValidationIssueCode.required,
           severity: ValidationSeverity.error,
-          path: _path(<String>['document']),
+          path: _path(<ValidationPathSegment>[ValidationPathSegment.document]),
         ),
       ]);
 
@@ -208,9 +272,9 @@ void main() {
       );
       final report = ValidationReport(<ValidationIssue>[
         _issue(
-          code: 'document.warning',
+          code: ValidationIssueCode.warning,
           severity: ValidationSeverity.warning,
-          path: _path(<String>['document']),
+          path: _path(<ValidationPathSegment>[ValidationPathSegment.document]),
         ),
       ]);
 
@@ -228,20 +292,21 @@ void main() {
     final accepted = validator.validate('accepted');
 
     expect(rejected.isValid, isFalse);
-    expect(rejected.issues.single.code, 'input.value_required');
+    expect(rejected.issues.single.code, ValidationIssueCode.required);
+    expect(rejected.issues.single.code.stableCode, 'core.validation.required');
     expect(rejected.issues.single.toString(), isNot(contains('accepted')));
     expect(accepted.isValid, isTrue);
     expect(accepted.issues, isEmpty);
   });
 }
 
-ValidationPath _path(Iterable<String> segments) =>
+ValidationPath _path(Iterable<ValidationPathSegment> segments) =>
     (ValidationPath.fromSegments(segments)
             as Ok<ValidationPath, StructuredFailure>)
         .value;
 
 ValidationIssue _issue({
-  required String code,
+  required ValidationIssueCode code,
   required ValidationSeverity severity,
   required ValidationPath path,
 }) =>
@@ -257,9 +322,12 @@ final class _NonEmptyStringValidator implements Validator<String> {
     }
     return ValidationReport(<ValidationIssue>[
       _issue(
-        code: 'input.value_required',
+        code: ValidationIssueCode.required,
         severity: ValidationSeverity.error,
-        path: _path(<String>['input', 'value']),
+        path: _path(<ValidationPathSegment>[
+          ValidationPathSegment.input,
+          ValidationPathSegment.value,
+        ]),
       ),
     ]);
   }

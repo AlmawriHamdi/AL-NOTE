@@ -109,20 +109,23 @@ final class AffineTransform2D {
         ty: second._m10 * _tx + second._m11 * _ty + second._ty,
       );
 
-  /// Returns the finite inverse when its determinant remains above epsilon.
+  /// Returns the finite representable inverse.
   Result<AffineTransform2D, StructuredFailure> inverse() {
     final inverseDeterminant = 1 / _determinant;
     final inverseM00 = _m11 * inverseDeterminant;
     final inverseM01 = -_m01 * inverseDeterminant;
     final inverseM10 = -_m10 * inverseDeterminant;
     final inverseM11 = _m00 * inverseDeterminant;
-    return _validated(
-      m00: inverseM00,
-      m01: inverseM01,
-      m10: inverseM10,
-      m11: inverseM11,
-      tx: -(inverseM00 * _tx + inverseM01 * _ty),
-      ty: -(inverseM10 * _tx + inverseM11 * _ty),
+    return Ok<AffineTransform2D, StructuredFailure>(
+      AffineTransform2D._(
+        m00: inverseM00,
+        m01: inverseM01,
+        m10: inverseM10,
+        m11: inverseM11,
+        tx: -(inverseM00 * _tx + inverseM01 * _ty),
+        ty: -(inverseM10 * _tx + inverseM11 * _ty),
+        determinant: inverseDeterminant,
+      ),
     );
   }
 
@@ -173,11 +176,11 @@ final class AffineTransform2D {
       );
     }
     final determinant = m00 * m11 - m01 * m10;
-    if (!determinant.isFinite || determinant.abs() <= minimumAffineMagnitude) {
+    if (!determinant.isFinite || determinant == 0) {
       return Err<AffineTransform2D, StructuredFailure>(
         _affineFailure(
           code: 'core.geometry.non_invertible_transform',
-          message: 'Affine determinant magnitude must remain above epsilon.',
+          message: 'Affine determinant must remain finite and nonzero.',
         ),
       );
     }
@@ -186,6 +189,27 @@ final class AffineTransform2D {
         _affineFailure(
           code: 'core.geometry.reflection_not_supported',
           message: 'Affine reflections are not supported.',
+        ),
+      );
+    }
+    final inverseDeterminant = 1 / determinant;
+    final inverseM00 = m11 * inverseDeterminant;
+    final inverseM01 = -m01 * inverseDeterminant;
+    final inverseM10 = -m10 * inverseDeterminant;
+    final inverseM11 = m00 * inverseDeterminant;
+    final inverseTx = -(inverseM00 * tx + inverseM01 * ty);
+    final inverseTy = -(inverseM10 * tx + inverseM11 * ty);
+    if (!inverseDeterminant.isFinite ||
+        !inverseM00.isFinite ||
+        !inverseM01.isFinite ||
+        !inverseM10.isFinite ||
+        !inverseM11.isFinite ||
+        !inverseTx.isFinite ||
+        !inverseTy.isFinite) {
+      return Err<AffineTransform2D, StructuredFailure>(
+        _affineFailure(
+          code: 'core.geometry.non_representable_inverse',
+          message: 'The affine inverse must be finitely representable.',
         ),
       );
     }

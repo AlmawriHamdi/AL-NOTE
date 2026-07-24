@@ -64,6 +64,6 @@ final class ValidationReport {
     if (severityComparison != 0) {
       return severityComparison;
     }
-    return left.code.compareTo(right.code);
+    return left.code.stableCode.compareTo(right.code.stableCode);
   }
 }

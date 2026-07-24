@@ -47,12 +47,12 @@ void main() {
       );
     });
 
-    test('rejects reflection, zero, and epsilon-or-smaller scales', () {
+    test('rejects reflection, zero, and lower-bound-or-smaller scales', () {
       for (final invalid in <double>[
         -1,
         0,
-        minimumAffineMagnitude,
-        minimumAffineMagnitude / 2,
+        minimumScaleValue,
+        minimumScaleValue / 2,
       ]) {
         expect(
           ScaleTransformOperation2D.create(
@@ -65,15 +65,14 @@ void main() {
       }
     });
 
-    test('rejects scales with an epsilon-or-smaller determinant', () {
-      expect(
-        ScaleTransformOperation2D.create(
-          scaleX: 0.000001,
-          scaleY: 0.000001,
-          pivot: _point(0, 0),
-        ),
-        isA<Err<ScaleTransformOperation2D, StructuredFailure>>(),
+    test('accepts scale values whose nonzero determinant is below 1e-12', () {
+      final result = ScaleTransformOperation2D.create(
+        scaleX: 1e-7,
+        scaleY: 1e-7,
+        pivot: _point(0, 0),
       );
+
+      expect(result, isA<Ok<ScaleTransformOperation2D, StructuredFailure>>());
     });
   });
 
@@ -160,14 +159,55 @@ void main() {
       _expectPointNear(roundTrip, original);
     });
 
-    test('composition rejects an epsilon-or-smaller determinant', () {
-      final tiny = _transform(_scale(0.000001, 0.000002, _point(0, 0)));
+    test('uniform scale 1e-7 is accepted, invertible, and round-trips', () {
+      final transform = _transform(_scale(1e-7, 1e-7, _point(0, 0)));
+      final inverse =
+          (transform.inverse() as Ok<AffineTransform2D, StructuredFailure>)
+              .value;
+      final point = _point(3, -4);
 
-      final result = tiny.then(tiny);
+      expect(transform.determinant, closeTo(1e-14, 1e-28));
+      _expectPointNear(_apply(inverse, _apply(transform, point)), point);
+    });
+
+    test('uniform scale 1e7 and its inverse are accepted and round-trip', () {
+      final transform = _transform(_scale(1e7, 1e7, _point(0, 0)));
+      final inverse =
+          (transform.inverse() as Ok<AffineTransform2D, StructuredFailure>)
+              .value;
+      final point = _point(3, -4);
+
+      expect(inverse.determinant, closeTo(1e-14, 1e-28));
+      _expectPointNear(_apply(inverse, _apply(transform, point)), point);
+    });
+
+    test('composition rejects once its inverse is not representable', () {
+      final tiny = _transform(_scale(1e-7, 1e-7, _point(0, 0)));
+      var current = tiny;
+      Result<AffineTransform2D, StructuredFailure>? rejected;
+
+      for (var index = 0; index < 32; index += 1) {
+        final result = current.then(tiny);
+        if (result is Err<AffineTransform2D, StructuredFailure>) {
+          rejected = result;
+          break;
+        }
+        current = (result as Ok<AffineTransform2D, StructuredFailure>).value;
+      }
+
+      final failure =
+          (rejected as Err<AffineTransform2D, StructuredFailure>).error;
+      expect(failure.code, 'core.geometry.non_representable_inverse');
+    });
+
+    test('rejects a transform without a finite representable inverse', () {
+      final operation = _scale(1e-11, 1, _point(double.maxFinite, 0));
+
+      final result = AffineTransform2D.fromOperation(operation);
 
       final failure =
           (result as Err<AffineTransform2D, StructuredFailure>).error;
-      expect(failure.code, 'core.geometry.non_invertible_transform');
+      expect(failure.code, 'core.geometry.non_representable_inverse');
     });
 
     test('application rejects non-finite arithmetic results', () {

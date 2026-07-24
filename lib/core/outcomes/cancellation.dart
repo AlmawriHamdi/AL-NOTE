@@ -14,7 +14,8 @@ abstract interface class CancellationToken {
   /// Adds a synchronous cancellation [listener].
   ///
   /// A listener added after cancellation is invoked immediately with the
-  /// winning reason.
+  /// winning reason. Any exception from that immediate invocation propagates to
+  /// the caller of this method.
   void addListener(CancellationListener listener);
 
   /// Removes a previously added cancellation [listener].
@@ -33,8 +34,15 @@ final class CancellationController {
 
   /// Requests cancellation and returns whether this call won.
   ///
-  /// Only the first call changes the token or notifies listeners. Its [reason]
-  /// remains observable for the token's lifetime.
+  /// The first call commits the state and [reason] before synchronously
+  /// attempting every listener captured at that point. Listener exceptions do
+  /// not prevent later snapshot listeners from running; after all attempts, the
+  /// first exception is rethrown with its original stack.
+  ///
+  /// Reentrant and later calls return `false` without changing the reason.
+  /// Removing a listener during notification does not remove it from the
+  /// captured snapshot. Adding one during notification invokes it immediately
+  /// because cancellation is already observable.
   bool cancel([String? reason]) => _token.cancel(reason);
 }
 
@@ -68,8 +76,18 @@ final class _MutableCancellationToken implements CancellationToken {
     _reason = reason;
     final listeners = List<CancellationListener>.of(_listeners);
     _listeners.clear();
+    Object? firstError;
+    StackTrace? firstStackTrace;
     for (final listener in listeners) {
-      listener(reason);
+      try {
+        listener(reason);
+      } on Object catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError, firstStackTrace!);
     }
     return true;
   }

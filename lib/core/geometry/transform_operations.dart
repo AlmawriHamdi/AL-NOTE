@@ -4,8 +4,8 @@ import '../outcomes/result.dart';
 import '../outcomes/structured_failure.dart';
 import 'geometry_values.dart';
 
-/// The minimum accepted positive scale and determinant magnitude.
-const double minimumAffineMagnitude = 1e-12;
+/// The exclusive lower bound for each public positive scale value.
+const double minimumScaleValue = 1e-12;
 
 /// A controlled page-space operation from which an affine transform may be
 /// created.
@@ -92,8 +92,9 @@ final class ScaleTransformOperation2D extends TransformOperation2D {
 
   /// Creates positive scaling about [pivot].
   ///
-  /// Both scale values and their determinant must be finite and have magnitude
-  /// greater than [minimumAffineMagnitude].
+  /// Each scale value must be finite and greater than [minimumScaleValue]. A
+  /// nonzero determinant smaller than that bound remains valid when its inverse
+  /// is finitely representable.
   static Result<ScaleTransformOperation2D, StructuredFailure> create({
     required double scaleX,
     required double scaleY,
@@ -107,20 +108,20 @@ final class ScaleTransformOperation2D extends TransformOperation2D {
         ),
       );
     }
-    if (scaleX <= minimumAffineMagnitude || scaleY <= minimumAffineMagnitude) {
+    if (scaleX <= minimumScaleValue || scaleY <= minimumScaleValue) {
       return Err<ScaleTransformOperation2D, StructuredFailure>(
         _transformFailure(
           code: 'core.geometry.invalid_scale',
-          message: 'Scale values must be strictly positive and above epsilon.',
+          message: 'Scale values must be above the public scale lower bound.',
         ),
       );
     }
     final determinant = scaleX * scaleY;
-    if (!determinant.isFinite || determinant.abs() <= minimumAffineMagnitude) {
+    if (!determinant.isFinite || determinant == 0) {
       return Err<ScaleTransformOperation2D, StructuredFailure>(
         _transformFailure(
           code: 'core.geometry.non_invertible_transform',
-          message: 'Scale determinant must be finite and above epsilon.',
+          message: 'Scale determinant must be finite and nonzero.',
         ),
       );
     }

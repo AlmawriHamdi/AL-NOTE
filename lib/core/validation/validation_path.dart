@@ -3,33 +3,72 @@
 import '../outcomes/result.dart';
 import '../outcomes/structured_failure.dart';
 
+/// The maximum number of structural tokens in a validation path.
+const int maximumValidationPathSegments = 64;
+
+/// The maximum accepted length of a trusted validation token name.
+const int maximumValidationTokenLength = 64;
+
+/// An AL NOTE-owned structural token permitted in a validation path.
+///
+/// The enum is deliberately closed: rejected values and caller-provided text
+/// cannot become stored path segments.
+enum ValidationPathSegment {
+  /// A document structure.
+  document('document'),
+
+  /// A title field.
+  title('title'),
+
+  /// An input structure.
+  input('input'),
+
+  /// A value field.
+  value('value');
+
+  const ValidationPathSegment(this.trustedName);
+
+  /// The stable redaction-safe name of this structural token.
+  final String trustedName;
+
+  /// Resolves [source] only when it exactly names a predefined trusted token.
+  ///
+  /// The source is never retained. Inputs beyond
+  /// [maximumValidationTokenLength] are rejected before lookup.
+  static Result<ValidationPathSegment, StructuredFailure> parseTrusted(
+    String source,
+  ) {
+    if (source.length > maximumValidationTokenLength) {
+      return Err<ValidationPathSegment, StructuredFailure>(
+        _invalidPathFailure(),
+      );
+    }
+    for (final token in values) {
+      if (token.trustedName == source) {
+        return Ok<ValidationPathSegment, StructuredFailure>(token);
+      }
+    }
+    return Err<ValidationPathSegment, StructuredFailure>(_invalidPathFailure());
+  }
+}
+
 /// An immutable structural path to a validated field or component.
 final class ValidationPath implements Comparable<ValidationPath> {
-  ValidationPath._(List<String> segments)
-    : _segments = List<String>.unmodifiable(segments);
+  ValidationPath._(List<ValidationPathSegment> segments)
+    : _segments = List<ValidationPathSegment>.unmodifiable(segments);
 
-  static final RegExp _segmentPattern = RegExp(r'^[a-z][a-z0-9_]*$');
+  final List<ValidationPathSegment> _segments;
 
-  final List<String> _segments;
-
-  /// Creates a path from safe structural [segments].
+  /// Creates a path from AL NOTE-owned structural [segments].
   ///
-  /// Empty input represents the root. Segments are copied immediately and may
-  /// contain only lowercase field-name characters; rejected values and display
-  /// text therefore cannot be embedded in a path.
+  /// Empty input represents the root. Segments are copied immediately. Paths
+  /// longer than [maximumValidationPathSegments] are rejected.
   static Result<ValidationPath, StructuredFailure> fromSegments(
-    Iterable<String> segments,
+    Iterable<ValidationPathSegment> segments,
   ) {
-    final copiedSegments = List<String>.of(segments);
-    if (copiedSegments.any((segment) => !_segmentPattern.hasMatch(segment))) {
-      return Err<ValidationPath, StructuredFailure>(
-        StructuredFailure(
-          code: 'core.validation.invalid_path',
-          category: FailureCategory.validation,
-          retryDisposition: RetryDisposition.never,
-          message: 'A validation path contains an invalid structural segment.',
-        ),
-      );
+    final copiedSegments = List<ValidationPathSegment>.of(segments);
+    if (copiedSegments.length > maximumValidationPathSegments) {
+      return Err<ValidationPath, StructuredFailure>(_invalidPathFailure());
     }
     return Ok<ValidationPath, StructuredFailure>(
       ValidationPath._(copiedSegments),
@@ -37,11 +76,12 @@ final class ValidationPath implements Comparable<ValidationPath> {
   }
 
   /// The unmodifiable structural path segments.
-  List<String> get segments => _segments;
+  List<ValidationPathSegment> get segments => _segments;
 
-  /// Returns a path extended with one safe structural [segment].
-  Result<ValidationPath, StructuredFailure> child(String segment) =>
-      fromSegments(<String>[..._segments, segment]);
+  /// Returns a path extended with one trusted structural [segment].
+  Result<ValidationPath, StructuredFailure> child(
+    ValidationPathSegment segment,
+  ) => fromSegments(<ValidationPathSegment>[..._segments, segment]);
 
   @override
   int compareTo(ValidationPath other) {
@@ -49,7 +89,9 @@ final class ValidationPath implements Comparable<ValidationPath> {
         ? _segments.length
         : other._segments.length;
     for (var index = 0; index < sharedLength; index += 1) {
-      final comparison = _segments[index].compareTo(other._segments[index]);
+      final comparison = _segments[index].trustedName.compareTo(
+        other._segments[index].trustedName,
+      );
       if (comparison != 0) {
         return comparison;
       }
@@ -78,5 +120,13 @@ final class ValidationPath implements Comparable<ValidationPath> {
   int get hashCode => Object.hashAll(_segments);
 
   @override
-  String toString() => _segments.join('.');
+  String toString() =>
+      _segments.map((segment) => segment.trustedName).join('.');
 }
+
+StructuredFailure _invalidPathFailure() => StructuredFailure(
+  code: 'core.validation.invalid_path',
+  category: FailureCategory.validation,
+  retryDisposition: RetryDisposition.never,
+  message: 'A validation path must contain only predefined structural tokens.',
+);
