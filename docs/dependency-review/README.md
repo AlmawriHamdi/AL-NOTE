@@ -58,3 +58,44 @@ It is MIT-licensed. Its immutable source and action definition must be
 re-reviewed before the pin changes. The workflow installs Flutter directly
 from the official Flutter Git repository and verifies the detached SDK checkout
 against commit `ee80f08bbf97172ec030b8751ceab557177a34a6`.
+
+## Phase 1 identity dependency
+
+Phase 1 adds `uuid` solely to generate and parse identifiers behind AL
+NOTE-owned identity contracts. The package is published by `yuli.dev` from
+<https://github.com/Daegalus/dart-uuid>; version `4.6.0` corresponds to tag
+commit `d602950818e4b11d097d26f5408b461f38248130`. The package and its resolved
+transitive dependencies are pure Dart.
+
+The exact hosted-package graph added by this change is:
+
+```text
+uuid 4.6.0 (direct, MIT)
+├── crypto 3.0.7 (transitive, BSD-3-Clause)
+│   └── typed_data 1.4.0 (transitive, BSD-3-Clause)
+│       └── collection 1.19.1 (pre-existing transitive, unchanged)
+└── fixnum 1.1.1 (transitive, BSD-3-Clause)
+```
+
+The reviewed pub.dev archive SHA-256 checksums are:
+
+| Package | Version | SHA-256 |
+| --- | --- | --- |
+| `uuid` | `4.6.0` | `9b129329f58692f6e6578329498a8fe9fbe98f090beb764ffbb8ee2eadd01dcd` |
+| `crypto` | `3.0.7` | `c8ea0233063ba03258fbcf2ca4d6dadfefe14f02fab57702265467a19f27fadf` |
+| `fixnum` | `1.1.1` | `b6dc7065e46c974bc7c5f143080a6764ec7a4be6da1285ececdc37be96de53be` |
+| `typed_data` | `1.4.0` | `f9049c039ebfeb4cf7a7104a675823cd72dba8297f264b6637062516699fa006` |
+
+`uuid` remains behind AL NOTE-owned identity contracts so it can be replaced
+without changing callers. Package-defined types will not cross the public API.
+Generated UUIDs identify entities only: they will not be used as authorization
+tokens, secrets, hashes, revisions, or proof of any security property.
+
+The reviewed graph contains no native binaries, Flutter plugins, code
+generation, runtime networking, or bundled assets. Its pure-Dart behavior
+covers AL NOTE's required Android, Linux, Web, and Windows platforms.
+
+On July 24, 2026, exact-version OSV queries for the Pub ecosystem packages
+`uuid 4.6.0`, `crypto 3.0.7`, `fixnum 1.1.1`, `typed_data 1.4.0`, and the
+unchanged `collection 1.19.1` returned no OSV records. Absence of returned OSV
+records is evidence for this review, not a security guarantee.
