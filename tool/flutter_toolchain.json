@@ -1,0 +1,11 @@
+{
+  "flutter": {
+    "channel": "stable",
+    "version": "3.44.6",
+    "frameworkRevision": "ee80f08bbf97172ec030b8751ceab557177a34a6",
+    "engineRevision": "83675ed27633283e7fc296c8bca22e841224c096"
+  },
+  "dart": {
+    "version": "3.12.2"
+  }
+}

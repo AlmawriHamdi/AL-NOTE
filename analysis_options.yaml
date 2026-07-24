@@ -1,0 +1,43 @@
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  errors:
+    deprecated_member_use_from_same_package: error
+    invalid_use_of_internal_member: error
+    invalid_use_of_protected_member: error
+    invalid_use_of_visible_for_testing_member: error
+    todo: warning
+
+linter:
+  rules:
+    always_declare_return_types: true
+    avoid_dynamic_calls: true
+    avoid_print: true
+    avoid_redundant_argument_values: true
+    avoid_slow_async_io: true
+    avoid_unused_constructor_parameters: true
+    avoid_void_async: true
+    cancel_subscriptions: true
+    close_sinks: true
+    directives_ordering: true
+    discarded_futures: true
+    no_default_cases: true
+    only_throw_errors: true
+    prefer_const_constructors: true
+    prefer_const_declarations: true
+    prefer_const_literals_to_create_immutables: true
+    prefer_final_fields: true
+    prefer_final_in_for_each: true
+    prefer_final_locals: true
+    secure_pubspec_urls: true
+    sort_constructors_first: true
+    sort_pub_dependencies: true
+    strict_top_level_inference: true
+    unawaited_futures: true
+    unnecessary_async: true
+    unnecessary_lambdas: true
+    unnecessary_library_name: true
+    unnecessary_statements: true
+    use_test_throws_matchers: true
