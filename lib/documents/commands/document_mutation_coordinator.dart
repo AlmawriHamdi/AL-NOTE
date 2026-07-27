@@ -319,10 +319,13 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         if (candidate == _root) {
           return Err(_failure('no_change', FailureCategory.validation));
         }
-        final geometryChanged = !_mapEquals(oldObjectBounds, newObjectBounds);
+        final geometryChangedObjectIds = _boundChangedObjectIds(
+          oldObjectBounds,
+          newObjectBounds,
+        );
         final addedReferences = newReferences.difference(oldReferences);
         final removedReferences = oldReferences.difference(newReferences);
-        if (!geometryChanged &&
+        if (geometryChangedObjectIds.isEmpty &&
             !request.changeCategories.appearance &&
             !request.changeCategories.text &&
             !request.changeCategories.metadata &&
@@ -341,6 +344,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
             layerIds: layers,
             oldObjectBounds: oldObjectBounds,
             newObjectBounds: newObjectBounds,
+            geometryChangedObjectIds: geometryChangedObjectIds,
             appearanceChanged: request.changeCategories.appearance,
             textChanged: request.changeCategories.text,
             metadataChanged: request.changeCategories.metadata,
@@ -383,6 +387,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     final layers = <LayerId>{};
     final oldObjectBounds = <ObjectId, Rect2>{};
     final newObjectBounds = <ObjectId, Rect2>{};
+    final geometryChangedObjectIds = <ObjectId>{};
     for (final location in locations.values) {
       if (!request.preconditions.layerMembership.containsKey(
         location.layer.id,
@@ -430,6 +435,9 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
       replacements[replacement.id] = replacement;
       oldObjectBounds[location.object.id] = beforeBounds;
       newObjectBounds[replacement.id] = afterBounds;
+      if (location.object.transform != replacement.transform) {
+        geometryChangedObjectIds.add(replacement.id);
+      }
       layers.add(location.layer.id);
     }
     final candidate = _replaceObjects(
@@ -451,6 +459,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         layerIds: layers,
         oldObjectBounds: oldObjectBounds,
         newObjectBounds: newObjectBounds,
+        geometryChangedObjectIds: geometryChangedObjectIds,
         appearanceChanged: false,
         textChanged: false,
         metadataChanged: false,
@@ -1069,6 +1078,7 @@ final class _Prepared {
     required Set<LayerId> layerIds,
     required Map<ObjectId, Rect2> oldObjectBounds,
     required Map<ObjectId, Rect2> newObjectBounds,
+    required Set<ObjectId> geometryChangedObjectIds,
     required this.appearanceChanged,
     required this.textChanged,
     required this.metadataChanged,
@@ -1076,13 +1086,14 @@ final class _Prepared {
     required Set<ResourceIdentity> removedResourceReferences,
   }) : assert(_sameKeys(oldObjectBounds, newObjectBounds)),
        assert(_setEquals(objectIds, oldObjectBounds.keys.toSet())),
+       assert(objectIds.containsAll(geometryChangedObjectIds)),
        objectIds = Set<ObjectId>.unmodifiable(objectIds),
        pageIds = Set<PageId>.unmodifiable(pageIds),
        layerIds = Set<LayerId>.unmodifiable(layerIds),
        oldObjectBounds = Map<ObjectId, Rect2>.unmodifiable(oldObjectBounds),
        newObjectBounds = Map<ObjectId, Rect2>.unmodifiable(newObjectBounds),
        geometryChangedObjectIds = Set<ObjectId>.unmodifiable(
-         objectIds.where((id) => oldObjectBounds[id] != newObjectBounds[id]),
+         geometryChangedObjectIds,
        ),
        addedResourceReferences = Set<ResourceIdentity>.unmodifiable(
          addedResourceReferences,
@@ -1115,6 +1126,7 @@ final class _Prepared {
     layerIds: layerIds,
     oldObjectBounds: newObjectBounds,
     newObjectBounds: oldObjectBounds,
+    geometryChangedObjectIds: geometryChangedObjectIds,
     appearanceChanged: appearanceChanged,
     textChanged: textChanged,
     metadataChanged: metadataChanged,
@@ -1147,6 +1159,10 @@ final class _Prepared {
       layerIds: {...layerIds, ...later.layerIds},
       oldObjectBounds: mergedOldBounds,
       newObjectBounds: mergedNewBounds,
+      geometryChangedObjectIds: _boundChangedObjectIds(
+        mergedOldBounds,
+        mergedNewBounds,
+      ),
       appearanceChanged: appearanceChanged || later.appearanceChanged,
       textChanged: textChanged || later.textChanged,
       metadataChanged: metadataChanged || later.metadataChanged,
@@ -1182,13 +1198,12 @@ bool _sameKeys<K, V>(Map<K, V> left, Map<K, V> right) =>
 bool _setEquals<T>(Set<T> left, Set<T> right) =>
     left.length == right.length && left.containsAll(right);
 
-bool _mapEquals<K, V>(Map<K, V> left, Map<K, V> right) {
-  if (!_sameKeys(left, right)) return false;
-  for (final entry in left.entries) {
-    if (right[entry.key] != entry.value) return false;
-  }
-  return true;
-}
+Set<ObjectId> _boundChangedObjectIds(
+  Map<ObjectId, Rect2> oldBounds,
+  Map<ObjectId, Rect2> newBounds,
+) => Set<ObjectId>.unmodifiable(
+  oldBounds.keys.where((id) => oldBounds[id] != newBounds[id]),
+);
 
 final class _HistoryEntry {
   _HistoryEntry({

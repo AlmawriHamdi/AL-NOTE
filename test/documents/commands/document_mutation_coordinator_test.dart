@@ -769,6 +769,197 @@ void main() {
       expect(notifications, 0);
     });
 
+    test('point scaling publishes stored transform-change evidence', () {
+      var geometryCalls = 0;
+      final registry = testRegistry([
+        _TransformEvidenceGeometryDefinition(
+          onGeometry: () => geometryCalls += 1,
+        ),
+      ]);
+      final generator = UuidSequenceGenerator.fromValues([
+        testUuid(100),
+        testUuid(101),
+        testUuid(102),
+        testUuid(103),
+      ]);
+      final coordinator = customCoordinator(
+        root: phase3Notebook(
+          first: testObject(payload: const PreservedString('point')),
+        ),
+        registry: registry,
+        uuidGenerator: generator,
+        estimator: FixedHistoryCostEstimator(1),
+      );
+      final before = coordinator.snapshot;
+      final target = before.root.pages.single.layers.single.objects.first.id;
+      final originalTransform =
+          before.root.pages.single.layers.single.objects.first.transform;
+      final operation = modelValue(
+        ScaleTransformOperation2D.create(
+          scaleX: 2,
+          scaleY: 3,
+          pivot: modelValue(Point2.create(x: 5, y: 5)),
+        ),
+      );
+      final commit =
+          coordinator.execute(transformRequest(before, operation))
+              as Ok<CommandCommit, CommandFailure>;
+      final transformed = coordinator
+          .snapshot
+          .root
+          .pages
+          .single
+          .layers
+          .single
+          .objects
+          .first
+          .transform;
+      expect(transformed, isNot(originalTransform));
+      expect(commit.value.change.oldBounds, commit.value.change.newBounds);
+      expect(commit.value.change.flags.geometry, isTrue);
+      expect(commit.value.change.movedObjectIds, [target]);
+
+      final callsAfterCommit = geometryCalls;
+      final identitiesAfterCommit = generator.remaining;
+      final undo = coordinator.undo() as Ok<CommandCommit, CommandFailure>;
+      expect(
+        coordinator
+            .snapshot
+            .root
+            .pages
+            .single
+            .layers
+            .single
+            .objects
+            .first
+            .transform,
+        originalTransform,
+      );
+      expect(undo.value.change.flags.geometry, isTrue);
+      expect(undo.value.change.movedObjectIds, [target]);
+      expect(undo.value.change.oldBounds, undo.value.change.newBounds);
+      final redo = coordinator.redo() as Ok<CommandCommit, CommandFailure>;
+      expect(
+        coordinator
+            .snapshot
+            .root
+            .pages
+            .single
+            .layers
+            .single
+            .objects
+            .first
+            .transform,
+        transformed,
+      );
+      expect(redo.value.change.flags.geometry, isTrue);
+      expect(redo.value.change.movedObjectIds, [target]);
+      expect(redo.value.change.oldBounds, redo.value.change.newBounds);
+      expect(geometryCalls, callsAfterCommit);
+      expect(generator.remaining, identitiesAfterCommit);
+    });
+
+    test('degenerate lines retain AABBs but publish transform geometry', () {
+      final pivot = modelValue(Point2.create(x: 5, y: 5));
+      for (final scenario in <(String, double, double)>[
+        ('vertical', 2, 1),
+        ('horizontal', 1, 2),
+      ]) {
+        final coordinator = phase3Coordinator(
+          root: phase3Notebook(
+            first: testObject(payload: PreservedString(scenario.$1)),
+          ),
+          registry: testRegistry([_TransformEvidenceGeometryDefinition()]),
+        );
+        final before = coordinator.snapshot;
+        final target = before.root.pages.single.layers.single.objects.first.id;
+        final original =
+            before.root.pages.single.layers.single.objects.first.transform;
+        final result = coordinator.execute(
+          transformRequest(
+            before,
+            modelValue(
+              ScaleTransformOperation2D.create(
+                scaleX: scenario.$2,
+                scaleY: scenario.$3,
+                pivot: pivot,
+              ),
+            ),
+          ),
+        );
+        final change =
+            (result as Ok<CommandCommit, CommandFailure>).value.change;
+        final transformed = coordinator
+            .snapshot
+            .root
+            .pages
+            .single
+            .layers
+            .single
+            .objects
+            .first
+            .transform;
+        expect(transformed, isNot(original), reason: scenario.$1);
+        expect(change.oldBounds, change.newBounds, reason: scenario.$1);
+        expect(change.flags.geometry, isTrue, reason: scenario.$1);
+        expect(change.movedObjectIds, [target], reason: scenario.$1);
+      }
+    });
+
+    test(
+      'symmetric rotation retains AABB but publishes transform geometry',
+      () {
+        final coordinator = phase3Coordinator(
+          root: phase3Notebook(
+            first: testObject(payload: const PreservedString('symmetric')),
+          ),
+          registry: testRegistry([_TransformEvidenceGeometryDefinition()]),
+        );
+        final before = coordinator.snapshot;
+        final target = before.root.pages.single.layers.single.objects.first.id;
+        final operation = modelValue(
+          RotationTransformOperation2D.create(
+            radians: 1.5707963267948966,
+            pivot: modelValue(Point2.create(x: 0, y: 0)),
+          ),
+        );
+        final result = coordinator.execute(transformRequest(before, operation));
+        final change =
+            (result as Ok<CommandCommit, CommandFailure>).value.change;
+        expect(change.oldBounds, change.newBounds);
+        expect(change.flags.geometry, isTrue);
+        expect(change.movedObjectIds, [target]);
+      },
+    );
+
+    test('multi-Object transform reports every exact transform change', () {
+      final coordinator = phase3Coordinator(
+        root: phase3Notebook(
+          first: testObject(payload: const PreservedString('point')),
+          second: testObject(id: 2, payload: const PreservedString('point')),
+        ),
+        registry: testRegistry([_TransformEvidenceGeometryDefinition()]),
+      );
+      final before = coordinator.snapshot;
+      final targets = before.root.pages.single.layers.single.objects
+          .map((object) => object.id)
+          .toList();
+      final operation = modelValue(
+        ScaleTransformOperation2D.create(
+          scaleX: 2,
+          scaleY: 2,
+          pivot: modelValue(Point2.create(x: 5, y: 5)),
+        ),
+      );
+      final result = coordinator.execute(
+        transformRequest(before, operation, targets: targets),
+      );
+      final change = (result as Ok<CommandCommit, CommandFailure>).value.change;
+      expect(change.oldBounds, change.newBounds);
+      expect(change.flags.geometry, isTrue);
+      expect(change.movedObjectIds, targets);
+    });
+
     test('interactive replacement preserves every common envelope field', () {
       final coordinator = phase3Coordinator();
       final initial = coordinator.snapshot;
@@ -1789,6 +1980,83 @@ final class _VariableGeometryDefinition implements ObjectTypeDefinition {
       _ => 10.0,
     };
     return Rect2.fromEdges(left: 0, top: 0, right: extent, bottom: extent);
+  }
+
+  @override
+  Result<List<ResourceReference>, StructuredFailure> resourceReferences(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => const Ok([]);
+
+  @override
+  Result<PreservedData, StructuredFailure> duplicatePayload(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+    IdentityRemapping remapping,
+  ) => Ok(payload);
+}
+
+final class _TransformEvidenceGeometryDefinition
+    implements ObjectTypeDefinition {
+  _TransformEvidenceGeometryDefinition({this.onGeometry});
+
+  final void Function()? onGeometry;
+  @override
+  ObjectTypeKey get typeKey => testObjectTypeKey();
+  @override
+  List<SchemaVersion> get supportedSchemaVersions => [testSchemaVersion];
+  @override
+  ObjectTypeCapabilities get capabilities => const ObjectTypeCapabilities(
+    hasIntrinsicGeometry: true,
+    discoversResourceReferences: false,
+    supportsScopedDuplication: true,
+    selectable: true,
+    movable: true,
+    resizable: true,
+    rotatable: true,
+  );
+  @override
+  List<ObjectPayloadMigrationContract> get migrations => const [];
+
+  @override
+  ValidationReport validatePayload(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => ValidationReport(const []);
+
+  @override
+  Result<Rect2, StructuredFailure> intrinsicGeometry(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) {
+    onGeometry?.call();
+    return switch (payload) {
+      PreservedString(value: 'point') => Rect2.fromEdges(
+        left: 5,
+        top: 5,
+        right: 5,
+        bottom: 5,
+      ),
+      PreservedString(value: 'vertical') => Rect2.fromEdges(
+        left: 5,
+        top: 0,
+        right: 5,
+        bottom: 10,
+      ),
+      PreservedString(value: 'horizontal') => Rect2.fromEdges(
+        left: 0,
+        top: 5,
+        right: 10,
+        bottom: 5,
+      ),
+      PreservedString(value: 'symmetric') => Rect2.fromEdges(
+        left: -10,
+        top: -10,
+        right: 10,
+        bottom: 10,
+      ),
+      _ => Rect2.fromEdges(left: 0, top: 0, right: 10, bottom: 10),
+    };
   }
 
   @override
