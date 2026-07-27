@@ -17,8 +17,65 @@ enum ValidationPathSegment {
   /// A document structure.
   document('document'),
 
+  /// A document root structure.
+  root('root'),
+
   /// A title field.
   title('title'),
+
+  /// A schema-version field.
+  schemaVersion('schema_version'),
+
+  /// A sections collection.
+  sections('sections'),
+
+  /// A section structure.
+  section('section'),
+
+  /// A pages collection.
+  pages('pages'),
+
+  /// A page structure.
+  page('page'),
+
+  /// A page-size field.
+  size('size'),
+
+  /// A layers collection.
+  layers('layers'),
+
+  /// A layer structure.
+  layer('layer'),
+
+  /// An objects collection.
+  objects('objects'),
+
+  /// An object structure.
+  object('object'),
+
+  /// A resources collection.
+  resources('resources'),
+
+  /// A resource structure.
+  resource('resource'),
+
+  /// An identity field.
+  identity('identity'),
+
+  /// A stable type-key field.
+  type('type'),
+
+  /// A core-role field.
+  role('role'),
+
+  /// An opacity field.
+  opacity('opacity'),
+
+  /// A preserved payload field.
+  payload('payload'),
+
+  /// A logical-reference field.
+  reference('reference'),
 
   /// An input structure.
   input('input'),
