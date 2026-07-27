@@ -47,6 +47,10 @@ final class ObjectTypeCapabilities {
     required this.hasIntrinsicGeometry,
     required this.discoversResourceReferences,
     required this.supportsScopedDuplication,
+    this.selectable = false,
+    this.movable = false,
+    this.resizable = false,
+    this.rotatable = false,
   });
 
   /// Whether the definition supplies intrinsic local geometry.
@@ -58,19 +62,39 @@ final class ObjectTypeCapabilities {
   /// Whether the definition supports interpreted scoped duplication.
   final bool supportsScopedDuplication;
 
+  /// Whether supported valid Objects of this type may enter editable Selection.
+  final bool selectable;
+
+  /// Whether whole Objects of this type may be translated.
+  final bool movable;
+
+  /// Whether whole Objects of this type may be positively scaled.
+  final bool resizable;
+
+  /// Whether whole Objects of this type may be rotated.
+  final bool rotatable;
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is ObjectTypeCapabilities &&
           other.hasIntrinsicGeometry == hasIntrinsicGeometry &&
           other.discoversResourceReferences == discoversResourceReferences &&
-          other.supportsScopedDuplication == supportsScopedDuplication;
+          other.supportsScopedDuplication == supportsScopedDuplication &&
+          other.selectable == selectable &&
+          other.movable == movable &&
+          other.resizable == resizable &&
+          other.rotatable == rotatable;
 
   @override
   int get hashCode => Object.hash(
     hasIntrinsicGeometry,
     discoversResourceReferences,
     supportsScopedDuplication,
+    selectable,
+    movable,
+    resizable,
+    rotatable,
   );
 
   @override
@@ -273,6 +297,15 @@ final class _RegisteredObjectTypeDefinition implements ObjectTypeDefinition {
       definition.supportedSchemaVersions,
     );
     final capabilities = definition.capabilities;
+    final transformable =
+        capabilities.movable ||
+        capabilities.resizable ||
+        capabilities.rotatable;
+    if ((capabilities.selectable && !capabilities.hasIntrinsicGeometry) ||
+        (transformable &&
+            (!capabilities.selectable || !capabilities.hasIntrinsicGeometry))) {
+      throw StateError('Invalid Object capability metadata.');
+    }
     final migrations = List<ObjectPayloadMigrationContract>.unmodifiable(
       definition.migrations.map(
         (migration) => ObjectPayloadMigrationContract(
@@ -289,6 +322,10 @@ final class _RegisteredObjectTypeDefinition implements ObjectTypeDefinition {
         hasIntrinsicGeometry: capabilities.hasIntrinsicGeometry,
         discoversResourceReferences: capabilities.discoversResourceReferences,
         supportsScopedDuplication: capabilities.supportsScopedDuplication,
+        selectable: capabilities.selectable,
+        movable: capabilities.movable,
+        resizable: capabilities.resizable,
+        rotatable: capabilities.rotatable,
       ),
       migrations: migrations,
     );

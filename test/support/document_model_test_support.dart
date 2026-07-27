@@ -46,6 +46,7 @@ ObjectEnvelope testObject({
   PreservedData? payload,
   bool visible = true,
   bool locked = false,
+  AffineTransform2D? transform,
   PreservedMap? extensionData,
 }) => modelValue<ObjectEnvelope>(
   ObjectEnvelope.create(
@@ -53,7 +54,7 @@ ObjectEnvelope testObject({
     typeKey: typeKey ?? testObjectTypeKey(),
     envelopeVersion: testSchemaVersion,
     typeSchemaVersion: schemaVersion ?? testSchemaVersion,
-    transform: testTransform,
+    transform: transform ?? testTransform,
     visible: visible,
     locked: locked,
     payload: payload ?? const PreservedString('payload'),
@@ -186,6 +187,7 @@ final class TestObjectTypeDefinition implements ObjectTypeDefinition {
     this.throwResourceDiscovery = false,
     this.onGeometry,
     this.onResourceDiscovery,
+    this.geometry,
   }) : typeKey = typeKey ?? testObjectTypeKey(),
        supportedSchemaVersions = List<SchemaVersion>.unmodifiable(
          supportedSchemaVersions ?? <SchemaVersion>[testSchemaVersion],
@@ -246,6 +248,9 @@ final class TestObjectTypeDefinition implements ObjectTypeDefinition {
   /// Optional observation invoked when resource behavior is called.
   final void Function()? onResourceDiscovery;
 
+  /// Optional deterministic intrinsic geometry override.
+  final Rect2? geometry;
+
   @override
   final ObjectTypeCapabilities capabilities;
 
@@ -290,7 +295,10 @@ final class TestObjectTypeDefinition implements ObjectTypeDefinition {
     if (failGeometry) {
       return Err<Rect2, StructuredFailure>(_testBehaviorFailure());
     }
-    return Rect2.fromEdges(left: 0, top: 0, right: 10, bottom: 20);
+    final suppliedGeometry = geometry;
+    return suppliedGeometry == null
+        ? Rect2.fromEdges(left: 0, top: 0, right: 10, bottom: 20)
+        : Ok(suppliedGeometry);
   }
 
   @override

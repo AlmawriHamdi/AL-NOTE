@@ -23,6 +23,64 @@ void main() {
       );
     });
 
+    test('inconsistent editing capabilities fail closed and redacted', () {
+      const inconsistent = <ObjectTypeCapabilities>[
+        ObjectTypeCapabilities(
+          hasIntrinsicGeometry: true,
+          discoversResourceReferences: false,
+          supportsScopedDuplication: false,
+          movable: true,
+        ),
+        ObjectTypeCapabilities(
+          hasIntrinsicGeometry: true,
+          discoversResourceReferences: false,
+          supportsScopedDuplication: false,
+          resizable: true,
+        ),
+        ObjectTypeCapabilities(
+          hasIntrinsicGeometry: true,
+          discoversResourceReferences: false,
+          supportsScopedDuplication: false,
+          rotatable: true,
+        ),
+        ObjectTypeCapabilities(
+          hasIntrinsicGeometry: false,
+          discoversResourceReferences: false,
+          supportsScopedDuplication: false,
+          selectable: true,
+          movable: true,
+          resizable: true,
+          rotatable: true,
+        ),
+      ];
+      for (final capabilities in inconsistent) {
+        final result = ObjectRegistry.create([
+          TestObjectTypeDefinition(capabilities: capabilities),
+        ]);
+        final failure =
+            (result as Err<ObjectRegistry, StructuredFailure>).error;
+        expect(failure.code, 'documents.objects.definition_metadata_failure');
+        expect(failure.toString(), isNot(contains('movable')));
+      }
+    });
+
+    test('selectable capability requires intrinsic geometry', () {
+      final result = ObjectRegistry.create([
+        TestObjectTypeDefinition(
+          capabilities: const ObjectTypeCapabilities(
+            hasIntrinsicGeometry: false,
+            discoversResourceReferences: false,
+            supportsScopedDuplication: false,
+            selectable: true,
+          ),
+        ),
+      ]);
+      final failure = (result as Err<ObjectRegistry, StructuredFailure>).error;
+      expect(failure.code, 'documents.objects.definition_metadata_failure');
+      expect(failure.category, FailureCategory.dependency);
+      expect(failure.toString(), isNot(contains('selectable')));
+    });
+
     for (final getter in _MetadataGetter.values) {
       test('${getter.name} metadata failure is contained and redacted', () {
         const secret = 'secret metadata getter explosion';
