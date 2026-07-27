@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import 'dart:convert';
+
 import '../../core/geometry/affine_transform_2d.dart';
 import '../../core/geometry/geometry_values.dart';
 import '../../core/geometry/transform_operations.dart';
@@ -255,6 +257,8 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     }
     final pages = <PageId>{};
     final layers = <LayerId>{};
+    final oldObjectBounds = <ObjectId, Rect2>{};
+    final newObjectBounds = <ObjectId, Rect2>{};
     for (final location in locations.values) {
       if (!request.preconditions.layerMembership.containsKey(
         location.layer.id,
@@ -264,9 +268,12 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         );
       }
       final eligible = _editableResolution(location.layer, location.object);
+      final beforeBounds = eligible == null
+          ? null
+          : _objectBounds(location.object);
       if (eligible == null ||
-          (eligible.definition.capabilities.hasIntrinsicGeometry &&
-              !_hasReachableBounds(location.page, location.object))) {
+          beforeBounds == null ||
+          !_boundsAreReachable(location.page, beforeBounds)) {
         return Err(_failure('target_not_editable', FailureCategory.state));
       }
       final replacement = replacements[location.object.id]!;
@@ -275,13 +282,18 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         replacement,
         requireAvailableResources: false,
       );
+      final afterBounds = replacementEligible == null
+          ? null
+          : _objectBounds(replacement);
       if (replacement.id != location.object.id ||
           !_replacementPreservesCommonEnvelope(location.object, replacement) ||
           replacementEligible == null ||
-          (replacementEligible.definition.capabilities.hasIntrinsicGeometry &&
-              !_hasReachableBounds(location.page, replacement))) {
+          afterBounds == null ||
+          !_boundsAreReachable(location.page, afterBounds)) {
         return Err(_failure('invalid_replacement', FailureCategory.validation));
       }
+      oldObjectBounds[location.object.id] = beforeBounds;
+      newObjectBounds[replacement.id] = afterBounds;
       pages.add(location.page.id);
       layers.add(location.layer.id);
     }
@@ -307,11 +319,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         if (candidate == _root) {
           return Err(_failure('no_change', FailureCategory.validation));
         }
-        final oldBounds = _aggregateBounds(
-          locations.values.map((value) => value.object),
-        );
-        final newBounds = _aggregateBounds(replacements.values);
-        final geometryChanged = oldBounds != newBounds;
+        final geometryChanged = !_mapEquals(oldObjectBounds, newObjectBounds);
         final addedReferences = newReferences.difference(oldReferences);
         final removedReferences = oldReferences.difference(newReferences);
         if (!geometryChanged &&
@@ -331,9 +339,8 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
             objectIds: replacements.keys.toSet(),
             pageIds: pages,
             layerIds: layers,
-            oldBounds: oldBounds,
-            newBounds: newBounds,
-            geometryChanged: geometryChanged,
+            oldObjectBounds: oldObjectBounds,
+            newObjectBounds: newObjectBounds,
             appearanceChanged: request.changeCategories.appearance,
             textChanged: request.changeCategories.text,
             metadataChanged: request.changeCategories.metadata,
@@ -374,7 +381,8 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     }
     final replacements = <ObjectId, ObjectEnvelope>{};
     final layers = <LayerId>{};
-    final oldObjects = <ObjectEnvelope>[];
+    final oldObjectBounds = <ObjectId, Rect2>{};
+    final newObjectBounds = <ObjectId, Rect2>{};
     for (final location in locations.values) {
       if (!request.preconditions.layerMembership.containsKey(
         location.layer.id,
@@ -407,14 +415,21 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         payload: location.object.payload,
         extensionData: location.object.extensionData,
       ).fold(onOk: (value) => value, onErr: (_) => null);
+      final beforeBounds = _objectBounds(location.object);
+      final afterBounds = replacement == null
+          ? null
+          : _objectBounds(replacement);
       if (replacement == null ||
-          !_hasReachableBounds(location.page, replacement)) {
+          beforeBounds == null ||
+          afterBounds == null ||
+          !_boundsAreReachable(location.page, afterBounds)) {
         return Err(
           _failure('transform_unreachable', FailureCategory.validation),
         );
       }
       replacements[replacement.id] = replacement;
-      oldObjects.add(location.object);
+      oldObjectBounds[location.object.id] = beforeBounds;
+      newObjectBounds[replacement.id] = afterBounds;
       layers.add(location.layer.id);
     }
     final candidate = _replaceObjects(
@@ -434,9 +449,8 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         objectIds: replacements.keys.toSet(),
         pageIds: {request.pageId},
         layerIds: layers,
-        oldBounds: _aggregateBounds(oldObjects),
-        newBounds: _aggregateBounds(replacements.values),
-        geometryChanged: true,
+        oldObjectBounds: oldObjectBounds,
+        newObjectBounds: newObjectBounds,
         appearanceChanged: false,
         textChanged: false,
         metadataChanged: false,
@@ -514,14 +528,19 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
       afterRoot: prepared.after,
       replacedObjectCount: prepared.objectIds.length,
     );
-    final costResult = _estimateCost(estimateInput);
+    final costResult = _estimateCost(
+      estimateInput,
+      request.metadata.description,
+    );
     final costFailure = costResult.fold<CommandFailure?>(
       onOk: (_) => null,
       onErr: (failure) => failure,
     );
     if (costFailure != null) return Err(costFailure);
     final cost = (costResult as Ok<HistoryRetainedCost, CommandFailure>).value;
-    if (cost.estimatedBytes > _historyLimits.maximumEstimatedRetainedBytes) {
+    if (_historyLimits.maximumRetainedCommandCount == 0 ||
+        _historyLimits.maximumEstimatedRetainedBytes == 0 ||
+        cost.estimatedBytes > _historyLimits.maximumEstimatedRetainedBytes) {
       return Err(_failure('history_limit_exceeded', FailureCategory.resource));
     }
     final entry = _HistoryEntry(
@@ -566,19 +585,32 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
 
   Result<HistoryRetainedCost, CommandFailure> _estimateCost(
     HistoryCostEstimateInput input,
+    String retainedDescription,
   ) {
     try {
-      return _retainedCostEstimator
+      final estimated = _retainedCostEstimator
           .estimate(input)
-          .fold(
-            onOk: Ok<HistoryRetainedCost, CommandFailure>.new,
-            onErr: (_) => Err(
-              _failure(
-                'history_cost_estimation_failed',
-                FailureCategory.dependency,
-              ),
-            ),
-          );
+          .fold(onOk: (value) => value, onErr: (_) => null);
+      if (estimated == null) {
+        return Err(
+          _failure(
+            'history_cost_estimation_failed',
+            FailureCategory.dependency,
+          ),
+        );
+      }
+      final descriptionBytes = utf8.encode(retainedDescription).length;
+      if (descriptionBytes > Revision.maximumValue ||
+          estimated.estimatedBytes > Revision.maximumValue - descriptionBytes) {
+        return Err(_failure('history_cost_overflow', FailureCategory.resource));
+      }
+      return HistoryRetainedCost.create(
+        estimated.estimatedBytes + descriptionBytes,
+      ).fold(
+        onOk: Ok<HistoryRetainedCost, CommandFailure>.new,
+        onErr: (_) =>
+            Err(_failure('history_cost_overflow', FailureCategory.resource)),
+      );
     } on Object {
       return Err(
         _failure('history_cost_estimation_failed', FailureCategory.dependency),
@@ -758,7 +790,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     description: metadata.description,
     correlationId: metadata.correlationId,
     replacedObjectIds: prepared.objectIds,
-    movedObjectIds: prepared.geometryChanged ? prepared.objectIds : const [],
+    movedObjectIds: prepared.geometryChangedObjectIds,
     affectedPageIds: prepared.pageIds,
     affectedLayerIds: prepared.layerIds,
     addedResourceReferences: prepared.addedResourceReferences,
@@ -830,14 +862,11 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     };
   }
 
-  bool _hasReachableBounds(DocumentPage page, ObjectEnvelope object) {
-    final bounds = _objectBounds(object);
-    if (bounds == null) return false;
-    return bounds.right >= 0 &&
-        bounds.bottom >= 0 &&
-        bounds.left <= page.size.width &&
-        bounds.top <= page.size.height;
-  }
+  bool _boundsAreReachable(DocumentPage page, Rect2 bounds) =>
+      bounds.right >= 0 &&
+      bounds.bottom >= 0 &&
+      bounds.left <= page.size.width &&
+      bounds.top <= page.size.height;
 
   Rect2? _objectBounds(ObjectEnvelope object) {
     final resolution = _validator.objectRegistry.resolve(object);
@@ -879,28 +908,6 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     } on Object {
       return null;
     }
-  }
-
-  Rect2? _aggregateBounds(Iterable<ObjectEnvelope> objects) {
-    Rect2? aggregate;
-    for (final object in objects) {
-      final bounds = _objectBounds(object);
-      if (bounds == null) return null;
-      aggregate = aggregate == null
-          ? bounds
-          : Rect2.fromEdges(
-              left: aggregate.left < bounds.left ? aggregate.left : bounds.left,
-              top: aggregate.top < bounds.top ? aggregate.top : bounds.top,
-              right: aggregate.right > bounds.right
-                  ? aggregate.right
-                  : bounds.right,
-              bottom: aggregate.bottom > bounds.bottom
-                  ? aggregate.bottom
-                  : bounds.bottom,
-            ).fold(onOk: (value) => value, onErr: (_) => null);
-      if (aggregate == null) return null;
-    }
-    return aggregate;
   }
 
   Set<ResourceIdentity>? _resourceReferences(Iterable<ObjectEnvelope> objects) {
@@ -1060,17 +1067,23 @@ final class _Prepared {
     required Set<ObjectId> objectIds,
     required Set<PageId> pageIds,
     required Set<LayerId> layerIds,
-    required this.oldBounds,
-    required this.newBounds,
-    required this.geometryChanged,
+    required Map<ObjectId, Rect2> oldObjectBounds,
+    required Map<ObjectId, Rect2> newObjectBounds,
     required this.appearanceChanged,
     required this.textChanged,
     required this.metadataChanged,
     required Set<ResourceIdentity> addedResourceReferences,
     required Set<ResourceIdentity> removedResourceReferences,
-  }) : objectIds = Set<ObjectId>.unmodifiable(objectIds),
+  }) : assert(_sameKeys(oldObjectBounds, newObjectBounds)),
+       assert(_setEquals(objectIds, oldObjectBounds.keys.toSet())),
+       objectIds = Set<ObjectId>.unmodifiable(objectIds),
        pageIds = Set<PageId>.unmodifiable(pageIds),
        layerIds = Set<LayerId>.unmodifiable(layerIds),
+       oldObjectBounds = Map<ObjectId, Rect2>.unmodifiable(oldObjectBounds),
+       newObjectBounds = Map<ObjectId, Rect2>.unmodifiable(newObjectBounds),
+       geometryChangedObjectIds = Set<ObjectId>.unmodifiable(
+         objectIds.where((id) => oldObjectBounds[id] != newObjectBounds[id]),
+       ),
        addedResourceReferences = Set<ResourceIdentity>.unmodifiable(
          addedResourceReferences,
        ),
@@ -1082,9 +1095,12 @@ final class _Prepared {
   final Set<ObjectId> objectIds;
   final Set<PageId> pageIds;
   final Set<LayerId> layerIds;
-  final Rect2? oldBounds;
-  final Rect2? newBounds;
-  final bool geometryChanged;
+  final Map<ObjectId, Rect2> oldObjectBounds;
+  final Map<ObjectId, Rect2> newObjectBounds;
+  final Set<ObjectId> geometryChangedObjectIds;
+  Rect2? get oldBounds => _aggregateRectangles(oldObjectBounds.values);
+  Rect2? get newBounds => _aggregateRectangles(newObjectBounds.values);
+  bool get geometryChanged => geometryChangedObjectIds.isNotEmpty;
   final bool appearanceChanged;
   final bool textChanged;
   final bool metadataChanged;
@@ -1097,9 +1113,8 @@ final class _Prepared {
     objectIds: objectIds,
     pageIds: pageIds,
     layerIds: layerIds,
-    oldBounds: newBounds,
-    newBounds: oldBounds,
-    geometryChanged: geometryChanged,
+    oldObjectBounds: newObjectBounds,
+    newObjectBounds: oldObjectBounds,
     appearanceChanged: appearanceChanged,
     textChanged: textChanged,
     metadataChanged: metadataChanged,
@@ -1116,15 +1131,22 @@ final class _Prepared {
       ...removedResourceReferences,
       ...later.removedResourceReferences,
     };
+    final mergedOldBounds = <ObjectId, Rect2>{
+      ...later.oldObjectBounds,
+      ...oldObjectBounds,
+    };
+    final mergedNewBounds = <ObjectId, Rect2>{
+      ...newObjectBounds,
+      ...later.newObjectBounds,
+    };
     return _Prepared(
       before: before,
       after: later.after,
       objectIds: {...objectIds, ...later.objectIds},
       pageIds: {...pageIds, ...later.pageIds},
       layerIds: {...layerIds, ...later.layerIds},
-      oldBounds: oldBounds,
-      newBounds: later.newBounds,
-      geometryChanged: geometryChanged || later.geometryChanged,
+      oldObjectBounds: mergedOldBounds,
+      newObjectBounds: mergedNewBounds,
       appearanceChanged: appearanceChanged || later.appearanceChanged,
       textChanged: textChanged || later.textChanged,
       metadataChanged: metadataChanged || later.metadataChanged,
@@ -1132,6 +1154,40 @@ final class _Prepared {
       removedResourceReferences: removed.difference(added),
     );
   }
+}
+
+Rect2? _aggregateRectangles(Iterable<Rect2> bounds) {
+  Rect2? aggregate;
+  for (final value in bounds) {
+    aggregate = aggregate == null
+        ? value
+        : Rect2.fromEdges(
+            left: aggregate.left < value.left ? aggregate.left : value.left,
+            top: aggregate.top < value.top ? aggregate.top : value.top,
+            right: aggregate.right > value.right
+                ? aggregate.right
+                : value.right,
+            bottom: aggregate.bottom > value.bottom
+                ? aggregate.bottom
+                : value.bottom,
+          ).fold(onOk: (result) => result, onErr: (_) => null);
+    if (aggregate == null) return null;
+  }
+  return aggregate;
+}
+
+bool _sameKeys<K, V>(Map<K, V> left, Map<K, V> right) =>
+    _setEquals(left.keys.toSet(), right.keys.toSet());
+
+bool _setEquals<T>(Set<T> left, Set<T> right) =>
+    left.length == right.length && left.containsAll(right);
+
+bool _mapEquals<K, V>(Map<K, V> left, Map<K, V> right) {
+  if (!_sameKeys(left, right)) return false;
+  for (final entry in left.entries) {
+    if (right[entry.key] != entry.value) return false;
+  }
+  return true;
 }
 
 final class _HistoryEntry {

@@ -937,6 +937,134 @@ void main() {
       expect(coordinator.retainedHistoryCount, 0);
     });
 
+    test(
+      'preview building rejects inconsistent revision snapshots atomically',
+      () {
+        final coordinator = phase3Coordinator();
+        final valid = coordinator.snapshot;
+        final page = valid.root.pages.single;
+        final inconsistent = <DocumentRevisionSnapshot>[
+          DocumentRevisionSnapshot.fromValues(
+            documentId: DocumentId.fromUuid(testUuid(999)),
+            document: valid.revisions.document,
+            sections: valid.revisions.sections,
+            pages: valid.revisions.pages,
+            layers: valid.revisions.layers,
+            layerMembership: valid.revisions.layerMembership,
+            objects: valid.revisions.objects,
+            resourceCatalog: valid.revisions.resourceCatalog,
+          ),
+          DocumentRevisionSnapshot.fromValues(
+            documentId: valid.root.id,
+            document: valid.revisions.document,
+            sections: valid.revisions.sections,
+            layers: valid.revisions.layers,
+            layerMembership: valid.revisions.layerMembership,
+            objects: valid.revisions.objects,
+            resourceCatalog: valid.revisions.resourceCatalog,
+          ),
+          DocumentRevisionSnapshot.fromValues(
+            documentId: valid.root.id,
+            document: valid.revisions.document,
+            sections: valid.revisions.sections,
+            pages: valid.revisions.pages,
+            layers: valid.revisions.layers,
+            layerMembership: valid.revisions.layerMembership,
+            resourceCatalog: valid.revisions.resourceCatalog,
+          ),
+          DocumentRevisionSnapshot.fromValues(
+            documentId: valid.root.id,
+            document: valid.revisions.document,
+            sections: valid.revisions.sections,
+            pages: valid.revisions.pages,
+            layers: valid.revisions.layers,
+            objects: valid.revisions.objects,
+            resourceCatalog: valid.revisions.resourceCatalog,
+          ),
+        ];
+        final offset = TranslationTransformOperation2D(
+          modelValue(Vector2.create(x: 1, y: 0)),
+        );
+        for (final revisions in inconsistent) {
+          final controller = SelectionController(
+            objectRegistry: editableTestRegistry(),
+            coalescingBoundarySink: coordinator,
+          );
+          controller.replace(root: valid.root, targets: [target(page.id, 1)]);
+          final beforeSelection = controller.state;
+          final document = DocumentCoordinatorSnapshot(
+            root: valid.root,
+            revisions: revisions,
+            currentContentIdentity: valid.currentContentIdentity,
+            savedContentIdentity: valid.savedContentIdentity,
+            canUndo: valid.canUndo,
+            canRedo: valid.canRedo,
+            historyTraversalEnabled: valid.historyTraversalEnabled,
+          );
+          late Result<SelectionState, SelectionFailure> result;
+          expect(
+            () => result = controller.beginTransform(
+              document: document,
+              operation: offset,
+            ),
+            returnsNormally,
+          );
+          final failure =
+              (result as Err<SelectionState, SelectionFailure>).error;
+          expect(failure.code, 'drawing.selection.inconsistent_document_state');
+          expect(failure.toString(), isNot(contains(valid.root.id.uuid.value)));
+          expect(identical(controller.state, beforeSelection), isTrue);
+          expect(controller.state.transformPreview, isNull);
+          expect(coordinator.snapshot.root, valid.root);
+          expect(coordinator.snapshot.revisions, valid.revisions);
+        }
+
+        final movedRoot = testNotebook(
+          sections: [
+            testSection(
+              pages: [
+                testPage(
+                  layers: [
+                    testContentLayer(
+                      id: 11,
+                      objects: [testObject(), testObject(id: 2)],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        );
+        final movedController = SelectionController(
+          objectRegistry: editableTestRegistry(),
+          coalescingBoundarySink: coordinator,
+        );
+        movedController.replace(
+          root: valid.root,
+          targets: [target(page.id, 1)],
+        );
+        final beforeMovedFailure = movedController.state;
+        final movedResult = movedController.beginTransform(
+          document: DocumentCoordinatorSnapshot(
+            root: movedRoot,
+            revisions: DocumentRevisionSnapshot.initial(movedRoot),
+            currentContentIdentity: valid.currentContentIdentity,
+            savedContentIdentity: valid.savedContentIdentity,
+            canUndo: false,
+            canRedo: false,
+            historyTraversalEnabled: true,
+          ),
+          operation: offset,
+        );
+        expect(
+          (movedResult as Err<SelectionState, SelectionFailure>).error.code,
+          'drawing.selection.inconsistent_document_state',
+        );
+        expect(identical(movedController.state, beforeMovedFailure), isTrue);
+        expect(coordinator.snapshot.root, valid.root);
+      },
+    );
+
     test('public preview factory rejects mismatched maps and transforms', () {
       final coordinator = phase3Coordinator();
       final controller = SelectionController(
@@ -961,6 +1089,7 @@ void main() {
           operation: valid.operation,
           baseObjects: valid.baseObjects,
           candidateObjects: valid.candidateObjects,
+          targetLayerMembership: valid.targetLayerMembership,
           preconditions: valid.preconditions,
           oldBounds: valid.oldBounds,
           newBounds: valid.newBounds,
@@ -975,6 +1104,7 @@ void main() {
           operation: valid.operation,
           baseObjects: valid.baseObjects,
           candidateObjects: valid.candidateObjects,
+          targetLayerMembership: valid.targetLayerMembership,
           preconditions: RevisionPreconditions(),
           oldBounds: valid.oldBounds,
           newBounds: valid.newBounds,
@@ -1030,6 +1160,7 @@ void main() {
           operation: valid.operation,
           baseObjects: valid.baseObjects,
           candidateObjects: valid.baseObjects,
+          targetLayerMembership: valid.targetLayerMembership,
           preconditions: valid.preconditions,
           oldBounds: valid.oldBounds,
           newBounds: valid.newBounds,
@@ -1042,6 +1173,109 @@ void main() {
       );
       expect(valid.baseObjects.clear, throwsUnsupportedError);
       expect(valid.candidateObjects.clear, throwsUnsupportedError);
+      expect(valid.targetLayerMembership.clear, throwsUnsupportedError);
+    });
+
+    test('public preview enforces exact immutable scoped membership', () {
+      final coordinator = phase3Coordinator();
+      final controller = SelectionController(
+        objectRegistry: editableTestRegistry(),
+        coalescingBoundarySink: coordinator,
+      );
+      final snapshot = coordinator.snapshot;
+      final page = snapshot.root.pages.single;
+      controller.replace(root: snapshot.root, targets: [target(page.id, 1)]);
+      controller.beginTransform(
+        document: snapshot,
+        operation: TranslationTransformOperation2D(
+          modelValue(Vector2.create(x: 1, y: 0)),
+        ),
+      );
+      final valid = controller.state.transformPreview!;
+      Result<WholeObjectTransformPreview, SelectionFailure> create({
+        required Map<ObjectId, LayerId> membership,
+        required RevisionPreconditions preconditions,
+      }) => WholeObjectTransformPreview.create(
+        documentId: valid.documentId,
+        pageId: valid.pageId,
+        targetIds: valid.targetIds,
+        operation: valid.operation,
+        baseObjects: valid.baseObjects,
+        candidateObjects: valid.candidateObjects,
+        targetLayerMembership: membership,
+        preconditions: preconditions,
+        oldBounds: valid.oldBounds,
+        newBounds: valid.newBounds,
+      );
+
+      final extraObject = ObjectId.fromUuid(testUuid(997));
+      final extraPage = PageId.fromUuid(testUuid(996));
+      final extraLayer = LayerId.fromUuid(testUuid(995));
+      final zero = modelValue(Revision.create(0));
+      final invalid = <Result<WholeObjectTransformPreview, SelectionFailure>>[
+        create(membership: const {}, preconditions: valid.preconditions),
+        create(
+          membership: valid.targetLayerMembership,
+          preconditions: RevisionPreconditions(
+            pages: valid.preconditions.pages,
+            layerMembership: valid.preconditions.layerMembership,
+            objects: {...valid.preconditions.objects, extraObject: zero},
+          ),
+        ),
+        create(
+          membership: valid.targetLayerMembership,
+          preconditions: RevisionPreconditions(
+            pages: {...valid.preconditions.pages, extraPage: zero},
+            layerMembership: valid.preconditions.layerMembership,
+            objects: valid.preconditions.objects,
+          ),
+        ),
+        create(
+          membership: valid.targetLayerMembership,
+          preconditions: RevisionPreconditions(
+            pages: valid.preconditions.pages,
+            layerMembership: {
+              ...valid.preconditions.layerMembership,
+              extraLayer: zero,
+            },
+            objects: valid.preconditions.objects,
+          ),
+        ),
+      ];
+      expect(
+        invalid,
+        everyElement(isA<Err<WholeObjectTransformPreview, SelectionFailure>>()),
+      );
+
+      final wrongMembership = {
+        valid.targetIds.single: LayerId.fromUuid(testUuid(994)),
+      };
+      expect(
+        SelectionState.create(
+          activePageId: valid.pageId,
+          targets: [target(valid.pageId, 1)],
+          primaryTarget: target(valid.pageId, 1),
+          revision: controller.state.revision,
+          operationMode: SelectionOperationMode.wholeObject,
+          layerMembership: wrongMembership,
+          aggregateBounds: valid.oldBounds,
+          transformPreview: valid,
+        ),
+        isA<Err<SelectionState, SelectionFailure>>(),
+      );
+
+      final mutableMembership = Map<ObjectId, LayerId>.of(
+        valid.targetLayerMembership,
+      );
+      final copied =
+          create(
+                membership: mutableMembership,
+                preconditions: valid.preconditions,
+              )
+              as Ok<WholeObjectTransformPreview, SelectionFailure>;
+      mutableMembership.clear();
+      expect(copied.value.targetLayerMembership, valid.targetLayerMembership);
+      expect(copied.value.targetLayerMembership.clear, throwsUnsupportedError);
     });
   });
 }

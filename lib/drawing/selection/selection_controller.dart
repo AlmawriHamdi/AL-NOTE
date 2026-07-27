@@ -224,19 +224,45 @@ final class SelectionController {
     DocumentCoordinatorSnapshot document,
     TransformOperation2D operation,
   ) {
+    final activePageId = _state.activePageId;
+    if (document.root.id != document.revisions.documentId ||
+        activePageId == null ||
+        !document.revisions.pages.containsKey(activePageId)) {
+      return Err(_selectionFailure('inconsistent_document_state'));
+    }
     final affine = AffineTransform2D.fromOperation(
       operation,
     ).fold(onOk: (value) => value, onErr: (_) => null);
     if (affine == null) return Err(_selectionFailure('invalid_transform'));
     final page = document.root.pages
-        .where((page) => page.id == _state.activePageId)
+        .where((page) => page.id == activePageId)
         .singleOrNull;
-    if (page == null) return Err(_selectionFailure('page_unavailable'));
+    if (page == null) {
+      return Err(_selectionFailure('inconsistent_document_state'));
+    }
     final base = <ObjectId, ObjectEnvelope>{};
     final candidates = <ObjectId, ObjectEnvelope>{};
+    final targetMembership = <ObjectId, LayerId>{};
     final objectRevisions = <ObjectId, Revision>{};
     final membershipRevisions = <LayerId, Revision>{};
     for (final target in _state.targets) {
+      if (!document.revisions.objects.containsKey(target.objectId)) {
+        return Err(_selectionFailure('inconsistent_document_state'));
+      }
+      DocumentLayer? owningLayer;
+      for (final layer in page.layers) {
+        if (layer.objects.any((object) => object.id == target.objectId)) {
+          if (owningLayer != null) {
+            return Err(_selectionFailure('inconsistent_document_state'));
+          }
+          owningLayer = layer;
+        }
+      }
+      if (owningLayer == null ||
+          _state.layerMembership[target.objectId] != owningLayer.id ||
+          !document.revisions.layerMembership.containsKey(owningLayer.id)) {
+        return Err(_selectionFailure('inconsistent_document_state'));
+      }
       final resolved = _resolve(page, document.root.resources, target);
       if (resolved == null || !_supports(resolved.resolution, operation)) {
         return Err(_selectionFailure('transform_capability_denied'));
@@ -261,6 +287,7 @@ final class SelectionController {
       }
       base[target.objectId] = resolved.object;
       candidates[target.objectId] = replacement;
+      targetMembership[target.objectId] = resolved.layer.id;
       objectRevisions[target.objectId] =
           document.revisions.objects[target.objectId]!;
       membershipRevisions[resolved.layer.id] =
@@ -278,6 +305,7 @@ final class SelectionController {
       operation: operation,
       baseObjects: base,
       candidateObjects: candidates,
+      targetLayerMembership: targetMembership,
       preconditions: RevisionPreconditions(
         pages: {page.id: document.revisions.pages[page.id]!},
         layerMembership: membershipRevisions,
@@ -542,7 +570,9 @@ final Revision _zeroRevision = Revision.create(0).fold(
 
 SelectionFailure _selectionFailure(String leaf) => SelectionFailure(
   'drawing.selection.$leaf',
-  leaf.contains('unavailable') || leaf.contains('missing')
+  leaf == 'inconsistent_document_state' ||
+          leaf.contains('unavailable') ||
+          leaf.contains('missing')
       ? FailureCategory.state
       : FailureCategory.validation,
 );

@@ -675,7 +675,10 @@ final class HistoryLimits {
     required this.maximumEstimatedRetainedBytes,
   });
 
-  /// Creates strictly positive Web-safe limits.
+  /// Creates nonnegative Web-safe limits.
+  ///
+  /// A zero count or byte limit denies commands that require retained Undo
+  /// history.
   static Result<HistoryLimits, StructuredFailure> create({
     required int maximumRetainedCommandCount,
     required int maximumEstimatedRetainedBytes,
@@ -694,10 +697,10 @@ final class HistoryLimits {
     );
   }
 
-  /// Maximum combined Undo/Redo entry count.
+  /// Maximum combined Undo/Redo entry count; zero denies retained history.
   final int maximumRetainedCommandCount;
 
-  /// Maximum combined estimated retained bytes.
+  /// Maximum combined retained bytes; zero denies retained history.
   final int maximumEstimatedRetainedBytes;
 }
 

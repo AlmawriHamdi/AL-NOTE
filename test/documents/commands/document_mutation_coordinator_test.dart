@@ -389,6 +389,122 @@ void main() {
       },
     );
 
+    test('retained descriptions use exact checked UTF-8 history cost', () {
+      void expectRejected({
+        required int estimatorBytes,
+        required int limit,
+        required String description,
+        required String code,
+      }) {
+        final coordinator = customCoordinator(
+          uuidGenerator: UuidSequenceGenerator.fromValues([
+            testUuid(100),
+            testUuid(101),
+          ]),
+          estimator: FixedHistoryCostEstimator(estimatorBytes),
+          historyBytes: limit,
+        );
+        final before = coordinator.snapshot;
+        final target = before.root.pages.single.layers.single.objects.first.id;
+        final result = coordinator.execute(
+          replacementRequest(
+            before,
+            target,
+            'changed',
+            metadata: phase3Metadata(description: description),
+          ),
+        );
+        final failure = (result as Err<CommandCommit, CommandFailure>).error;
+        expect(failure.code, code);
+        expect(failure.toString(), isNot(contains(description)));
+        expectPersistentStateUnchanged(coordinator, before, 0);
+      }
+
+      expectRejected(
+        estimatorBytes: 0,
+        limit: 3,
+        description: 'four',
+        code: 'documents.commands.history_limit_exceeded',
+      );
+      expectRejected(
+        estimatorBytes: 0,
+        limit: 3,
+        description: 'éé',
+        code: 'documents.commands.history_limit_exceeded',
+      );
+      expectRejected(
+        estimatorBytes: 3,
+        limit: 4,
+        description: 'é',
+        code: 'documents.commands.history_limit_exceeded',
+      );
+      expectRejected(
+        estimatorBytes: Revision.maximumValue,
+        limit: Revision.maximumValue,
+        description: 'x',
+        code: 'documents.commands.history_cost_overflow',
+      );
+
+      final exact = customCoordinator(
+        uuidGenerator: UuidSequenceGenerator.fromValues([
+          testUuid(100),
+          testUuid(101),
+        ]),
+        estimator: FixedHistoryCostEstimator(3),
+        historyBytes: 5,
+      );
+      final exactBefore = exact.snapshot;
+      final exactTarget =
+          exactBefore.root.pages.single.layers.single.objects.first.id;
+      expect(
+        exact.execute(
+          replacementRequest(
+            exactBefore,
+            exactTarget,
+            'changed',
+            metadata: phase3Metadata(description: 'é'),
+          ),
+        ),
+        isA<Ok<CommandCommit, CommandFailure>>(),
+      );
+      expect(exact.estimatedRetainedHistoryBytes, 5);
+    });
+
+    test('coalescing retains only the latest description cost', () {
+      final coordinator = phase3Coordinator(
+        historyBytes: 4,
+        estimatedEntryBytes: 0,
+      );
+      final target =
+          coordinator.snapshot.root.pages.single.layers.single.objects.first.id;
+      final coalescing = CommandCoalescing(
+        mergeKey: commandValue(
+          CoalescingMergeKey.parse('alnote.merge.description'),
+        ),
+        sessionId: CoalescingSessionId.fromUuid(testUuid(390)),
+        logicalTarget: LogicalCoalescingTarget.object(target),
+      );
+      for (final edit in [('one', 'a'), ('two', '🙂')]) {
+        final before = coordinator.snapshot;
+        expect(
+          coordinator.execute(
+            replacementRequest(
+              before,
+              target,
+              edit.$1,
+              metadata: phase3Metadata(
+                description: edit.$2,
+                coalescing: coalescing,
+              ),
+            ),
+          ),
+          isA<Ok<CommandCommit, CommandFailure>>(),
+        );
+      }
+      expect(coordinator.retainedHistoryCount, 1);
+      expect(coordinator.estimatedRetainedHistoryBytes, 4);
+    });
+
     test('history baseline reset disables prior Undo', () {
       final coordinator = phase3Coordinator();
       final initial = coordinator.snapshot;
@@ -789,6 +905,152 @@ void main() {
       expect(geometryCommit.value.change.flags.appearance, isFalse);
     });
 
+    test('per-Object geometry detects unchanged aggregate bounds', () {
+      final registry = testRegistry([_VariableGeometryDefinition()]);
+      final coordinator = phase3Coordinator(
+        root: phase3Notebook(
+          first: testObject(payload: const PreservedString('small')),
+          second: testObject(id: 2, payload: const PreservedString('large')),
+        ),
+        registry: registry,
+      );
+      final before = coordinator.snapshot;
+      final layer = before.root.pages.single.layers.single;
+      final first = layer.objects.first;
+      final second = layer.objects.last;
+      final result = coordinator.execute(
+        commandValue(
+          AtomicObjectReplacementRequest.create(
+            documentId: before.root.id,
+            metadata: phase3Metadata(),
+            preconditions: RevisionPreconditions(
+              layerMembership: {
+                layer.id: before.revisions.layerMembership[layer.id]!,
+              },
+              objects: {
+                first.id: before.revisions.objects[first.id]!,
+                second.id: before.revisions.objects[second.id]!,
+              },
+            ),
+            targetIds: [first.id, second.id],
+            replacements: [
+              replacementObject(first, 'large'),
+              replacementObject(second, 'small'),
+            ],
+            changeCategories: _noDeclaredChange,
+          ),
+        ),
+      );
+      final change = (result as Ok<CommandCommit, CommandFailure>).value.change;
+      expect(change.oldBounds, change.newBounds);
+      expect(change.flags.geometry, isTrue);
+      expect(change.movedObjectIds, [first.id, second.id]);
+      expect(change.movedObjectIds.clear, throwsUnsupportedError);
+    });
+
+    test('coalescing derives forward and reversed net per-Object geometry', () {
+      for (final scenario in <(String, bool)>[
+        ('small', false),
+        ('large', true),
+      ]) {
+        final registry = testRegistry([_VariableGeometryDefinition()]);
+        final coordinator = phase3Coordinator(
+          root: phase3Notebook(
+            first: testObject(payload: const PreservedString('small')),
+          ),
+          registry: registry,
+        );
+        final target = coordinator
+            .snapshot
+            .root
+            .pages
+            .single
+            .layers
+            .single
+            .objects
+            .first
+            .id;
+        final coalescing = CommandCoalescing(
+          mergeKey: commandValue(
+            CoalescingMergeKey.parse('alnote.merge.geometry'),
+          ),
+          sessionId: CoalescingSessionId.fromUuid(
+            testUuid(scenario.$2 ? 392 : 391),
+          ),
+          logicalTarget: LogicalCoalescingTarget.object(target),
+        );
+        for (final payload in ['medium', scenario.$1]) {
+          final editBefore = coordinator.snapshot;
+          final source =
+              editBefore.root.pages.single.layers.single.objects.first;
+          expect(
+            coordinator.execute(
+              commandValue(
+                AtomicObjectReplacementRequest.create(
+                  documentId: editBefore.root.id,
+                  metadata: phase3Metadata(coalescing: coalescing),
+                  preconditions: objectPreconditions(editBefore, target),
+                  targetIds: [target],
+                  replacements: [replacementObject(source, payload)],
+                  changeCategories: _noDeclaredChange,
+                ),
+              ),
+            ),
+            isA<Ok<CommandCommit, CommandFailure>>(),
+          );
+        }
+        expect(coordinator.retainedHistoryCount, 1);
+        final undo = coordinator.undo() as Ok<CommandCommit, CommandFailure>;
+        final redo = coordinator.redo() as Ok<CommandCommit, CommandFailure>;
+        for (final change in [undo.value.change, redo.value.change]) {
+          expect(change.flags.geometry, scenario.$2);
+          expect(change.movedObjectIds, scenario.$2 ? [target] : isEmpty);
+        }
+        if (scenario.$2) {
+          expect(undo.value.change.oldBounds!.right, 30);
+          expect(undo.value.change.newBounds!.right, 10);
+          expect(redo.value.change.oldBounds!.right, 10);
+          expect(redo.value.change.newBounds!.right, 30);
+        } else {
+          expect(undo.value.change.oldBounds, undo.value.change.newBounds);
+          expect(redo.value.change.oldBounds, redo.value.change.newBounds);
+        }
+      }
+    });
+
+    test('Registry geometry failure is atomic and redaction-safe', () {
+      final coordinator = phase3Coordinator(
+        root: phase3Notebook(
+          first: testObject(payload: const PreservedString('small')),
+        ),
+        registry: testRegistry([_VariableGeometryDefinition()]),
+      );
+      final before = coordinator.snapshot;
+      final source = before.root.pages.single.layers.single.objects.first;
+      var notifications = 0;
+      coordinator.addListener((_) => notifications += 1);
+      final result = coordinator.execute(
+        commandValue(
+          AtomicObjectReplacementRequest.create(
+            documentId: before.root.id,
+            metadata: phase3Metadata(description: 'sensitive geometry edit'),
+            preconditions: objectPreconditions(before, source.id),
+            targetIds: [source.id],
+            replacements: [
+              replacementObject(source, 'secret-geometry-failure'),
+            ],
+            changeCategories: _noDeclaredChange,
+          ),
+        ),
+      );
+      final failure = (result as Err<CommandCommit, CommandFailure>).error;
+      expect(failure.code, 'documents.commands.invalid_replacement');
+      expect(failure.toString(), isNot(contains('secret')));
+      expect(failure.toString(), isNot(contains('sensitive')));
+      expectPersistentStateUnchanged(coordinator, before, 0);
+      expect(notifications, 0);
+    });
+
     test(
       'unclassified payload changes reject while derived-only changes commit',
       () {
@@ -1111,22 +1373,29 @@ void main() {
           testUuid(101),
           testUuid(102),
         ]),
-        estimator: _SequenceEstimator([
-          Revision.maximumValue,
-          Revision.maximumValue,
-        ]),
+        estimator: _SequenceEstimator([Revision.maximumValue - 1, 0]),
         historyBytes: Revision.maximumValue,
       );
       var overflowSnapshot = overflow.snapshot;
       final overflowTarget =
           overflowSnapshot.root.pages.single.layers.single.objects.first.id;
       overflow.execute(
-        replacementRequest(overflowSnapshot, overflowTarget, 'one'),
+        replacementRequest(
+          overflowSnapshot,
+          overflowTarget,
+          'one',
+          metadata: phase3Metadata(description: 'a'),
+        ),
       );
       overflowSnapshot = overflow.snapshot;
       final overflowResult =
           overflow.execute(
-                replacementRequest(overflowSnapshot, overflowTarget, 'two'),
+                replacementRequest(
+                  overflowSnapshot,
+                  overflowTarget,
+                  'two',
+                  metadata: phase3Metadata(description: 'a'),
+                ),
               )
               as Err<CommandCommit, CommandFailure>;
       expect(
@@ -1473,6 +1742,60 @@ final class _PayloadAwareDefinition implements ObjectTypeDefinition {
         ? [ResourceReference(resource)]
         : const [],
   );
+
+  @override
+  Result<PreservedData, StructuredFailure> duplicatePayload(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+    IdentityRemapping remapping,
+  ) => Ok(payload);
+}
+
+final class _VariableGeometryDefinition implements ObjectTypeDefinition {
+  @override
+  ObjectTypeKey get typeKey => testObjectTypeKey();
+  @override
+  List<SchemaVersion> get supportedSchemaVersions => [testSchemaVersion];
+  @override
+  ObjectTypeCapabilities get capabilities => const ObjectTypeCapabilities(
+    hasIntrinsicGeometry: true,
+    discoversResourceReferences: false,
+    supportsScopedDuplication: true,
+    selectable: true,
+    movable: true,
+    resizable: true,
+    rotatable: true,
+  );
+  @override
+  List<ObjectPayloadMigrationContract> get migrations => const [];
+
+  @override
+  ValidationReport validatePayload(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => ValidationReport(const []);
+
+  @override
+  Result<Rect2, StructuredFailure> intrinsicGeometry(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) {
+    if (payload case PreservedString(value: 'secret-geometry-failure')) {
+      throw StateError('sensitive Registry geometry exception');
+    }
+    final extent = switch (payload) {
+      PreservedString(value: 'medium') => 20.0,
+      PreservedString(value: 'large') => 30.0,
+      _ => 10.0,
+    };
+    return Rect2.fromEdges(left: 0, top: 0, right: extent, bottom: extent);
+  }
+
+  @override
+  Result<List<ResourceReference>, StructuredFailure> resourceReferences(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => const Ok([]);
 
   @override
   Result<PreservedData, StructuredFailure> duplicatePayload(

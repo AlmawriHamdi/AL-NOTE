@@ -163,12 +163,25 @@ final class WholeObjectTransformPreview {
     required this.operation,
     required Map<ObjectId, ObjectEnvelope> baseObjects,
     required Map<ObjectId, ObjectEnvelope> candidateObjects,
-    required this.preconditions,
+    required Map<ObjectId, LayerId> targetLayerMembership,
+    required RevisionPreconditions preconditions,
     required this.oldBounds,
     required this.newBounds,
   }) : targetIds = List<ObjectId>.unmodifiable(targetIds),
        baseObjects = UnmodifiableMapView(Map.of(baseObjects)),
-       candidateObjects = UnmodifiableMapView(Map.of(candidateObjects));
+       candidateObjects = UnmodifiableMapView(Map.of(candidateObjects)),
+       targetLayerMembership = UnmodifiableMapView(
+         Map.of(targetLayerMembership),
+       ),
+       preconditions = RevisionPreconditions(
+         document: preconditions.document,
+         sections: preconditions.sections,
+         pages: preconditions.pages,
+         layers: preconditions.layers,
+         layerMembership: preconditions.layerMembership,
+         objects: preconditions.objects,
+         resourceCatalog: preconditions.resourceCatalog,
+       );
 
   /// Validates and creates an immutable transform preview.
   static Result<WholeObjectTransformPreview, SelectionFailure> create({
@@ -178,21 +191,34 @@ final class WholeObjectTransformPreview {
     required TransformOperation2D operation,
     required Map<ObjectId, ObjectEnvelope> baseObjects,
     required Map<ObjectId, ObjectEnvelope> candidateObjects,
+    required Map<ObjectId, LayerId> targetLayerMembership,
     required RevisionPreconditions preconditions,
     required Rect2 oldBounds,
     required Rect2 newBounds,
   }) {
     final targets = List<ObjectId>.of(targetIds);
+    final targetSet = targets.toSet();
+    final base = Map<ObjectId, ObjectEnvelope>.of(baseObjects);
+    final candidates = Map<ObjectId, ObjectEnvelope>.of(candidateObjects);
+    final membership = Map<ObjectId, LayerId>.of(targetLayerMembership);
+    final requiredLayers = membership.values.toSet();
     if (targets.isEmpty || targets.toSet().length != targets.length) {
       return Err(_selectionContractFailure('invalid_preview_targets'));
     }
     if (operation is IdentityTransformOperation2D ||
-        baseObjects.length != targets.length ||
-        candidateObjects.length != targets.length ||
-        !baseObjects.keys.toSet().containsAll(targets) ||
-        !candidateObjects.keys.toSet().containsAll(targets) ||
-        !preconditions.pages.containsKey(pageId) ||
-        targets.any((id) => !preconditions.objects.containsKey(id))) {
+        !_setEquals(base.keys.toSet(), targetSet) ||
+        !_setEquals(candidates.keys.toSet(), targetSet) ||
+        !_setEquals(membership.keys.toSet(), targetSet) ||
+        !_setEquals(preconditions.pages.keys.toSet(), {pageId}) ||
+        !_setEquals(preconditions.objects.keys.toSet(), targetSet) ||
+        !_setEquals(
+          preconditions.layerMembership.keys.toSet(),
+          requiredLayers,
+        ) ||
+        preconditions.document != null ||
+        preconditions.sections.isNotEmpty ||
+        preconditions.layers.isNotEmpty ||
+        preconditions.resourceCatalog != null) {
       return Err(_selectionContractFailure('invalid_preview_state'));
     }
     final affine = AffineTransform2D.fromOperation(
@@ -203,22 +229,22 @@ final class WholeObjectTransformPreview {
     }
     var changed = false;
     for (final id in targets) {
-      final base = baseObjects[id];
-      final candidate = candidateObjects[id];
-      if (base == null ||
+      final baseObject = base[id];
+      final candidate = candidates[id];
+      if (baseObject == null ||
           candidate == null ||
-          base.id != id ||
+          baseObject.id != id ||
           candidate.id != id ||
-          !_sameExceptTransform(base, candidate)) {
+          !_sameExceptTransform(baseObject, candidate)) {
         return Err(_selectionContractFailure('invalid_preview_candidate'));
       }
-      final expected = base.transform
+      final expected = baseObject.transform
           .then(affine)
           .fold(onOk: (value) => value, onErr: (_) => null);
       if (expected == null || candidate.transform != expected) {
         return Err(_selectionContractFailure('invalid_preview_candidate'));
       }
-      changed = changed || candidate != base;
+      changed = changed || candidate != baseObject;
     }
     if (!changed) return Err(_selectionContractFailure('no_change'));
     return Ok(
@@ -227,8 +253,9 @@ final class WholeObjectTransformPreview {
         pageId: pageId,
         targetIds: targets,
         operation: operation,
-        baseObjects: baseObjects,
-        candidateObjects: candidateObjects,
+        baseObjects: base,
+        candidateObjects: candidates,
+        targetLayerMembership: membership,
         preconditions: preconditions,
         oldBounds: oldBounds,
         newBounds: newBounds,
@@ -253,6 +280,9 @@ final class WholeObjectTransformPreview {
 
   /// Immutable candidate Objects.
   final Map<ObjectId, ObjectEnvelope> candidateObjects;
+
+  /// Exact immutable target-to-Layer membership evidence.
+  final Map<ObjectId, LayerId> targetLayerMembership;
 
   /// Required scoped revision snapshot.
   final RevisionPreconditions preconditions;
@@ -344,7 +374,8 @@ final class SelectionState {
             !_listEquals(
               preview.targetIds,
               copied.map((target) => target.objectId).toList(),
-            ))) {
+            ) ||
+            !_mapEquals(preview.targetLayerMembership, layerMembership))) {
       return Err(_selectionContractFailure('invalid_selection_preview'));
     }
     return Ok(
@@ -405,6 +436,14 @@ bool _sameExceptTransform(ObjectEnvelope left, ObjectEnvelope right) =>
 
 bool _setEquals<T>(Set<T> left, Set<T> right) =>
     left.length == right.length && left.containsAll(right);
+
+bool _mapEquals<K, V>(Map<K, V> left, Map<K, V> right) {
+  if (left.length != right.length) return false;
+  for (final entry in left.entries) {
+    if (right[entry.key] != entry.value) return false;
+  }
+  return true;
+}
 
 bool _listEquals<T>(List<T> left, List<T> right) {
   if (left.length != right.length) return false;
