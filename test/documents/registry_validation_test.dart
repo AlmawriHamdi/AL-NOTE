@@ -5,6 +5,7 @@ import 'package:al_note/documents/document_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/document_model_test_support.dart';
+import '../support/uuid_sequence_generator.dart';
 
 void main() {
   group('Object Registry', () {
@@ -20,6 +21,124 @@ void main() {
         ObjectRegistry.create(<ObjectTypeDefinition>[definition, definition]),
         isA<Err<ObjectRegistry, StructuredFailure>>(),
       );
+    });
+
+    for (final getter in _MetadataGetter.values) {
+      test('${getter.name} metadata failure is contained and redacted', () {
+        const secret = 'secret metadata getter explosion';
+        late Result<ObjectRegistry, StructuredFailure> result;
+
+        expect(() {
+          result = ObjectRegistry.create(<ObjectTypeDefinition>[
+            _AdversarialMetadataDefinition(
+              throwingGetter: getter,
+              secret: secret,
+            ),
+          ]);
+        }, returnsNormally);
+
+        final failure =
+            (result as Err<ObjectRegistry, StructuredFailure>).error;
+        expect(failure.code, 'documents.objects.definition_metadata_failure');
+        expect(failure.category, FailureCategory.dependency);
+        expect(failure.retryDisposition, RetryDisposition.never);
+        for (final diagnostic in <String>[
+          failure.code,
+          failure.message,
+          failure.toString(),
+          result.toString(),
+        ]) {
+          expect(diagnostic, isNot(contains(secret)));
+          expect(diagnostic, isNot(contains(getter.name)));
+        }
+      });
+    }
+
+    test('captured collection metadata cannot change Registry behavior', () {
+      final versionTwo = modelValue<SchemaVersion>(SchemaVersion.create(2));
+      final supportedVersions = <SchemaVersion>[testSchemaVersion];
+      final migrations = <ObjectPayloadMigrationContract>[
+        ObjectPayloadMigrationContract(
+          fromSchemaVersion: testSchemaVersion,
+          toSchemaVersion: versionTwo,
+        ),
+      ];
+      final definition = _AdversarialMetadataDefinition(
+        supportedSchemaVersions: supportedVersions,
+        migrations: migrations,
+      );
+      final registry = modelValue<ObjectRegistry>(
+        ObjectRegistry.create(<ObjectTypeDefinition>[definition]),
+      );
+      final captured = registry.definitions.values.single;
+
+      supportedVersions
+        ..clear()
+        ..add(versionTwo);
+      migrations.clear();
+
+      expect(captured.supportedSchemaVersions, <SchemaVersion>[
+        testSchemaVersion,
+      ]);
+      expect(captured.supportedSchemaVersions.clear, throwsUnsupportedError);
+      expect(captured.migrations, <ObjectPayloadMigrationContract>[
+        ObjectPayloadMigrationContract(
+          fromSchemaVersion: testSchemaVersion,
+          toSchemaVersion: versionTwo,
+        ),
+      ]);
+      expect(captured.migrations.clear, throwsUnsupportedError);
+      expect(registry.resolve(testObject()), isA<SupportedObjectResolution>());
+      expect(
+        registry.resolve(testObject(schemaVersion: versionTwo)),
+        isA<UnsupportedObjectSchemaResolution>(),
+      );
+    });
+
+    test('captured metadata is never reread by public model operations', () {
+      const secret = 'secret late metadata access';
+      final definition = _AdversarialMetadataDefinition(
+        throwAfterFirstRead: true,
+        secret: secret,
+      );
+      final registry = modelValue<ObjectRegistry>(
+        ObjectRegistry.create(<ObjectTypeDefinition>[definition]),
+      );
+      final object = testObject(id: 180);
+      final document = _documentWithObject(object);
+      final validator = DocumentValidator(registry);
+      final layer = document.pages.single.layers.single;
+      final replacement = testObject(
+        id: 180,
+        payload: const PreservedString('replacement'),
+      );
+
+      expect(registry.resolve(object), isA<SupportedObjectResolution>());
+      final validation = validator.validateWithPlaceholders(document);
+      expect(validation.report.issues, isEmpty);
+      expect(validation.placeholders, isEmpty);
+      expect(
+        DocumentReplacement(validator).replaceObjectInLayer(
+          layer: layer,
+          targetId: object.id,
+          replacement: replacement,
+        ),
+        isA<Ok<DocumentLayer, StructuredFailure>>(),
+      );
+      expect(
+        DocumentDuplicator(
+          uuidGenerator: UuidSequenceGenerator.fromValues(<UuidIdentifier>[
+            testUuid(181),
+          ]),
+          objectRegistry: registry,
+        ).duplicateObject(object, destinationScope: DocumentIdentityScope()),
+        isA<Ok<ObjectEnvelope, StructuredFailure>>(),
+      );
+      expect(definition.metadataReads, <_MetadataGetter, int>{
+        for (final getter in _MetadataGetter.values) getter: 1,
+      });
+      expect(registry.toString(), isNot(contains(secret)));
+      expect(validation.toString(), isNot(contains(secret)));
     });
 
     test('distinguishes supported, unsupported, invalid, and unknown', () {
@@ -93,11 +212,37 @@ void main() {
     });
 
     test('unexpected definition behavior resolves as unavailable', () {
-      final definition = TestObjectTypeDefinition(throwDuringValidation: true);
+      const secret = 'secret payload validation exception';
+      final definition = TestObjectTypeDefinition(
+        validationExceptionMessage: secret,
+      );
+      final registry = testRegistry(<ObjectTypeDefinition>[definition]);
       expect(
-        testRegistry(<ObjectTypeDefinition>[definition]).resolve(testObject()),
+        registry.resolve(testObject()),
         isA<UnavailableObjectBehaviorResolution>(),
       );
+      final validation = DocumentValidator(
+        registry,
+      ).validateWithPlaceholders(_documentWithObject(testObject()));
+      expect(validation.report.warnings, hasLength(1));
+      expect(
+        validation.report.warnings.single.code,
+        ValidationIssueCode.unavailableBehavior,
+      );
+      expect(validation.placeholders, hasLength(1));
+      expect(
+        validation.placeholders.single,
+        isA<ObjectPlaceholderDescriptor>(),
+      );
+      expect(
+        validation.report.warnings.single.toString(),
+        isNot(contains(secret)),
+      );
+      expect(
+        validation.placeholders.single.toString(),
+        isNot(contains(secret)),
+      );
+      expect(validation.toString(), isNot(contains(secret)));
     });
   });
 
@@ -510,3 +655,93 @@ NotebookDocument _documentWithObject(ObjectEnvelope object) => testNotebook(
     ),
   ],
 );
+
+enum _MetadataGetter {
+  typeKey,
+  supportedSchemaVersions,
+  capabilities,
+  migrations,
+}
+
+final class _AdversarialMetadataDefinition implements ObjectTypeDefinition {
+  _AdversarialMetadataDefinition({
+    this.throwingGetter,
+    this.throwAfterFirstRead = false,
+    this.secret = 'secret definition metadata',
+    ObjectTypeKey? typeKey,
+    List<SchemaVersion>? supportedSchemaVersions,
+    ObjectTypeCapabilities capabilities = const ObjectTypeCapabilities(
+      hasIntrinsicGeometry: false,
+      discoversResourceReferences: false,
+      supportsScopedDuplication: true,
+    ),
+    List<ObjectPayloadMigrationContract>? migrations,
+  }) : _typeKey = typeKey ?? testObjectTypeKey(),
+       _supportedSchemaVersions =
+           supportedSchemaVersions ?? <SchemaVersion>[testSchemaVersion],
+       _capabilities = capabilities,
+       _migrations = migrations ?? <ObjectPayloadMigrationContract>[];
+
+  final _MetadataGetter? throwingGetter;
+  final bool throwAfterFirstRead;
+  final String secret;
+  final ObjectTypeKey _typeKey;
+  final List<SchemaVersion> _supportedSchemaVersions;
+  final ObjectTypeCapabilities _capabilities;
+  final List<ObjectPayloadMigrationContract> _migrations;
+  final Map<_MetadataGetter, int> _metadataReads = <_MetadataGetter, int>{};
+
+  Map<_MetadataGetter, int> get metadataReads =>
+      Map<_MetadataGetter, int>.unmodifiable(_metadataReads);
+
+  @override
+  ObjectTypeKey get typeKey => _read(_MetadataGetter.typeKey, _typeKey);
+
+  @override
+  List<SchemaVersion> get supportedSchemaVersions =>
+      _read(_MetadataGetter.supportedSchemaVersions, _supportedSchemaVersions);
+
+  @override
+  ObjectTypeCapabilities get capabilities =>
+      _read(_MetadataGetter.capabilities, _capabilities);
+
+  @override
+  List<ObjectPayloadMigrationContract> get migrations =>
+      _read(_MetadataGetter.migrations, _migrations);
+
+  T _read<T>(_MetadataGetter getter, T value) {
+    final priorReads = _metadataReads[getter] ?? 0;
+    _metadataReads[getter] = priorReads + 1;
+    if (throwingGetter == getter || throwAfterFirstRead && priorReads > 0) {
+      throw StateError('$secret: ${getter.name}');
+    }
+    return value;
+  }
+
+  @override
+  Result<PreservedData, StructuredFailure> duplicatePayload(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+    IdentityRemapping remapping,
+  ) => Ok<PreservedData, StructuredFailure>(payload);
+
+  @override
+  Result<Rect2, StructuredFailure> intrinsicGeometry(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => Rect2.fromEdges(left: 0, top: 0, right: 1, bottom: 1);
+
+  @override
+  Result<List<ResourceReference>, StructuredFailure> resourceReferences(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => const Ok<List<ResourceReference>, StructuredFailure>(
+    <ResourceReference>[],
+  );
+
+  @override
+  ValidationReport validatePayload(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => ValidationReport(const <ValidationIssue>[]);
+}

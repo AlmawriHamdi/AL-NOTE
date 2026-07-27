@@ -268,6 +268,9 @@ final class DocumentDuplicator {
     IdentityRemapping remapping,
   ) {
     final resolution = objectRegistry.resolve(source);
+    if (resolution is UnavailableObjectBehaviorResolution) {
+      return Err<ObjectEnvelope, StructuredFailure>(_behaviorFailure());
+    }
     if (resolution is! SupportedObjectResolution ||
         !resolution.definition.capabilities.supportsScopedDuplication) {
       return Err<ObjectEnvelope, StructuredFailure>(_unsupportedDuplication());
@@ -290,7 +293,8 @@ final class DocumentDuplicator {
           payload: payload,
           extensionData: source.extensionData,
         ),
-        onErr: Err<ObjectEnvelope, StructuredFailure>.new,
+        onErr: (_) =>
+            Err<ObjectEnvelope, StructuredFailure>(_behaviorFailure()),
       );
     } on Object {
       return Err<ObjectEnvelope, StructuredFailure>(_behaviorFailure());

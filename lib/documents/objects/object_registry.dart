@@ -181,31 +181,39 @@ final class UnavailableObjectBehaviorResolution extends ObjectResolution {
 final class ObjectRegistry {
   ObjectRegistry._(this.definitions);
 
-  /// Creates a registry after defensively copying and rejecting duplicate keys.
+  /// Creates a registry after safely snapshotting definition metadata.
   static Result<ObjectRegistry, StructuredFailure> create(
     Iterable<ObjectTypeDefinition> definitions,
   ) {
-    final copied = List<ObjectTypeDefinition>.of(definitions)
-      ..sort((left, right) => left.typeKey.compareTo(right.typeKey));
-    final byKey = <ObjectTypeKey, ObjectTypeDefinition>{};
-    for (final definition in copied) {
-      if (byKey.containsKey(definition.typeKey)) {
-        return Err<ObjectRegistry, StructuredFailure>(
-          StructuredFailure(
-            code: 'documents.objects.duplicate_type_key',
-            category: FailureCategory.validation,
-            retryDisposition: RetryDisposition.never,
-            message: 'An Object Registry contains a duplicate type key.',
-          ),
-        );
+    try {
+      final copied = <_RegisteredObjectTypeDefinition>[
+        for (final definition in definitions)
+          _RegisteredObjectTypeDefinition.capture(definition),
+      ]..sort((left, right) => left.typeKey.compareTo(right.typeKey));
+      final byKey = <ObjectTypeKey, ObjectTypeDefinition>{};
+      for (final definition in copied) {
+        if (byKey.containsKey(definition.typeKey)) {
+          return Err<ObjectRegistry, StructuredFailure>(
+            StructuredFailure(
+              code: 'documents.objects.duplicate_type_key',
+              category: FailureCategory.validation,
+              retryDisposition: RetryDisposition.never,
+              message: 'An Object Registry contains a duplicate type key.',
+            ),
+          );
+        }
+        byKey[definition.typeKey] = definition;
       }
-      byKey[definition.typeKey] = definition;
+      return Ok<ObjectRegistry, StructuredFailure>(
+        ObjectRegistry._(
+          Map<ObjectTypeKey, ObjectTypeDefinition>.unmodifiable(byKey),
+        ),
+      );
+    } on Object {
+      return Err<ObjectRegistry, StructuredFailure>(
+        _definitionMetadataFailure(),
+      );
     }
-    return Ok<ObjectRegistry, StructuredFailure>(
-      ObjectRegistry._(
-        Map<ObjectTypeKey, ObjectTypeDefinition>.unmodifiable(byKey),
-      ),
-    );
   }
 
   /// Definitions in deterministic key order.
@@ -247,3 +255,88 @@ final class ObjectRegistry {
   @override
   String toString() => 'ObjectRegistry(length: ${definitions.length})';
 }
+
+final class _RegisteredObjectTypeDefinition implements ObjectTypeDefinition {
+  _RegisteredObjectTypeDefinition._({
+    required ObjectTypeDefinition delegate,
+    required this.typeKey,
+    required this.supportedSchemaVersions,
+    required this.capabilities,
+    required this.migrations,
+  }) : _delegate = delegate;
+
+  factory _RegisteredObjectTypeDefinition.capture(
+    ObjectTypeDefinition definition,
+  ) {
+    final typeKey = definition.typeKey;
+    final supportedSchemaVersions = List<SchemaVersion>.unmodifiable(
+      definition.supportedSchemaVersions,
+    );
+    final capabilities = definition.capabilities;
+    final migrations = List<ObjectPayloadMigrationContract>.unmodifiable(
+      definition.migrations.map(
+        (migration) => ObjectPayloadMigrationContract(
+          fromSchemaVersion: migration.fromSchemaVersion,
+          toSchemaVersion: migration.toSchemaVersion,
+        ),
+      ),
+    );
+    return _RegisteredObjectTypeDefinition._(
+      delegate: definition,
+      typeKey: typeKey,
+      supportedSchemaVersions: supportedSchemaVersions,
+      capabilities: ObjectTypeCapabilities(
+        hasIntrinsicGeometry: capabilities.hasIntrinsicGeometry,
+        discoversResourceReferences: capabilities.discoversResourceReferences,
+        supportsScopedDuplication: capabilities.supportsScopedDuplication,
+      ),
+      migrations: migrations,
+    );
+  }
+
+  final ObjectTypeDefinition _delegate;
+
+  @override
+  final ObjectTypeKey typeKey;
+
+  @override
+  final List<SchemaVersion> supportedSchemaVersions;
+
+  @override
+  final ObjectTypeCapabilities capabilities;
+
+  @override
+  final List<ObjectPayloadMigrationContract> migrations;
+
+  @override
+  ValidationReport validatePayload(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => _delegate.validatePayload(payload, schemaVersion);
+
+  @override
+  Result<Rect2, StructuredFailure> intrinsicGeometry(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => _delegate.intrinsicGeometry(payload, schemaVersion);
+
+  @override
+  Result<List<ResourceReference>, StructuredFailure> resourceReferences(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => _delegate.resourceReferences(payload, schemaVersion);
+
+  @override
+  Result<PreservedData, StructuredFailure> duplicatePayload(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+    IdentityRemapping remapping,
+  ) => _delegate.duplicatePayload(payload, schemaVersion, remapping);
+}
+
+StructuredFailure _definitionMetadataFailure() => StructuredFailure(
+  code: 'documents.objects.definition_metadata_failure',
+  category: FailureCategory.dependency,
+  retryDisposition: RetryDisposition.never,
+  message: 'Object definition metadata could not be registered.',
+);

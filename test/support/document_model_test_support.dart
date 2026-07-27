@@ -177,7 +177,9 @@ final class TestObjectTypeDefinition implements ObjectTypeDefinition {
     ObjectTypeCapabilities? capabilities,
     this.referencedObjectId,
     this.failDuplication = false,
+    this.duplicationFailure,
     this.throwDuringValidation = false,
+    this.validationExceptionMessage,
     this.failGeometry = false,
     this.throwGeometry = false,
     this.failResourceDiscovery = false,
@@ -217,8 +219,14 @@ final class TestObjectTypeDefinition implements ObjectTypeDefinition {
   /// Whether duplication returns a structured handler failure.
   final bool failDuplication;
 
+  /// An optional handler-owned duplication failure.
+  final StructuredFailure? duplicationFailure;
+
   /// Whether validation simulates unavailable behavior.
   final bool throwDuringValidation;
+
+  /// An optional message for an adversarial validation exception.
+  final String? validationExceptionMessage;
 
   /// Whether intrinsic geometry returns a structured failure.
   final bool failGeometry;
@@ -247,6 +255,10 @@ final class TestObjectTypeDefinition implements ObjectTypeDefinition {
     SchemaVersion schemaVersion,
     IdentityRemapping remapping,
   ) {
+    final suppliedFailure = duplicationFailure;
+    if (suppliedFailure != null) {
+      return Err<PreservedData, StructuredFailure>(suppliedFailure);
+    }
     if (failDuplication) {
       return Err<PreservedData, StructuredFailure>(
         StructuredFailure(
@@ -305,6 +317,10 @@ final class TestObjectTypeDefinition implements ObjectTypeDefinition {
     PreservedData payload,
     SchemaVersion schemaVersion,
   ) {
+    final suppliedExceptionMessage = validationExceptionMessage;
+    if (suppliedExceptionMessage != null) {
+      throw StateError(suppliedExceptionMessage);
+    }
     if (throwDuringValidation) {
       throw StateError('test behavior unavailable');
     }

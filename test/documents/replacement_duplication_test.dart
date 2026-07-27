@@ -530,6 +530,65 @@ void main() {
       expect(source.id, ObjectId.fromUuid(testUuid(440)));
     });
 
+    test('handler failure is replaced by fixed redaction-safe failure', () {
+      const secret = 'payload_secret_739';
+      final source = testObject(
+        id: 442,
+        payload: const PreservedString(secret),
+      );
+      final handlerFailure = StructuredFailure(
+        code: 'test.$secret',
+        category: FailureCategory.unknown,
+        retryDisposition: RetryDisposition.retryable,
+        message: 'Handler copied $secret from the payload.',
+      );
+      final result = DocumentDuplicator(
+        uuidGenerator: UuidSequenceGenerator.fromValues(<UuidIdentifier>[
+          testUuid(443),
+        ]),
+        objectRegistry: testRegistry(<ObjectTypeDefinition>[
+          TestObjectTypeDefinition(duplicationFailure: handlerFailure),
+        ]),
+      ).duplicateObject(source, destinationScope: DocumentIdentityScope());
+
+      final failure = (result as Err<ObjectEnvelope, StructuredFailure>).error;
+      expect(failure.code, 'documents.duplication.behavior_failure');
+      expect(failure.category, FailureCategory.dependency);
+      expect(failure.retryDisposition, RetryDisposition.never);
+      expect(failure.message, 'Required duplication behavior failed.');
+      expect(failure, isNot(handlerFailure));
+      expect(failure.toString(), isNot(contains(secret)));
+      expect(result.toString(), isNot(contains(secret)));
+      expect(source.payload, const PreservedString(secret));
+      expect(source.id, ObjectId.fromUuid(testUuid(442)));
+    });
+
+    test('resolution behavior exception becomes fixed duplication failure', () {
+      const secret = 'payload_secret_744';
+      final source = testObject(
+        id: 444,
+        payload: const PreservedString(secret),
+      );
+      final result = DocumentDuplicator(
+        uuidGenerator: UuidSequenceGenerator.fromValues(<UuidIdentifier>[
+          testUuid(445),
+        ]),
+        objectRegistry: testRegistry(<ObjectTypeDefinition>[
+          TestObjectTypeDefinition(
+            validationExceptionMessage: 'Validation exposed $secret.',
+          ),
+        ]),
+      ).duplicateObject(source, destinationScope: DocumentIdentityScope());
+
+      final failure = (result as Err<ObjectEnvelope, StructuredFailure>).error;
+      expect(failure.code, 'documents.duplication.behavior_failure');
+      expect(failure.message, 'Required duplication behavior failed.');
+      expect(failure.toString(), isNot(contains(secret)));
+      expect(result.toString(), isNot(contains(secret)));
+      expect(source.payload, const PreservedString(secret));
+      expect(source.id, ObjectId.fromUuid(testUuid(444)));
+    });
+
     test(
       'whole-document copy changes only Document ID and shares resources',
       () {
