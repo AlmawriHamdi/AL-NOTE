@@ -101,3 +101,78 @@ On July 24, 2026, exact-version OSV queries for the Pub ecosystem packages
 `uuid 4.6.0`, `crypto 3.0.7`, `fixnum 1.1.1`, `typed_data 1.4.0`, and the
 unchanged `collection 1.19.1` returned no OSV records. Absence of returned OSV
 records is evidence for this review, not a security guarantee.
+
+## Phase 4 storage dependencies
+
+Phase 4 needs a maintained, hostile-input-aware ZIP implementation that works
+from memory on Android, Linux, Web, and Windows, plus exact SHA-256 calculation.
+The Dart SDK supplies strict UTF-8 and JSON string escaping but no general ZIP
+decoder and no SHA-256 implementation. Manually implementing a general hostile
+ZIP decoder was rejected because central/local-header reconciliation, deflate,
+CRC, ZIP64, encryption, entry typing, and malformed-container behavior form a
+large security-sensitive maintenance surface. `archive 4.0.9` is selected
+behind a private memory-only adapter. The adapter independently preflights raw
+ZIP metadata, paths, types, ZIP32 bounds, sizes, ratios, and CRC before AL NOTE
+uses decoded bytes. It imports only `package:archive/archive.dart`; no package
+archive, hash, stream, filesystem, or path type crosses the public API.
+
+JSON code generation (`json_serializable`, Freezed, and `build_runner`) and
+third-party JSON or immutable-collection packages were rejected. SDK
+`dart:convert` plus an AL NOTE-owned bounded recursive-descent parser provides
+duplicate-key detection, strict UTF-8, depth/value/string ceilings, Web-safe
+number policy, structural unknown-field preservation, and canonical encoding
+without generated code. `crypto 3.0.7`, already resolved and reviewed in Phase
+1, is promoted from transitive to direct solely for the private SHA-256 adapter;
+its version and checksum are unchanged.
+
+Reviewed provenance and notices:
+
+| Package | Publisher | Repository and immutable source | License and notices | Pub archive SHA-256 |
+| --- | --- | --- | --- | --- |
+| `archive 4.0.9` | `loki3d.com` | <https://github.com/brendan-duncan/archive>, tag `v4.0.9`, commit `f01d6a340ffe24e0ef46fa682d1b6bcc7b7aef13` | MIT; `LICENSE-other.md` retains permissive MIT, BSD-style JZlib, bzip2, and Pointy Castle notices | `a96e8b390886ee8abb49b7bd3ac8df6f451c621619f52a26e815fdcf568959ff` |
+| `posix 6.5.2` | `onepub.dev` | <https://github.com/onepub-dev/dart_posix>, tag `6.5.2`, commit `3c544340f3e4ffc64b20e6959ae8229c98638a0a` | MIT | `bc1bad54ad2b735816e31f8d4600cfde6c7839975085ddfbca48b6c9f7c4044e` |
+| `ffi 2.2.0` | `dart.dev` | <https://github.com/dart-lang/native/tree/main/pkgs/ffi>, tag `ffi-v2.2.0`, commit `cc90d34518c8462c0867fc6d1177028e474157ef` | BSD-3-Clause | `6d7fd89431262d8f3125e81b50d3847a091d846eafcd4fdb88dd06f36d705a45` |
+| `crypto 3.0.7` | Pub reviewed package | existing reviewed source | BSD-3-Clause | `c8ea0233063ba03258fbcf2ca4d6dadfefe14f02fab57702265467a19f27fadf` |
+| `path 1.9.1` | Dart ecosystem | existing resolved source | BSD-3-Clause | `75cca69d1490965be98c73ceaea117e8a04dd21217b37b292c9ddbec0d955bc5` |
+| `meta 1.18.0` | `dart.dev` | existing resolved source | BSD-3-Clause | `1741988757a65eb6b36abe716829688cf01910bbf91c34354ff7ec1c3de2b349` |
+
+The exact relevant resolved graph is:
+
+```text
+archive 4.0.9 (direct)
+|-- path 1.9.1 (pre-existing, unchanged)
+`-- posix 6.5.2 (new)
+    |-- ffi 2.2.0 (new)
+    |-- meta 1.18.0 (pre-existing, unchanged)
+    `-- path 1.9.1 (pre-existing, unchanged)
+
+crypto 3.0.7 (promoted to direct; version/checksum unchanged)
+`-- typed_data 1.4.0 (pre-existing)
+    `-- collection 1.19.1 (pre-existing)
+
+uuid 4.6.0 and its existing graph are unchanged.
+```
+
+Exactly `archive`, `posix`, and `ffi` are newly hosted in the lockfile. The
+conditional `posix`/`ffi` portion consists of Dart bindings for native system
+APIs and contains no bundled native binary. AL NOTE production code never
+imports or calls `posix`, `ffi`, or `path`; archive use remains in the private
+memory adapter and does not use `archive_io`, disk extraction, path helpers,
+passwords, encryption, or package RNG output. SHA-256 use remains in a separate
+private adapter. Both adapters are replaceable without changing the public
+surface.
+
+The graph is pure Dart for the required Android, Linux, Web, and Windows
+targets. It adds no Flutter plugin, native binary, build hook, generated code,
+runtime networking, downloaded asset, or platform-project change. Web build
+verification covers the private memory archive path and proves that AL NOTE's
+portable code does not import native-only APIs.
+
+On July 27, 2026, exact-version OSV Pub-ecosystem queries returned no records
+for `archive 4.0.9`, `posix 6.5.2`, `ffi 2.2.0`, `crypto 3.0.7`, `path 1.9.1`,
+or `meta 1.18.0`. Absence of returned records is evidence, not a security
+guarantee. Historical archive path-traversal and symlink advisories affected
+older releases; their status does not replace AL NOTE's mandatory canonical
+path, duplicate/collision, entry-type, header, size, and extraction-safety
+validation. AL NOTE never constructs a platform path from an archive name and
+never extracts package entries to disk.
