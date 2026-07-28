@@ -51,6 +51,41 @@ final class AffineTransform2D {
   final double _ty;
   final double _determinant;
 
+  /// Restores six authoritative coefficients from persistent storage.
+  ///
+  /// The fixed order is `m00`, `m01`, `m10`, `m11`, `tx`, `ty`. This is a
+  /// storage-only bridge: it applies the same finite, positive-determinant,
+  /// representable-inverse, non-reflection, and conditioning checks as every
+  /// other construction path. It is not an unrestricted raw-matrix constructor.
+  static Result<AffineTransform2D, StructuredFailure> restoreFromStorage(
+    List<double> coefficients,
+  ) {
+    if (coefficients.length != 6) {
+      return Err<AffineTransform2D, StructuredFailure>(
+        _affineFailure(
+          code: 'core.geometry.invalid_persisted_transform',
+          message:
+              'A persisted affine transform must contain six coefficients.',
+        ),
+      );
+    }
+    return _validated(
+      m00: coefficients[0],
+      m01: coefficients[1],
+      m10: coefficients[2],
+      m11: coefficients[3],
+      tx: coefficients[4],
+      ty: coefficients[5],
+    );
+  }
+
+  /// The exact authoritative coefficients in persistent storage order.
+  ///
+  /// The returned list is immutable and ordered as `m00`, `m01`, `m10`,
+  /// `m11`, `tx`, `ty`.
+  List<double> get storageCoefficients =>
+      List<double>.unmodifiable(<double>[_m00, _m01, _m10, _m11, _tx, _ty]);
+
   /// Creates an affine transform from one controlled [operation].
   static Result<AffineTransform2D, StructuredFailure> fromOperation(
     TransformOperation2D operation,
