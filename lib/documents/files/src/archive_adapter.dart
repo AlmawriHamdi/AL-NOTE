@@ -28,12 +28,14 @@ final class ArchiveEntryMetadata {
     required this.compressedByteLength,
     required this.decodedByteLength,
     required this.compressionMethod,
+    required this.requiresRegularUnixMode,
   });
 
   final String path;
   final int compressedByteLength;
   final int decodedByteLength;
   final int compressionMethod;
+  final bool requiresRegularUnixMode;
 }
 
 /// A private memory-backed archive whose individual entries decode on demand.
@@ -50,6 +52,11 @@ final class BoundedMemoryArchive {
     if (metadata == null || entry == null) {
       return Err<List<int>, StructuredFailure>(
         storageFailure('missing_entry', 'A required package entry is missing.'),
+      );
+    }
+    if (!_isDecodedOrdinaryFile(entry, metadata)) {
+      return Err<List<int>, StructuredFailure>(
+        storageFailure('entry_type', 'A package entry is not a regular file.'),
       );
     }
     try {
@@ -266,17 +273,17 @@ Result<BoundedMemoryArchive, StructuredFailure> openBoundedZip(
         throw const _ZipRejected('overlapping_entries');
       }
       localRanges.add(localRange);
-      final unixMode = externalAttributes >> 16;
-      if (madeBy >> 8 == 3 && unixMode != 0) {
-        final type = unixMode & 0xf000;
-        if (type != 0 && type != 0x8000) throw const _ZipRejected('entry_type');
-      }
+      final requiresRegularUnixMode = _validateEntryType(
+        madeBy,
+        externalAttributes,
+      );
       metadata.add(
         ArchiveEntryMetadata(
           path: name,
           compressedByteLength: compressed,
           decodedByteLength: decoded,
           compressionMethod: method,
+          requiresRegularUnixMode: requiresRegularUnixMode,
         ),
       );
       cursor = end;
@@ -297,6 +304,12 @@ Result<BoundedMemoryArchive, StructuredFailure> openBoundedZip(
     final archive = ZipDecoder().decodeBytes(bytes);
     if (archive.length != metadata.length)
       throw const _ZipRejected('duplicate_path');
+    for (final entryMetadata in metadata) {
+      final entry = archive.find(entryMetadata.path);
+      if (entry == null || !_isDecodedOrdinaryFile(entry, entryMetadata)) {
+        throw const _ZipRejected('entry_type');
+      }
+    }
     return Ok<BoundedMemoryArchive, StructuredFailure>(
       BoundedMemoryArchive._(
         archive,
@@ -315,6 +328,34 @@ Result<BoundedMemoryArchive, StructuredFailure> openBoundedZip(
       storageFailure('headers', 'The ZIP package headers are malformed.'),
     );
   }
+}
+
+bool _validateEntryType(int madeBy, int externalAttributes) {
+  final creator = madeBy >> 8;
+  final dosAttributes = externalAttributes & 0xffff;
+  const allowedOrdinaryDosAttributes = 0x0027;
+  if ((dosAttributes & ~allowedOrdinaryDosAttributes) != 0) {
+    throw const _ZipRejected('entry_type');
+  }
+  switch (creator) {
+    case 0:
+      final unixType = externalAttributes >> 16 & 0xf000;
+      if (unixType != 0 && unixType != 0x8000) {
+        throw const _ZipRejected('entry_type');
+      }
+      return unixType != 0;
+    case 3:
+      final unixType = externalAttributes >> 16 & 0xf000;
+      if (unixType != 0x8000) throw const _ZipRejected('entry_type');
+      return true;
+    default:
+      throw const _ZipRejected('entry_type');
+  }
+}
+
+bool _isDecodedOrdinaryFile(ArchiveFile entry, ArchiveEntryMetadata metadata) {
+  if (!entry.isFile || entry.isDirectory || entry.isSymbolicLink) return false;
+  return !metadata.requiresRegularUnixMode || entry.mode & 0xf000 == 0x8000;
 }
 
 int _findEocd(ByteData data) {

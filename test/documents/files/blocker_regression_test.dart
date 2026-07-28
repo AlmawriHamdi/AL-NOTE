@@ -13,6 +13,296 @@ import '../../support/document_model_test_support.dart';
 import '../../support/phase4_test_support.dart';
 
 void main() {
+  group('semantic count preflight and cumulative budgets', () {
+    test('manifest catalogs reject by semantic dimension before decoding', () {
+      const hostile = 'later-manifest-secret';
+      final resourceBytes = _rewritePackage(_catalogPackage(), (manifest, _) {
+        (manifest['resources']! as List<Object?>).add(<String, Object?>{
+          'secret': hostile,
+        });
+      }, repairCatalog: false);
+      _expectOpenFailureDimension(
+        resourceBytes,
+        phase4Limits(
+          overrides: const <String, int>{'alnote.storage.resource_count': 1},
+        ),
+        'resource_count',
+        const <String>[hostile],
+      );
+
+      final entryBytes = _rewritePackage(_canonicalPackage(), (manifest, _) {
+        (manifest['entries']! as List<Object?>).add(<String, Object?>{
+          'secret': hostile,
+        });
+      }, repairCatalog: false);
+      _expectOpenFailureDimension(
+        entryBytes,
+        phase4Limits(
+          overrides: <String, int>{
+            'alnote.storage.entry_count': ZipDecoder()
+                .decodeBytes(entryBytes)
+                .length,
+          },
+        ),
+        'entry_count',
+        const <String>[hostile],
+      );
+
+      for (final testCase
+          in <({List<int> bytes, String key, String dimension})>[
+            (
+              bytes: _canonicalPackage(),
+              key: 'alnote.storage.section_count',
+              dimension: 'section_count',
+            ),
+            (
+              bytes: _canonicalPackage(),
+              key: 'alnote.storage.page_count',
+              dimension: 'page_count',
+            ),
+            (
+              bytes: _extensionPackage('application/example'),
+              key: 'alnote.storage.unknown_entry_count',
+              dimension: 'unknown_entry_count',
+            ),
+          ]) {
+        _expectOpenFailureDimension(
+          testCase.bytes,
+          phase4Limits(overrides: <String, int>{testCase.key: 0}),
+          testCase.dimension,
+          const <String>[],
+        );
+      }
+    });
+
+    test('root and Section reference lists reject before later secrets', () {
+      const hostile = 'later-reference-secret';
+      for (final testCase
+          in <({String path, String key, String limitKey, String dimension})>[
+            (
+              path: 'document.json',
+              key: 'sectionIds',
+              limitKey: 'alnote.storage.section_count',
+              dimension: 'section_count',
+            ),
+            (
+              path: 'sections/00000000-0000-4000-8000-000000000030.json',
+              key: 'pageIds',
+              limitKey: 'alnote.storage.page_count',
+              dimension: 'page_count',
+            ),
+          ]) {
+        final bytes = _rewritePackage(_canonicalPackage(), (_, entries) {
+          final record = _jsonMap(entries[testCase.path]!);
+          (record[testCase.key]! as List<Object?>).add(hostile);
+          entries[testCase.path] = utf8.encode(jsonEncode(record));
+        });
+        _expectOpenFailureDimension(
+          bytes,
+          phase4Limits(overrides: <String, int>{testCase.limitKey: 1}),
+          testCase.dimension,
+          const <String>[hostile],
+        );
+      }
+    });
+
+    test('lazy Page lists reject before constructing malformed tails', () {
+      const hostile = 'later-page-secret';
+      final tooManyLayers = _rewritePackage(_canonicalPackage(), (_, entries) {
+        const path = 'pages/00000000-0000-4000-8000-000000000020.json';
+        final page = _jsonMap(entries[path]!);
+        (page['layers']! as List<Object?>).add(<String, Object?>{
+          'secret': hostile,
+        });
+        entries[path] = utf8.encode(jsonEncode(page));
+      });
+      _expectLazyPageFailureDimension(
+        tooManyLayers,
+        phase4Limits(
+          overrides: const <String, int>{'alnote.storage.layer_count': 1},
+        ),
+        'layer_count',
+        const <String>[hostile],
+      );
+
+      final tooManyObjects = _rewritePackage(
+        _twoPagePackage(withObjects: true),
+        (_, entries) {
+          const path = 'pages/00000000-0000-4000-8000-000000000020.json';
+          final page = _jsonMap(entries[path]!);
+          final layer =
+              (page['layers']! as List<Object?>).first! as Map<String, Object?>;
+          (layer['objects']! as List<Object?>).add(<String, Object?>{
+            'secret': hostile,
+          });
+          entries[path] = utf8.encode(jsonEncode(page));
+        },
+      );
+      _expectLazyPageFailureDimension(
+        tooManyObjects,
+        phase4Limits(
+          overrides: const <String, int>{'alnote.storage.object_count': 1},
+        ),
+        'object_count',
+        const <String>[hostile],
+      );
+    });
+
+    test('complete materialization applies cumulative remaining budgets', () {
+      for (final testCase
+          in <({bool withObjects, String key, String dimension})>[
+            (
+              withObjects: false,
+              key: 'alnote.storage.layer_count',
+              dimension: 'layer_count',
+            ),
+            (
+              withObjects: true,
+              key: 'alnote.storage.object_count',
+              dimension: 'object_count',
+            ),
+          ]) {
+        final opened =
+            _openWithLimits(
+                  _twoPagePackage(withObjects: testCase.withObjects),
+                  phase4Limits(overrides: <String, int>{testCase.key: 1}),
+                )
+                as Completed<OpenedAlnotePackage, StructuredFailure>;
+        final outcome = opened.value.materializeSnapshot(
+          cancellationToken: CancellationController().token,
+        );
+        expect(
+          outcome,
+          isA<Failed<AlnotePackageSnapshot, StructuredFailure>>(),
+        );
+        expect(
+          (outcome as Failed<AlnotePackageSnapshot, StructuredFailure>)
+              .failure
+              .code,
+          'documents.storage.${testCase.dimension}',
+        );
+      }
+    });
+
+    test('exact semantic boundaries remain accepted', () {
+      final bytes = _twoPagePackage(withObjects: true);
+      final opened =
+          _openWithLimits(
+                bytes,
+                phase4Limits(
+                  overrides: <String, int>{
+                    'alnote.storage.entry_count': ZipDecoder()
+                        .decodeBytes(bytes)
+                        .length,
+                    'alnote.storage.section_count': 1,
+                    'alnote.storage.page_count': 2,
+                    'alnote.storage.layer_count': 2,
+                    'alnote.storage.object_count': 2,
+                    'alnote.storage.resource_count': 0,
+                    'alnote.storage.unknown_entry_count': 0,
+                  },
+                ),
+              )
+              as Completed<OpenedAlnotePackage, StructuredFailure>;
+      expect(
+        opened.value.pageHandles.first.load(
+          cancellationToken: CancellationController().token,
+        ),
+        isA<Completed<DocumentPage, StructuredFailure>>(),
+      );
+      expect(
+        opened.value.materializeSnapshot(
+          cancellationToken: CancellationController().token,
+        ),
+        isA<Completed<AlnotePackageSnapshot, StructuredFailure>>(),
+      );
+    });
+  });
+
+  group('ordinary ZIP entry type evidence', () {
+    test('rejects DOS directory and volume-label attributes', () {
+      for (final attribute in <int>[0x10, 0x08]) {
+        final bytes = _mutateCentralType(
+          _canonicalPackage(),
+          creator: 0,
+          lowAttributes: attribute,
+        );
+        _expectOpenFailureDimension(
+          bytes,
+          phase4Limits(),
+          'entry_type',
+          const <String>[],
+        );
+      }
+    });
+
+    test('rejects ambiguous creators and Unix special file types', () {
+      for (final testCase in <({int creator, int? unixMode})>[
+        (creator: 10, unixMode: null),
+        (creator: 3, unixMode: 0x4000),
+        (creator: 3, unixMode: 0xa000),
+        (creator: 3, unixMode: 0xc000),
+        (creator: 3, unixMode: 0x1000),
+      ]) {
+        final bytes = _mutateCentralType(
+          _canonicalPackage(),
+          creator: testCase.creator,
+          unixMode: testCase.unixMode,
+        );
+        _expectOpenFailureDimension(
+          bytes,
+          phase4Limits(),
+          'entry_type',
+          const <String>[],
+        );
+      }
+    });
+
+    test('entry-type failures redact hostile canonical-path metadata', () {
+      const hostile = 'hostile-entry-type-secret';
+      final bytes = _rewritePackage(_canonicalPackage(), (manifest, entries) {
+        const oldPath = 'mimetype';
+        const newPath = 'extensions/example/hostile-entry-type-secret';
+        entries[newPath] = entries.remove(oldPath)!;
+        final item =
+            (manifest['entries']! as List<Object?>).singleWhere(
+                  (value) =>
+                      (value! as Map<String, Object?>)['path'] == oldPath,
+                )!
+                as Map<String, Object?>;
+        item['path'] = newPath;
+        manifest['extensionNamespaces'] = <Object?>['example'];
+      }, repairCatalog: false);
+      final typed = _mutateCentralType(bytes, creator: 0, lowAttributes: 0x10);
+      _expectOpenFailureDimension(
+        typed,
+        phase4Limits(),
+        'entry_type',
+        const <String>[hostile],
+      );
+    });
+
+    test('canonical DOS and proven Unix ordinary files remain accepted', () {
+      expect(
+        _open(_canonicalPackage()),
+        isA<Completed<OpenedAlnotePackage, StructuredFailure>>(),
+      );
+      var unix = _canonicalPackage();
+      for (var index = 0; index < _centralCount(unix); index += 1) {
+        unix = _mutateCentralType(
+          unix,
+          creator: 3,
+          unixMode: 0x8000,
+          centralIndex: index,
+        );
+      }
+      expect(
+        _open(unix),
+        isA<Completed<OpenedAlnotePackage, StructuredFailure>>(),
+      );
+    });
+  });
+
   group('caller path policy and exact ZIP ownership', () {
     test('missing and wrongly united path policy fail closed', () {
       for (final limits in <ResourceLimitSnapshot>[
@@ -727,6 +1017,67 @@ List<int> _catalogPackage() {
       .value;
 }
 
+List<int> _twoPagePackage({required bool withObjects}) {
+  DocumentPage page(int pageId, int layerId, int objectId) => testPage(
+    id: pageId,
+    layers: <DocumentLayer>[
+      testContentLayer(
+        id: layerId,
+        objects: withObjects
+            ? <ObjectEnvelope>[testObject(id: objectId)]
+            : const <ObjectEnvelope>[],
+      ),
+    ],
+  );
+
+  final snapshot =
+      (AlnotePackageSnapshot.create(
+                document: testNotebook(
+                  sections: <DocumentSection>[
+                    testSection(
+                      pages: <DocumentPage>[page(20, 10, 1), page(21, 11, 2)],
+                    ),
+                  ],
+                ),
+                resources: const <DocumentResourceSnapshot>[],
+              )
+              as Ok<AlnotePackageSnapshot, StructuredFailure>)
+          .value;
+  return (AlnotePackageCodec(
+            objectRegistry: testRegistry(),
+          ).encode(snapshot, limits: phase4Limits())
+          as Ok<List<int>, StructuredFailure>)
+      .value;
+}
+
+int _centralCount(List<int> source) =>
+    _findSignatures(source, const <int>[0x50, 0x4b, 0x01, 0x02]).length;
+
+List<int> _mutateCentralType(
+  List<int> source, {
+  required int creator,
+  int lowAttributes = 0,
+  int? unixMode,
+  int centralIndex = 0,
+}) {
+  final bytes = List<int>.of(source);
+  final central = _findSignatures(bytes, const <int>[
+    0x50,
+    0x4b,
+    0x01,
+    0x02,
+  ])[centralIndex];
+  final madeBy = _uint16(bytes, central + 4);
+  _setUint16(bytes, central + 4, creator << 8 | madeBy & 0xff);
+  var attributes = _uint32(bytes, central + 38) | lowAttributes;
+  if (unixMode != null) {
+    final permissions = attributes >> 16 & 0x0fff;
+    attributes = (unixMode | permissions) << 16 | attributes & 0xffff;
+  }
+  _setUint32(bytes, central + 38, attributes);
+  return bytes;
+}
+
 List<int> _prependHiddenBytes(List<int> source, List<int> hidden) {
   final bytes = <int>[...hidden, ...source];
   for (final central in _findSignatures(bytes, const <int>[
@@ -802,6 +1153,54 @@ OperationOutcome<OpenedAlnotePackage, StructuredFailure> _open(
   limits: phase4Limits(),
   cancellationToken: CancellationController().token,
 );
+
+OperationOutcome<OpenedAlnotePackage, StructuredFailure> _openWithLimits(
+  List<int> bytes,
+  ResourceLimitSnapshot limits,
+) => AlnotePackageReader(objectRegistry: testRegistry()).openBytes(
+  bytes,
+  limits: limits,
+  cancellationToken: CancellationController().token,
+);
+
+void _expectOpenFailureDimension(
+  List<int> bytes,
+  ResourceLimitSnapshot limits,
+  String dimension,
+  List<String> hostile,
+) {
+  final outcome = _openWithLimits(bytes, limits);
+  expect(outcome, isA<Failed<OpenedAlnotePackage, StructuredFailure>>());
+  expect(
+    (outcome as Failed<OpenedAlnotePackage, StructuredFailure>).failure.code,
+    'documents.storage.$dimension',
+  );
+  for (final value in hostile) {
+    expect(outcome.toString(), isNot(contains(value)));
+  }
+}
+
+void _expectLazyPageFailureDimension(
+  List<int> bytes,
+  ResourceLimitSnapshot limits,
+  String dimension,
+  List<String> hostile,
+) {
+  final opened =
+      _openWithLimits(bytes, limits)
+          as Completed<OpenedAlnotePackage, StructuredFailure>;
+  final outcome = opened.value.pageHandles.first.load(
+    cancellationToken: CancellationController().token,
+  );
+  expect(outcome, isA<Failed<DocumentPage, StructuredFailure>>());
+  expect(
+    (outcome as Failed<DocumentPage, StructuredFailure>).failure.code,
+    'documents.storage.$dimension',
+  );
+  for (final value in hostile) {
+    expect(outcome.toString(), isNot(contains(value)));
+  }
+}
 
 void _expectRedactedOpenFailure(List<int> bytes, List<String> hostile) {
   final outcome = _open(bytes);

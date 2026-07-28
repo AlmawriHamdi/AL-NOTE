@@ -107,10 +107,15 @@ final class OpenedAlnotePackage {
       );
     }
     final pages = <String, DocumentPage>{};
-    var layerCount = 0;
-    var objectCount = 0;
+    var remainingLayers = _limits['alnote.storage.layer_count'];
+    var remainingObjects = _limits['alnote.storage.object_count'];
     for (final handle in pageHandles) {
-      final outcome = handle.load(cancellationToken: cancellationToken);
+      final outcome = _loadPage(
+        handle._entry,
+        cancellationToken,
+        maximumLayers: remainingLayers,
+        maximumObjects: remainingObjects,
+      );
       switch (outcome) {
         case Completed<DocumentPage, StructuredFailure>(:final value):
           if (pages.containsKey(value.id.uuid.value)) {
@@ -118,30 +123,37 @@ final class OpenedAlnotePackage {
               storageFailure('identity', 'A Page identity is duplicated.'),
             );
           }
+          if (value.layers.length > remainingLayers) {
+            return Failed<DocumentRoot, StructuredFailure>(
+              storageFailure(
+                'layer_count',
+                'The Layer count ceiling was exceeded.',
+              ),
+            );
+          }
+          var pageObjects = 0;
+          for (final layer in value.layers) {
+            if (layer.objects.length > remainingObjects - pageObjects) {
+              return Failed<DocumentRoot, StructuredFailure>(
+                storageFailure(
+                  'object_count',
+                  'The Object count ceiling was exceeded.',
+                ),
+              );
+            }
+            pageObjects += layer.objects.length;
+          }
+          remainingLayers -= value.layers.length;
+          remainingObjects -= pageObjects;
           pages[value.id.uuid.value] = value;
-          layerCount += value.layers.length;
-          for (final layer in value.layers) objectCount += layer.objects.length;
         case Failed<DocumentPage, StructuredFailure>(:final failure):
           return Failed<DocumentRoot, StructuredFailure>(failure);
         case Cancelled<DocumentPage, StructuredFailure>(:final reason):
           return Cancelled<DocumentRoot, StructuredFailure>(reason);
       }
     }
-    if (layerCount > _limits['alnote.storage.layer_count']) {
-      return Failed<DocumentRoot, StructuredFailure>(
-        storageFailure('layer_count', 'The Layer count ceiling was exceeded.'),
-      );
-    }
-    if (objectCount > _limits['alnote.storage.object_count']) {
-      return Failed<DocumentRoot, StructuredFailure>(
-        storageFailure(
-          'object_count',
-          'The Object count ceiling was exceeded.',
-        ),
-      );
-    }
     final sections = <String, DocumentSection>{};
-    final decoder = RecordDecoder();
+    final decoder = RecordDecoder(_limits);
     for (final entry in _sectionRecords.entries) {
       final decoded = decoder.section(entry.value, pages);
       if (decoded is Err<DocumentSection, StructuredFailure>) {
@@ -236,8 +248,10 @@ final class OpenedAlnotePackage {
 
   OperationOutcome<DocumentPage, StructuredFailure> _loadPage(
     AlnoteManifestEntry entry,
-    CancellationToken cancellationToken,
-  ) {
+    CancellationToken cancellationToken, {
+    int? maximumLayers,
+    int? maximumObjects,
+  }) {
     if (cancellationToken.isCancelled) {
       return Cancelled<DocumentPage, StructuredFailure>(
         cancellationToken.reason,
@@ -257,8 +271,10 @@ final class OpenedAlnotePackage {
     if (parsed is Err<PreservedData, StructuredFailure>) {
       return Failed<DocumentPage, StructuredFailure>(parsed.error);
     }
-    final page = RecordDecoder().page(
+    final page = RecordDecoder(_limits).page(
       (parsed as Ok<PreservedData, StructuredFailure>).value,
+      maximumLayers: maximumLayers,
+      maximumObjects: maximumObjects,
     );
     if (page is Err<DocumentPage, StructuredFailure>) {
       return Failed<DocumentPage, StructuredFailure>(page.error);
@@ -271,23 +287,6 @@ final class OpenedAlnotePackage {
     if (decodedPage.id.uuid.value != pathId) {
       return Failed<DocumentPage, StructuredFailure>(
         storageFailure('identity', 'A Page record identity is not valid.'),
-      );
-    }
-    var objectCount = 0;
-    for (final layer in decodedPage.layers) {
-      objectCount += layer.objects.length;
-    }
-    if (decodedPage.layers.length > _limits['alnote.storage.layer_count']) {
-      return Failed<DocumentPage, StructuredFailure>(
-        storageFailure('layer_count', 'The Layer count ceiling was exceeded.'),
-      );
-    }
-    if (objectCount > _limits['alnote.storage.object_count']) {
-      return Failed<DocumentPage, StructuredFailure>(
-        storageFailure(
-          'object_count',
-          'The Object count ceiling was exceeded.',
-        ),
       );
     }
     if (cancellationToken.isCancelled) {
@@ -505,6 +504,7 @@ final class AlnotePackageReader {
     }
     final decodedManifest = ManifestCodec().decode(
       (parsedManifest as Ok<PreservedData, StructuredFailure>).value,
+      limits: storageLimits,
     );
     if (decodedManifest is Err<AlnoteManifest, StructuredFailure>) {
       return Failed<OpenedAlnotePackage, StructuredFailure>(
@@ -544,7 +544,12 @@ final class AlnotePackageReader {
         ),
       );
     }
-    final eagerFailure = _validateEagerRecords(root, eager, manifest);
+    final eagerFailure = _validateEagerRecords(
+      root,
+      eager,
+      manifest,
+      storageLimits,
+    );
     if (eagerFailure != null) {
       return Failed<OpenedAlnotePackage, StructuredFailure>(eagerFailure);
     }
@@ -651,11 +656,16 @@ StructuredFailure? _validateCatalog(
   final parsedDocumentId = UuidIdentifier.parse(manifest.documentId);
   if (parsedDocumentId is! Ok<UuidIdentifier, StructuredFailure> ||
       parsedDocumentId.value.value != manifest.documentId ||
-      manifest.entryPoint != 'document.json' ||
-      manifest.resources.length > limits['alnote.storage.resource_count']) {
+      manifest.entryPoint != 'document.json') {
     return storageFailure(
       'manifest_catalog',
       'The manifest catalog is not valid.',
+    );
+  }
+  if (manifest.resources.length > limits['alnote.storage.resource_count']) {
+    return storageFailure(
+      'resource_count',
+      'The resource count ceiling was exceeded.',
     );
   }
   final sectionCount = manifest.entries
@@ -667,12 +677,19 @@ StructuredFailure? _validateCatalog(
   final unknownCount = manifest.entries
       .where((entry) => entry.path.startsWith('extensions/'))
       .length;
-  if (sectionCount > limits['alnote.storage.section_count'] ||
-      pageCount > limits['alnote.storage.page_count'] ||
-      unknownCount > limits['alnote.storage.unknown_entry_count']) {
+  if (sectionCount > limits['alnote.storage.section_count']) {
     return storageFailure(
-      'manifest_catalog',
-      'A manifest catalog count exceeds caller policy.',
+      'section_count',
+      'The Section count ceiling was exceeded.',
+    );
+  }
+  if (pageCount > limits['alnote.storage.page_count']) {
+    return storageFailure('page_count', 'The Page count ceiling was exceeded.');
+  }
+  if (unknownCount > limits['alnote.storage.unknown_entry_count']) {
+    return storageFailure(
+      'unknown_entry_count',
+      'The unknown-entry count ceiling was exceeded.',
     );
   }
   final expected = <String>{'manifest.json'};
@@ -827,6 +844,7 @@ StructuredFailure? _validateEagerRecords(
   PreservedData root,
   Map<String, PreservedData> eager,
   AlnoteManifest manifest,
+  AlnoteStorageLimits limits,
 ) {
   try {
     final rootMap = _recordMap(root);
@@ -856,7 +874,12 @@ StructuredFailure? _validateEagerRecords(
             rootMap.containsKey('sourceResourceId')) {
           throw const _EagerRejected();
         }
-        final sectionIds = _recordUuidList(rootMap, 'sectionIds');
+        final sectionIds = _recordUuidList(
+          rootMap,
+          'sectionIds',
+          maximum: limits['alnote.storage.section_count'],
+          dimension: 'section_count',
+        );
         if (sectionIds.length != sectionIds.toSet().length ||
             sectionIds.length != sectionPaths.length ||
             !sectionIds.toSet().containsAll(sectionPaths.map(_recordPathId))) {
@@ -870,7 +893,12 @@ StructuredFailure? _validateEagerRecords(
             throw const _EagerRejected();
           }
           _recordString(section, 'name');
-          final pages = _recordUuidList(section, 'pageIds');
+          final pages = _recordUuidList(
+            section,
+            'pageIds',
+            maximum: limits['alnote.storage.page_count'],
+            dimension: 'page_count',
+          );
           if (pages.length != pages.toSet().length ||
               pages.any((page) => !referencedPages.add(page))) {
             throw const _EagerRejected();
@@ -890,7 +918,12 @@ StructuredFailure? _validateEagerRecords(
             rootMap.containsKey('pageId')) {
           throw const _EagerRejected();
         }
-        final pages = _recordUuidList(rootMap, 'pageIds');
+        final pages = _recordUuidList(
+          rootMap,
+          'pageIds',
+          maximum: limits['alnote.storage.page_count'],
+          dimension: 'page_count',
+        );
         if (pages.length != pages.toSet().length) throw const _EagerRejected();
         referencedPages.addAll(pages);
         final sourceResourceId = _recordUuid(rootMap, 'sourceResourceId');
@@ -903,6 +936,13 @@ StructuredFailure? _validateEagerRecords(
       throw const _EagerRejected();
     }
     return null;
+  } on _EagerRejected catch (rejected) {
+    return storageFailure(
+      rejected.dimension,
+      rejected.dimension == 'record_validation'
+          ? 'An authoritative record does not satisfy the required contract.'
+          : 'An authoritative record exceeds a semantic count ceiling.',
+    );
   } on Object {
     return storageFailure(
       'record_validation',
@@ -938,9 +978,15 @@ String _recordUuid(Map<String, PreservedData> map, String key) {
   return value;
 }
 
-List<String> _recordUuidList(Map<String, PreservedData> map, String key) {
+List<String> _recordUuidList(
+  Map<String, PreservedData> map,
+  String key, {
+  required int maximum,
+  required String dimension,
+}) {
   final value = map[key];
   if (value is! PreservedList) throw const _EagerRejected();
+  if (value.values.length > maximum) throw _EagerRejected(dimension);
   return value.values
       .map((item) {
         if (item is! PreservedString) throw const _EagerRejected();
@@ -1003,7 +1049,8 @@ bool _stringListsEqual(List<String> left, List<String> right) {
 }
 
 final class _EagerRejected implements Exception {
-  const _EagerRejected();
+  const _EagerRejected([this.dimension = 'record_validation']);
+  final String dimension;
 }
 
 UuidIdentifier _uuid(String source) => UuidIdentifier.parse(source).fold(

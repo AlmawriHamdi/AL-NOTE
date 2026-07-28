@@ -29,7 +29,10 @@ final class ManifestCodec {
   }
 
   /// Decodes and validates manifest catalogs and compatibility features.
-  Result<AlnoteManifest, StructuredFailure> decode(PreservedData source) {
+  Result<AlnoteManifest, StructuredFailure> decode(
+    PreservedData source, {
+    required AlnoteStorageLimits limits,
+  }) {
     try {
       final map = _map(source);
       final packageVersion =
@@ -51,8 +54,41 @@ final class ManifestCodec {
       if (requiredFeatures.isNotEmpty) {
         throw const _ManifestRejected('required_feature');
       }
-      final entries = _list(map, 'entries').map(_decodeEntry).toList();
-      final resources = _list(map, 'resources').map(_decodeResource).toList();
+      final entryValues = _list(map, 'entries');
+      final maximumCatalogEntries = limits['alnote.storage.entry_count'] == 0
+          ? 0
+          : limits['alnote.storage.entry_count'] - 1;
+      if (entryValues.length > maximumCatalogEntries) {
+        throw const _ManifestRejected('entry_count');
+      }
+      final resourceValues = _list(map, 'resources');
+      if (resourceValues.length > limits['alnote.storage.resource_count']) {
+        throw const _ManifestRejected('resource_count');
+      }
+      var sectionCount = 0;
+      var pageCount = 0;
+      var unknownCount = 0;
+      for (final value in entryValues) {
+        final path = _string(_map(value), 'path');
+        if (path.startsWith('sections/')) {
+          sectionCount += 1;
+          if (sectionCount > limits['alnote.storage.section_count']) {
+            throw const _ManifestRejected('section_count');
+          }
+        } else if (path.startsWith('pages/')) {
+          pageCount += 1;
+          if (pageCount > limits['alnote.storage.page_count']) {
+            throw const _ManifestRejected('page_count');
+          }
+        } else if (path.startsWith('extensions/')) {
+          unknownCount += 1;
+          if (unknownCount > limits['alnote.storage.unknown_entry_count']) {
+            throw const _ManifestRejected('unknown_entry_count');
+          }
+        }
+      }
+      final entries = entryValues.map(_decodeEntry).toList();
+      final resources = resourceValues.map(_decodeResource).toList();
       if (_hasDuplicates(entries.map((entry) => entry.path)) ||
           _hasDuplicates(resources.map((entry) => entry.identity)) ||
           !_isStrictlySorted(entries.map((entry) => entry.path)) ||

@@ -112,6 +112,11 @@ final class RecordEncoder {
 
 /// Decodes typed records while preserving every unknown field structurally.
 final class RecordDecoder {
+  /// Creates a decoder constrained by validated caller-supplied limits.
+  const RecordDecoder(this.limits);
+
+  final AlnoteStorageLimits limits;
+
   /// Decodes the document root after referenced records are independently read.
   Result<DocumentRoot, StructuredFailure> document({
     required PreservedData record,
@@ -137,9 +142,15 @@ final class RecordDecoder {
       });
       switch (form) {
         case 'notebook':
-          final ordered = _strings(map, 'sectionIds')
-              .map((id) => sections[id] ?? (throw const _RecordRejected()))
-              .toList(growable: false);
+          final ordered =
+              _strings(
+                    map,
+                    'sectionIds',
+                    maximum: limits['alnote.storage.section_count'],
+                    dimension: 'section_count',
+                  )
+                  .map((id) => sections[id] ?? (throw const _RecordRejected()))
+                  .toList(growable: false);
           if (ordered.length != sections.length) throw const _RecordRejected();
           return NotebookDocument.create(
             id: documentId,
@@ -161,9 +172,15 @@ final class RecordDecoder {
             page: page,
           );
         case 'standalonePdf':
-          final ordered = _strings(map, 'pageIds')
-              .map((id) => pages[id] ?? (throw const _RecordRejected()))
-              .toList(growable: false);
+          final ordered =
+              _strings(
+                    map,
+                    'pageIds',
+                    maximum: limits['alnote.storage.page_count'],
+                    dimension: 'page_count',
+                  )
+                  .map((id) => pages[id] ?? (throw const _RecordRejected()))
+                  .toList(growable: false);
           if (ordered.length != pages.length) throw const _RecordRejected();
           return StandalonePdfDocument.create(
             id: documentId,
@@ -181,8 +198,10 @@ final class RecordDecoder {
         default:
           throw const _RecordRejected();
       }
-    } on _RecordRejected {
-      return Err<DocumentRoot, StructuredFailure>(_recordFailure());
+    } on _RecordRejected catch (rejected) {
+      return Err<DocumentRoot, StructuredFailure>(
+        _recordFailure(rejected.dimension),
+      );
     }
   }
 
@@ -195,9 +214,15 @@ final class RecordDecoder {
       final map = _map(record);
       if (_integerValue(map, 'schemaVersion') != 1)
         throw const _RecordRejected();
-      final ordered = _strings(map, 'pageIds')
-          .map((id) => pages[id] ?? (throw const _RecordRejected()))
-          .toList(growable: false);
+      final ordered =
+          _strings(
+                map,
+                'pageIds',
+                maximum: limits['alnote.storage.page_count'],
+                dimension: 'page_count',
+              )
+              .map((id) => pages[id] ?? (throw const _RecordRejected()))
+              .toList(growable: false);
       return DocumentSection.create(
         id: SectionId.fromUuid(_uuid(_string(map, 'id'))),
         name: _string(map, 'name'),
@@ -209,20 +234,44 @@ final class RecordDecoder {
           'schemaVersion',
         }),
       );
-    } on _RecordRejected {
-      return Err<DocumentSection, StructuredFailure>(_recordFailure());
+    } on _RecordRejected catch (rejected) {
+      return Err<DocumentSection, StructuredFailure>(
+        _recordFailure(rejected.dimension),
+      );
     }
   }
 
   /// Decodes one complete Page record.
-  Result<DocumentPage, StructuredFailure> page(PreservedData record) {
+  Result<DocumentPage, StructuredFailure> page(
+    PreservedData record, {
+    int? maximumLayers,
+    int? maximumObjects,
+  }) {
     try {
       final map = _map(record);
       if (_integerValue(map, 'schemaVersion') != 1)
         throw const _RecordRejected();
       final size = _list(map, 'size');
       if (size.length != 2) throw const _RecordRejected();
-      final layers = _list(map, 'layers').map(_layer).toList(growable: false);
+      final layerBudget = maximumLayers ?? limits['alnote.storage.layer_count'];
+      final objectBudget =
+          maximumObjects ?? limits['alnote.storage.object_count'];
+      if (layerBudget < 0 || objectBudget < 0) {
+        throw const _RecordRejected();
+      }
+      final layerValues = _list(map, 'layers');
+      if (layerValues.length > layerBudget) {
+        throw const _RecordRejected('layer_count');
+      }
+      var remainingObjects = objectBudget;
+      for (final value in layerValues) {
+        final objectValues = _list(_map(value), 'objects');
+        if (objectValues.length > remainingObjects) {
+          throw const _RecordRejected('object_count');
+        }
+        remainingObjects -= objectValues.length;
+      }
+      final layers = layerValues.map(_layer).toList(growable: false);
       return DocumentPage.create(
         id: PageId.fromUuid(_uuid(_string(map, 'id'))),
         name: _string(map, 'name'),
@@ -240,8 +289,10 @@ final class RecordDecoder {
           'size',
         }),
       );
-    } on _RecordRejected {
-      return Err<DocumentPage, StructuredFailure>(_recordFailure());
+    } on _RecordRejected catch (rejected) {
+      return Err<DocumentPage, StructuredFailure>(
+        _recordFailure(rejected.dimension),
+      );
     }
   }
 
@@ -400,13 +451,21 @@ List<PreservedData> _list(Map<String, PreservedData> map, String key) {
   return value.values;
 }
 
-List<String> _strings(Map<String, PreservedData> map, String key) =>
-    _list(map, key)
-        .map((value) {
-          if (value is! PreservedString) throw const _RecordRejected();
-          return value.value;
-        })
-        .toList(growable: false);
+List<String> _strings(
+  Map<String, PreservedData> map,
+  String key, {
+  required int maximum,
+  required String dimension,
+}) {
+  final values = _list(map, key);
+  if (values.length > maximum) throw _RecordRejected(dimension);
+  return values
+      .map((value) {
+        if (value is! PreservedString) throw const _RecordRejected();
+        return value.value;
+      })
+      .toList(growable: false);
+}
 
 double _number(PreservedData value) => switch (value) {
   PreservedDouble(:final value) => value,
@@ -428,11 +487,14 @@ PreservedMap _unknown(Map<String, PreservedData> map, Set<String> known) =>
         if (!known.contains(entry.key)) entry.key: entry.value,
     });
 
-StructuredFailure _recordFailure() => storageFailure(
-  'record_type',
-  'A structured record does not satisfy the required schema.',
+StructuredFailure _recordFailure(String dimension) => storageFailure(
+  dimension,
+  dimension == 'record_type'
+      ? 'A structured record does not satisfy the required schema.'
+      : 'A structured record exceeds a caller-supplied semantic ceiling.',
 );
 
 final class _RecordRejected implements Exception {
-  const _RecordRejected();
+  const _RecordRejected([this.dimension = 'record_type']);
+  final String dimension;
 }
