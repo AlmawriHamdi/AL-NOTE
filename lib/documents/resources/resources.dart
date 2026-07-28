@@ -4,6 +4,8 @@ import '../../core/outcomes/result.dart';
 import '../../core/outcomes/structured_failure.dart';
 import '../model/identifiers.dart';
 
+export 'resource_records.dart';
+
 /// An immutable logical reference to an immutable document resource.
 final class ResourceReference {
   /// Creates a logical resource reference.
