@@ -64,7 +64,7 @@ final class DocumentCoordinatorSnapshot {
   final ContentIdentity currentContentIdentity;
 
   /// Last successfully acknowledged saved identity.
-  final ContentIdentity savedContentIdentity;
+  final ContentIdentity? savedContentIdentity;
 
   /// Whether one valid Undo entry is reachable.
   final bool canUndo;
@@ -79,6 +79,15 @@ final class DocumentCoordinatorSnapshot {
   bool get isDirty => currentContentIdentity != savedContentIdentity;
 }
 
+/// Whether the initial coordinator root has a canonical saved baseline.
+enum InitialDocumentSaveState {
+  /// The initial root was loaded from or acknowledged by canonical storage.
+  saved,
+
+  /// The initial root has never been canonically saved, including Recovery.
+  unsaved,
+}
+
 /// The sole document-scoped gateway for Phase 3 persistent mutations.
 final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   DocumentMutationCoordinator._({
@@ -88,6 +97,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     required HistoryLimits historyLimits,
     required HistoryRetainedCostEstimator retainedCostEstimator,
     required ContentIdentity initialIdentity,
+    required InitialDocumentSaveState initialSaveState,
   }) : _root = root,
        _validator = validator,
        _uuidGenerator = uuidGenerator,
@@ -95,7 +105,10 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
        _retainedCostEstimator = retainedCostEstimator,
        _revisions = DocumentRevisionSnapshot.initial(root),
        _currentContentIdentity = initialIdentity,
-       _savedContentIdentity = initialIdentity,
+       _savedContentIdentity =
+           initialSaveState == InitialDocumentSaveState.saved
+           ? initialIdentity
+           : null,
        _issuedContentIdentities = <ContentIdentity>{initialIdentity};
 
   /// Creates a coordinator after validating the baseline and generating its
@@ -106,6 +119,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     required UuidGenerator uuidGenerator,
     required HistoryLimits historyLimits,
     required HistoryRetainedCostEstimator retainedCostEstimator,
+    InitialDocumentSaveState initialSaveState = InitialDocumentSaveState.saved,
   }) {
     if (!validator.validate(initialRoot).isValid) {
       return Err(
@@ -122,6 +136,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
             historyLimits: historyLimits,
             retainedCostEstimator: retainedCostEstimator,
             initialIdentity: ContentIdentity(uuid),
+            initialSaveState: initialSaveState,
           ),
         ),
         onErr: (_) => Err(
@@ -148,7 +163,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   DocumentRoot _root;
   DocumentRevisionSnapshot _revisions;
   ContentIdentity _currentContentIdentity;
-  ContentIdentity _savedContentIdentity;
+  ContentIdentity? _savedContentIdentity;
   final Set<ContentIdentity> _issuedContentIdentities;
   final List<_HistoryEntry> _history = [];
   int _historyCursor = 0;
