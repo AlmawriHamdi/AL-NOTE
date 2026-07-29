@@ -33,10 +33,12 @@ final class SettingsLogicalRecord {
     required Map<String, List<int>> unknownFields,
     required this.active,
     required this.lastKnownGood,
-  }) : valueBytes = _bytes(valueBytes),
+  }) : valueBytes = List.unmodifiable(valueBytes),
        unknownFields = UnmodifiableMapView(
          Map.fromEntries(
-           unknownFields.entries.map((e) => MapEntry(e.key, _bytes(e.value))),
+           unknownFields.entries.map(
+             (e) => MapEntry(e.key, List.unmodifiable(e.value)),
+           ),
          ),
        );
   final SettingKey key;
@@ -64,30 +66,33 @@ final class SettingsLogicalRecord {
     required bool active,
     required bool lastKnownGood,
     required int maximumValueBytes,
+    required int maximumUnknownFields,
   }) {
     try {
-      final bytes = List<int>.of(valueBytes);
-      final fields = Map<String, List<int>>.fromEntries(
-        unknownFields.entries.map(
-          (entry) => MapEntry(entry.key, List<int>.of(entry.value)),
-        ),
+      if (!_validLimit(maximumValueBytes) ||
+          !_validLimit(maximumUnknownFields)) {
+        return Err(_failure('invalid_record'));
+      }
+      final capturedBytes = _boundedBytes(valueBytes, maximumValueBytes);
+      if (capturedBytes == null) return Err(_failure('invalid_record'));
+      final capturedFields = _boundedSettingsMap(
+        unknownFields,
+        maximumUnknownFields,
       );
+      if (capturedFields == null) return Err(_failure('invalid_record'));
+      final fields = <String, List<int>>{};
+      for (final entry in capturedFields.entries) {
+        final captured = _boundedBytes(entry.value, maximumValueBytes);
+        if (captured == null) return Err(_failure('invalid_record'));
+        fields[entry.key] = captured;
+      }
       final safeCodec = RegExp(r'^[a-zA-Z0-9._-]{1,128}$');
       final safeField = RegExp(r'^[a-zA-Z][a-zA-Z0-9._-]{0,127}$');
       if ((scope != SettingScope.user && scope != SettingScope.deviceLocal) ||
           schemaVersion <= 0 ||
           schemaVersion > 9007199254740991 ||
-          maximumValueBytes < 0 ||
-          maximumValueBytes > 9007199254740991 ||
           !safeCodec.hasMatch(codecIdentity) ||
-          bytes.length > maximumValueBytes ||
-          bytes.any((byte) => byte < 0 || byte > 255) ||
-          fields.keys.any((field) => !safeField.hasMatch(field)) ||
-          fields.values.any(
-            (value) =>
-                value.length > maximumValueBytes ||
-                value.any((byte) => byte < 0 || byte > 255),
-          )) {
+          fields.keys.any((field) => !safeField.hasMatch(field))) {
         return Err(_failure('invalid_record'));
       }
       return Ok(
@@ -97,7 +102,7 @@ final class SettingsLogicalRecord {
           schemaVersion: schemaVersion,
           codecIdentity: codecIdentity,
           recordRevision: recordRevision,
-          valueBytes: bytes,
+          valueBytes: capturedBytes,
           unknownFields: fields,
           active: active,
           lastKnownGood: lastKnownGood,
@@ -115,7 +120,7 @@ final class UnknownSettingsRecord {
     required this.identity,
     required Iterable<int> bytes,
     required this.supported,
-  }) : bytes = _bytes(bytes);
+  }) : bytes = List.unmodifiable(bytes);
   final String identity;
   final List<int> bytes;
   final bool supported;
@@ -131,12 +136,9 @@ final class UnknownSettingsRecord {
     required int maximumBytes,
   }) {
     try {
-      final copied = List<int>.of(bytes);
+      final copied = _boundedBytes(bytes, maximumBytes);
       if (!RegExp(r'^[a-zA-Z][a-zA-Z0-9._-]{0,127}$').hasMatch(identity) ||
-          maximumBytes < 0 ||
-          maximumBytes > 9007199254740991 ||
-          copied.length > maximumBytes ||
-          copied.any((byte) => byte < 0 || byte > 255)) {
+          copied == null) {
         return Err(_failure('invalid_unknown_record'));
       }
       return Ok(
@@ -176,21 +178,36 @@ final class SettingsPersistenceSnapshot {
     required bool damaged,
     required bool lastKnownGoodAvailable,
     required int maximumRecords,
+    required int maximumUnknownRecords,
+    required int maximumUnknownFieldsPerRecord,
     required int maximumValueBytes,
   }) {
     try {
-      final copiedRecords = List<SettingsLogicalRecord>.of(records);
-      final copiedUnknown = List<UnknownSettingsRecord>.of(unknownRecords);
-      if (maximumRecords < 0 ||
-          maximumValueBytes < 0 ||
-          copiedRecords.length + copiedUnknown.length > maximumRecords ||
+      final copiedRecords = _boundedIterable(records, maximumRecords);
+      final copiedUnknown = _boundedIterable(
+        unknownRecords,
+        maximumUnknownRecords,
+      );
+      if (copiedRecords == null ||
+          copiedUnknown == null ||
+          !_validLimit(maximumValueBytes) ||
+          !_validLimit(maximumUnknownFieldsPerRecord) ||
           copiedRecords.any(
             (record) =>
                 record.valueBytes.length > maximumValueBytes ||
+                record.valueBytes.any((byte) => byte < 0 || byte > 255) ||
+                record.unknownFields.length > maximumUnknownFieldsPerRecord ||
+                record.unknownFields.values.any(
+                  (bytes) =>
+                      bytes.length > maximumValueBytes ||
+                      bytes.any((byte) => byte < 0 || byte > 255),
+                ) ||
                 record.scope == SettingScope.temporaryPreview,
           ) ||
           copiedUnknown.any(
-            (record) => record.bytes.length > maximumValueBytes,
+            (record) =>
+                record.bytes.length > maximumValueBytes ||
+                record.bytes.any((byte) => byte < 0 || byte > 255),
           )) {
         return Err(_failure('invalid_adapter_snapshot'));
       }
@@ -267,6 +284,8 @@ abstract interface class SettingsPersistenceAdapter {
   Future<OperationOutcome<SettingsPersistenceSnapshot, StructuredFailure>>
   load({
     required int maximumRecords,
+    required int maximumUnknownRecords,
+    required int maximumUnknownFieldsPerRecord,
     required int maximumValueBytes,
     required CancellationToken cancellationToken,
   });
@@ -369,18 +388,17 @@ final class SettingsDraftTransaction {
 
   static Result<SettingsDraftTransaction, StructuredFailure> create({
     required SettingsStoreRevision expectedRevision,
-    required List<SettingsDraftOperation> operations,
+    required Iterable<SettingsDraftOperation> operations,
     required int maximumOperations,
   }) {
-    if (maximumOperations < 0 ||
-        maximumOperations > 9007199254740991 ||
-        operations.length > maximumOperations) {
+    final captured = _boundedIterable(operations, maximumOperations);
+    if (captured == null) {
       return Err(_failure('transaction_limit'));
     }
     return Ok(
       SettingsDraftTransaction._(
         expectedRevision: expectedRevision,
-        operations: operations,
+        operations: captured,
       ),
     );
   }
@@ -444,12 +462,11 @@ final class SettingsChangeEvent {
       return Err(_failure('invalid_change_event'));
     }
     try {
-      if (keys is List<SettingKey> && keys.length > maximumKeys) {
+      final copied = _boundedIterable(keys, maximumKeys);
+      if (copied == null) {
         return Err(_failure('invalid_change_event'));
       }
-      final copied = List<SettingKey>.of(keys);
-      if (copied.length > maximumKeys ||
-          copied.toSet().length != copied.length ||
+      if (copied.toSet().length != copied.length ||
           currentRevision.value.compareTo(previousRevision.value) <= 0) {
         return Err(_failure('invalid_change_event'));
       }
@@ -475,6 +492,7 @@ final class SettingsRepository {
     required this.registry,
     required this.adapter,
     required SettingsPersistenceSnapshot persistence,
+    required this.maximumListeners,
   }) : _persistence = persistence,
        _snapshot = SettingsSnapshot._(
          registry: registry,
@@ -486,11 +504,14 @@ final class SettingsRepository {
        );
   final SettingRegistry registry;
   final SettingsPersistenceAdapter adapter;
+  final int maximumListeners;
   SettingsPersistenceSnapshot _persistence;
   SettingsSnapshot _snapshot;
   final List<SettingsListener> _listeners = [];
   final Object _changeSetOwner = Object();
   bool _poisoned = false;
+  bool _operationActive = false;
+  Object _generation = Object();
   SettingsSnapshot get snapshot => _snapshot;
   bool get reloadRequired => _poisoned;
 
@@ -498,19 +519,30 @@ final class SettingsRepository {
     required SettingRegistry registry,
     required SettingsPersistenceAdapter adapter,
     required int maximumRecords,
+    required int maximumUnknownRecords,
+    required int maximumUnknownFieldsPerRecord,
     required int maximumValueBytes,
+    required int maximumListeners,
     required CancellationToken cancellationToken,
   }) async {
     if (maximumRecords < 0 ||
+        maximumUnknownRecords < 0 ||
+        maximumUnknownFieldsPerRecord < 0 ||
         maximumValueBytes < 0 ||
         maximumRecords > 9007199254740991 ||
-        maximumValueBytes > 9007199254740991) {
+        maximumValueBytes > 9007199254740991 ||
+        maximumUnknownRecords > 9007199254740991 ||
+        maximumUnknownFieldsPerRecord > 9007199254740991 ||
+        maximumListeners < 0 ||
+        maximumListeners > 9007199254740991) {
       return Failed(_failure('invalid_limits'));
     }
     OperationOutcome<SettingsPersistenceSnapshot, StructuredFailure> loaded;
     try {
       loaded = await adapter.load(
         maximumRecords: maximumRecords,
+        maximumUnknownRecords: maximumUnknownRecords,
+        maximumUnknownFieldsPerRecord: maximumUnknownFieldsPerRecord,
         maximumValueBytes: maximumValueBytes,
         cancellationToken: cancellationToken,
       );
@@ -531,6 +563,8 @@ final class SettingsRepository {
       damaged: persistence.damaged,
       lastKnownGoodAvailable: persistence.lastKnownGoodAvailable,
       maximumRecords: maximumRecords,
+      maximumUnknownRecords: maximumUnknownRecords,
+      maximumUnknownFieldsPerRecord: maximumUnknownFieldsPerRecord,
       maximumValueBytes: maximumValueBytes,
     );
     if (revalidated is Err<SettingsPersistenceSnapshot, StructuredFailure>) {
@@ -546,6 +580,7 @@ final class SettingsRepository {
       registry: registry,
       adapter: adapter,
       persistence: validatedPersistence,
+      maximumListeners: maximumListeners,
     );
     final activation = repository._activate(maximumValueBytes);
     if (activation is Err<void, StructuredFailure>)
@@ -555,8 +590,13 @@ final class SettingsRepository {
 
   /// Listener notification occurs only after commit. It snapshots listeners;
   /// mutation affects later notifications, reentrancy is allowed, and exceptions are isolated.
-  void addListener(SettingsListener listener) {
-    if (!_listeners.contains(listener)) _listeners.add(listener);
+  Result<void, StructuredFailure> addListener(SettingsListener listener) {
+    if (_listeners.contains(listener)) return const Ok(null);
+    if (_listeners.length >= maximumListeners) {
+      return Err(_failure('listener_limit'));
+    }
+    _listeners.add(listener);
+    return const Ok(null);
   }
 
   void removeListener(SettingsListener listener) => _listeners.remove(listener);
@@ -567,6 +607,7 @@ final class SettingsRepository {
     required int maximumPreviews,
   }) {
     if (_poisoned) return Err(_failure('reload_required'));
+    if (_operationActive) return Err(_failure('operation_active'));
     if (maximumPreviews < 0 || maximumPreviews > 9007199254740991) {
       return Err(_failure('invalid_preview_limit'));
     }
@@ -588,10 +629,12 @@ final class SettingsRepository {
       preview: preview,
       unknownRecords: _snapshot.unknownRecords,
     );
+    _generation = Object();
     return const Ok(null);
   }
 
-  void cancelPreviews() {
+  Result<void, StructuredFailure> cancelPreviews() {
+    if (_operationActive) return Err(_failure('operation_active'));
     _snapshot = SettingsSnapshot._(
       registry: registry,
       storeRevision: _snapshot.storeRevision,
@@ -600,6 +643,8 @@ final class SettingsRepository {
       preview: const {},
       unknownRecords: _snapshot.unknownRecords,
     );
+    _generation = Object();
+    return const Ok(null);
   }
 
   Result<ValidatedSettingsChangeSet, StructuredFailure> validate(
@@ -658,180 +703,224 @@ final class SettingsRepository {
     if (!identical(changes._owner, _changeSetOwner) || changes._consumed) {
       return Failed(_failure('invalid_change_set'));
     }
+    if (_operationActive) return Failed(_failure('operation_active'));
     if (changes.expectedRevision.value != _snapshot.storeRevision.value)
       return Failed(_failure('stale_transaction'));
-    final nextStoreRevision = _snapshot.storeRevision.value.increment();
-    if (nextStoreRevision is Err<Revision, StructuredFailure>) {
-      return Failed(_failure('store_revision_overflow'));
-    }
-    final expectedNext = SettingsStoreRevision(
-      (nextStoreRevision as Ok<Revision, StructuredFailure>).value,
-    );
-    final records = List<SettingsLogicalRecord>.of(_persistence.records);
-    for (final operation in changes.operations) {
-      final existing = records
-          .where(
-            (record) =>
-                record.key == operation.key && record.scope == operation.scope,
-          )
-          .firstOrNull;
-      records.removeWhere(
-        (record) =>
-            record.key == operation.key && record.scope == operation.scope,
-      );
-      if (operation is SetSettingValue<Object?>) {
-        if (!registry.owns(operation.definition)) {
-          return Failed(_failure('forged_definition'));
-        }
-        final normalized = operation.definition.validated(operation.value);
-        if (normalized is Err<Object?, StructuredFailure>)
-          return Failed(_failure('validation_failed'));
-        final encoded = operation.definition.encodeValue(
-          (normalized as Ok<Object?, StructuredFailure>).value,
-          maximumBytes: maximumValueBytes,
-        );
-        if (encoded is Err<List<int>, StructuredFailure>)
-          return Failed(_failure('encoding_failed'));
-        final recordRevision = existing == null
-            ? _zeroRevision()
-            : existing.recordRevision.value.increment().fold(
-                onOk: (value) => value,
-                onErr: (_) => null,
-              );
-        if (recordRevision == null) {
-          return Failed(_failure('record_revision_overflow'));
-        }
-        final record = SettingsLogicalRecord.create(
-          key: operation.key,
-          scope: operation.scope,
-          schemaVersion: operation.definition.schemaVersion,
-          codecIdentity: operation.definition.codec.identity,
-          recordRevision: SettingsRecordRevision(recordRevision),
-          valueBytes: (encoded as Ok<List<int>, StructuredFailure>).value,
-          unknownFields: const {},
-          active: true,
-          lastKnownGood: true,
-          maximumValueBytes: maximumValueBytes,
-        );
-        if (record is Err<SettingsLogicalRecord, StructuredFailure>) {
-          return Failed(record.error);
-        }
-        records.add(
-          (record as Ok<SettingsLogicalRecord, StructuredFailure>).value,
-        );
-      }
-    }
-    final candidatePersistence = SettingsPersistenceSnapshot._(
-      storeRevision: expectedNext,
-      records: records,
-      unknownRecords: _persistence.unknownRecords,
-      damaged: false,
-      lastKnownGoodAvailable: true,
-    );
-    final candidateSnapshot = _buildSnapshot(
-      candidatePersistence,
-      maximumValueBytes,
-      const {},
-    );
-    if (candidateSnapshot is Err<SettingsSnapshot, StructuredFailure>) {
-      return Failed(candidateSnapshot.error);
-    }
-    OperationOutcome<SettingsCommitEvidence, StructuredFailure> committed;
-    changes._consumed = true;
+    _operationActive = true;
+    final startingGeneration = _generation;
+    final startingRevision = _snapshot.storeRevision;
+    final startingPersistence = _persistence;
     try {
-      committed = await adapter.commit(
-        expectedRevision: changes.expectedRevision,
-        records: List.unmodifiable(records),
-        preservedUnknownRecords: _persistence.unknownRecords,
-        cancellationToken: cancellationToken,
-      );
-    } on Object {
-      return Failed(_failure('adapter_commit'));
-    }
-    if (committed is! Completed<SettingsCommitEvidence, StructuredFailure>)
-      return committed is Cancelled<SettingsCommitEvidence, StructuredFailure>
-          ? Cancelled(committed.reason)
-          : Failed(_failure('adapter_commit'));
-    final evidence = committed.value;
-    if (evidence.storeRevision.value != expectedNext.value ||
-        !evidence.atomicity.atomic) {
-      _poisoned = true;
-      return Failed(_failure('adapter_evidence_mismatch'));
-    }
-    final previous = _snapshot.storeRevision;
-    _persistence = candidatePersistence;
-    _snapshot =
-        (candidateSnapshot as Ok<SettingsSnapshot, StructuredFailure>).value;
-    final eventResult = SettingsChangeEvent.create(
-      previousRevision: previous,
-      currentRevision: evidence.storeRevision,
-      keys: changes.operations.map((o) => o.key).toSet(),
-      maximumKeys: changes.operations.length,
-    );
-    if (eventResult is Err<SettingsChangeEvent, StructuredFailure>) {
-      _poisoned = true;
-      return Failed(_failure('event_evidence_mismatch'));
-    }
-    final event =
-        (eventResult as Ok<SettingsChangeEvent, StructuredFailure>).value;
-    for (final listener in List<SettingsListener>.of(_listeners)) {
-      try {
-        listener(event);
-      } on Object {
-        /* isolated */
+      final nextStoreRevision = _snapshot.storeRevision.value.increment();
+      if (nextStoreRevision is Err<Revision, StructuredFailure>) {
+        return Failed(_failure('store_revision_overflow'));
       }
+      final expectedNext = SettingsStoreRevision(
+        (nextStoreRevision as Ok<Revision, StructuredFailure>).value,
+      );
+      final records = List<SettingsLogicalRecord>.of(_persistence.records);
+      for (final operation in changes.operations) {
+        final existing = records
+            .where(
+              (record) =>
+                  record.key == operation.key &&
+                  record.scope == operation.scope,
+            )
+            .firstOrNull;
+        records.removeWhere(
+          (record) =>
+              record.key == operation.key && record.scope == operation.scope,
+        );
+        if (operation is SetSettingValue<Object?>) {
+          if (!registry.owns(operation.definition)) {
+            return Failed(_failure('forged_definition'));
+          }
+          final normalized = operation.definition.validated(operation.value);
+          if (normalized is Err<Object?, StructuredFailure>)
+            return Failed(_failure('validation_failed'));
+          final encoded = operation.definition.encodeValue(
+            (normalized as Ok<Object?, StructuredFailure>).value,
+            maximumBytes: maximumValueBytes,
+          );
+          if (encoded is Err<List<int>, StructuredFailure>)
+            return Failed(_failure('encoding_failed'));
+          final recordRevision = existing == null
+              ? _zeroRevision()
+              : existing.recordRevision.value.increment().fold(
+                  onOk: (value) => value,
+                  onErr: (_) => null,
+                );
+          if (recordRevision == null) {
+            return Failed(_failure('record_revision_overflow'));
+          }
+          final record = SettingsLogicalRecord.create(
+            key: operation.key,
+            scope: operation.scope,
+            schemaVersion: operation.definition.schemaVersion,
+            codecIdentity: operation.definition.codec.identity,
+            recordRevision: SettingsRecordRevision(recordRevision),
+            valueBytes: (encoded as Ok<List<int>, StructuredFailure>).value,
+            unknownFields: const {},
+            active: true,
+            lastKnownGood: true,
+            maximumValueBytes: maximumValueBytes,
+            maximumUnknownFields: 0,
+          );
+          if (record is Err<SettingsLogicalRecord, StructuredFailure>) {
+            return Failed(record.error);
+          }
+          records.add(
+            (record as Ok<SettingsLogicalRecord, StructuredFailure>).value,
+          );
+        }
+      }
+      final candidatePersistence = SettingsPersistenceSnapshot._(
+        storeRevision: expectedNext,
+        records: records,
+        unknownRecords: _persistence.unknownRecords,
+        damaged: false,
+        lastKnownGoodAvailable: true,
+      );
+      final candidateSnapshot = _buildSnapshot(
+        candidatePersistence,
+        maximumValueBytes,
+        const {},
+      );
+      if (candidateSnapshot is Err<SettingsSnapshot, StructuredFailure>) {
+        return Failed(candidateSnapshot.error);
+      }
+      OperationOutcome<SettingsCommitEvidence, StructuredFailure> committed;
+      changes._consumed = true;
+      try {
+        committed = await adapter.commit(
+          expectedRevision: changes.expectedRevision,
+          records: List.unmodifiable(records),
+          preservedUnknownRecords: _persistence.unknownRecords,
+          cancellationToken: cancellationToken,
+        );
+      } on Object {
+        return Failed(_failure('adapter_commit'));
+      }
+      if (committed is! Completed<SettingsCommitEvidence, StructuredFailure>)
+        return committed is Cancelled<SettingsCommitEvidence, StructuredFailure>
+            ? Cancelled(committed.reason)
+            : Failed(_failure('adapter_commit'));
+      final evidence = committed.value;
+      if (!identical(_generation, startingGeneration) ||
+          _snapshot.storeRevision.value != startingRevision.value ||
+          !identical(_persistence, startingPersistence)) {
+        _poisoned = true;
+        return Failed(_failure('authoritative_state_changed'));
+      }
+      if (evidence.storeRevision.value != expectedNext.value ||
+          !evidence.atomicity.atomic) {
+        _poisoned = true;
+        return Failed(_failure('adapter_evidence_mismatch'));
+      }
+      final previous = _snapshot.storeRevision;
+      final eventResult = SettingsChangeEvent.create(
+        previousRevision: previous,
+        currentRevision: evidence.storeRevision,
+        keys: changes.operations.map((o) => o.key).toSet(),
+        maximumKeys: changes.operations.length,
+      );
+      if (eventResult is Err<SettingsChangeEvent, StructuredFailure>) {
+        _poisoned = true;
+        return Failed(_failure('event_evidence_mismatch'));
+      }
+      final event =
+          (eventResult as Ok<SettingsChangeEvent, StructuredFailure>).value;
+      _persistence = candidatePersistence;
+      _snapshot =
+          (candidateSnapshot as Ok<SettingsSnapshot, StructuredFailure>).value;
+      _generation = Object();
+      for (final listener in List<SettingsListener>.of(_listeners)) {
+        try {
+          listener(event);
+        } on Object {
+          /* isolated */
+        }
+      }
+      return Completed(evidence);
+    } finally {
+      _operationActive = false;
     }
-    return Completed(evidence);
   }
 
   Future<OperationOutcome<void, StructuredFailure>> reload({
     required int maximumRecords,
+    required int maximumUnknownRecords,
+    required int maximumUnknownFieldsPerRecord,
     required int maximumValueBytes,
     required CancellationToken cancellationToken,
   }) async {
     if (maximumRecords < 0 ||
+        maximumUnknownRecords < 0 ||
+        maximumUnknownFieldsPerRecord < 0 ||
         maximumValueBytes < 0 ||
         maximumRecords > 9007199254740991 ||
-        maximumValueBytes > 9007199254740991) {
+        maximumValueBytes > 9007199254740991 ||
+        maximumUnknownRecords > 9007199254740991 ||
+        maximumUnknownFieldsPerRecord > 9007199254740991) {
       return Failed(_failure('invalid_limits'));
     }
-    OperationOutcome<SettingsPersistenceSnapshot, StructuredFailure> loaded;
+    if (_operationActive) return Failed(_failure('operation_active'));
+    _operationActive = true;
+    final startingGeneration = _generation;
+    final startingRevision = _snapshot.storeRevision;
+    final startingPersistence = _persistence;
     try {
-      loaded = await adapter.load(
+      OperationOutcome<SettingsPersistenceSnapshot, StructuredFailure> loaded;
+      try {
+        loaded = await adapter.load(
+          maximumRecords: maximumRecords,
+          maximumUnknownRecords: maximumUnknownRecords,
+          maximumUnknownFieldsPerRecord: maximumUnknownFieldsPerRecord,
+          maximumValueBytes: maximumValueBytes,
+          cancellationToken: cancellationToken,
+        );
+      } on Object {
+        return Failed(_failure('adapter_load'));
+      }
+      if (loaded is Cancelled<SettingsPersistenceSnapshot, StructuredFailure>)
+        return Cancelled(loaded.reason);
+      if (loaded is Failed<SettingsPersistenceSnapshot, StructuredFailure>)
+        return Failed(_failure('adapter_load'));
+      final value =
+          (loaded as Completed<SettingsPersistenceSnapshot, StructuredFailure>)
+              .value;
+      final checked = SettingsPersistenceSnapshot.create(
+        storeRevision: value.storeRevision,
+        records: value.records,
+        unknownRecords: value.unknownRecords,
+        damaged: value.damaged,
+        lastKnownGoodAvailable: value.lastKnownGoodAvailable,
         maximumRecords: maximumRecords,
+        maximumUnknownRecords: maximumUnknownRecords,
+        maximumUnknownFieldsPerRecord: maximumUnknownFieldsPerRecord,
         maximumValueBytes: maximumValueBytes,
-        cancellationToken: cancellationToken,
       );
-    } on Object {
-      return Failed(_failure('adapter_load'));
+      if (checked is Err<SettingsPersistenceSnapshot, StructuredFailure>)
+        return Failed(checked.error);
+      final persistence =
+          (checked as Ok<SettingsPersistenceSnapshot, StructuredFailure>).value;
+      final built = _buildSnapshot(persistence, maximumValueBytes, const {});
+      if (built is Err<SettingsSnapshot, StructuredFailure>)
+        return Failed(built.error);
+      if (!identical(_generation, startingGeneration) ||
+          _snapshot.storeRevision.value != startingRevision.value ||
+          !identical(_persistence, startingPersistence)) {
+        _poisoned = true;
+        return Failed(_failure('authoritative_state_changed'));
+      }
+      _persistence = persistence;
+      _snapshot = (built as Ok<SettingsSnapshot, StructuredFailure>).value;
+      _poisoned = false;
+      _generation = Object();
+      return const Completed(null);
+    } finally {
+      _operationActive = false;
     }
-    if (loaded is Cancelled<SettingsPersistenceSnapshot, StructuredFailure>)
-      return Cancelled(loaded.reason);
-    if (loaded is Failed<SettingsPersistenceSnapshot, StructuredFailure>)
-      return Failed(_failure('adapter_load'));
-    final value =
-        (loaded as Completed<SettingsPersistenceSnapshot, StructuredFailure>)
-            .value;
-    final checked = SettingsPersistenceSnapshot.create(
-      storeRevision: value.storeRevision,
-      records: value.records,
-      unknownRecords: value.unknownRecords,
-      damaged: value.damaged,
-      lastKnownGoodAvailable: value.lastKnownGoodAvailable,
-      maximumRecords: maximumRecords,
-      maximumValueBytes: maximumValueBytes,
-    );
-    if (checked is Err<SettingsPersistenceSnapshot, StructuredFailure>)
-      return Failed(checked.error);
-    final persistence =
-        (checked as Ok<SettingsPersistenceSnapshot, StructuredFailure>).value;
-    final built = _buildSnapshot(persistence, maximumValueBytes, const {});
-    if (built is Err<SettingsSnapshot, StructuredFailure>)
-      return Failed(built.error);
-    _persistence = persistence;
-    _snapshot = (built as Ok<SettingsSnapshot, StructuredFailure>).value;
-    _poisoned = false;
-    return const Completed(null);
   }
 
   Result<void, StructuredFailure> _activate(int maximumValueBytes) {
@@ -940,10 +1029,49 @@ Revision _zeroRevision() {
   throw StateError('Internal zero Settings revision must be valid.');
 }
 
-List<int> _bytes(Iterable<int> source) {
-  final value = List<int>.of(source);
-  if (value.any((v) => v < 0 || v > 255)) throw ArgumentError('Invalid bytes.');
-  return List.unmodifiable(value);
+bool _validLimit(int value) => value >= 0 && value <= 9007199254740991;
+
+List<T>? _boundedIterable<T>(Iterable<T> source, int maximum) {
+  if (!_validLimit(maximum)) return null;
+  try {
+    if ((source is List<T> || source is Set<T>) && source.length > maximum) {
+      return null;
+    }
+    final captured = <T>[];
+    final iterator = source.iterator;
+    while (iterator.moveNext()) {
+      if (captured.length >= maximum) return null;
+      captured.add(iterator.current);
+    }
+    return List.unmodifiable(captured);
+  } on Object {
+    return null;
+  }
+}
+
+List<int>? _boundedBytes(Iterable<int> source, int maximum) {
+  final captured = _boundedIterable(source, maximum);
+  if (captured == null || captured.any((v) => v < 0 || v > 255)) return null;
+  return captured;
+}
+
+Map<K, V>? _boundedSettingsMap<K, V>(Map<K, V> source, int maximum) {
+  if (!_validLimit(maximum)) return null;
+  try {
+    final captured = <K, V>{};
+    final iterator = source.entries.iterator;
+    while (iterator.moveNext()) {
+      if (captured.length >= maximum) return null;
+      final entry = iterator.current;
+      final key = entry.key;
+      final value = entry.value;
+      if (captured.containsKey(key)) return null;
+      captured[key] = value;
+    }
+    return Map.unmodifiable(captured);
+  } on Object {
+    return null;
+  }
 }
 
 StructuredFailure _failure(String leaf) => StructuredFailure(

@@ -19,11 +19,15 @@ final class DocumentSession {
     required SessionAccess access,
     required SessionFidelity fidelity,
     required bool canonicalSourceOwner,
+    required bool explicitSeparateCopy,
+    required this.maximumQueuedPublications,
+    required this.maximumListeners,
   }) : _sourceAccess = sourceAccess,
        _sourceBinding = sourceBinding,
        _access = access,
        _fidelity = fidelity,
        _canonicalSourceOwner = canonicalSourceOwner,
+       _explicitSeparateCopy = explicitSeparateCopy,
        _revision = _zeroRevision();
 
   /// Creates a Session and atomically claims any canonical initial source.
@@ -37,7 +41,13 @@ final class DocumentSession {
     SessionAccess access = SessionAccess.editable,
     SessionFidelity fidelity = SessionFidelity.complete,
     bool explicitSeparateCopy = false,
+    required int maximumQueuedPublications,
+    required int maximumListeners,
   }) {
+    if (!_webSafeNonnegative(maximumQueuedPublications) ||
+        !_webSafeNonnegative(maximumListeners)) {
+      return Err(_failure('invalid_session_limits'));
+    }
     final generated = SessionId.generate(uuidGenerator);
     if (generated is Err<SessionId, StructuredFailure>) {
       return Err(_failure('session_identity_generation'));
@@ -70,11 +80,22 @@ final class DocumentSession {
       access: access,
       fidelity: fidelity,
       canonicalSourceOwner: sourceBinding != null && !explicitSeparateCopy,
+      explicitSeparateCopy: explicitSeparateCopy,
+      maximumQueuedPublications: maximumQueuedPublications,
+      maximumListeners: maximumListeners,
     );
-    coordinator.addListener((_) {
+    void observation(CommittedChange _) {
+      if (session._lifecycle != SessionLifecycle.open) return;
       session._invalidateCloseEvidence();
       session._notify();
-    });
+    }
+
+    final observed = coordinator.addListener(observation);
+    if (observed is Err<void, CommandFailure>) {
+      sourceRegistry._releaseSession(sourceAccess);
+      return Err(_failure('document_observation_failed'));
+    }
+    session._coordinatorListener = observation;
     return Ok(session);
   }
 
@@ -95,10 +116,13 @@ final class DocumentSession {
 
   /// Cross-Session canonical-source reservation boundary.
   final CanonicalSourceRegistry sourceRegistry;
+  final int maximumQueuedPublications;
+  final int maximumListeners;
   final _CanonicalSourceAccess _sourceAccess;
 
   final Set<ViewId> _views = {};
   final List<SessionListener> _listeners = [];
+  CommittedChangeListener? _coordinatorListener;
   final Object _closeAuthority = Object();
   CloseDecisionRequest? _currentCloseDecision;
   CloseAuthorization? _currentCloseAuthorization;
@@ -112,13 +136,14 @@ final class DocumentSession {
   SessionRevision _revision;
   StorageSourceBinding? _sourceBinding;
   bool _canonicalSourceOwner;
+  final bool _explicitSeparateCopy;
   CloseResolution? _closeResolution;
   bool _publicationActive = false;
   int _queuedPublications = 0;
   Future<void> _publicationTail = Future<void>.value();
 
   /// Current immutable outward-facing Session state.
-  SessionSnapshot get snapshot => SessionSnapshot(
+  SessionSnapshot get snapshot => SessionSnapshot._(
     id: id,
     lifecycle: _lifecycle,
     readiness: _readiness,
@@ -137,6 +162,9 @@ final class DocumentSession {
   /// Whether this Session currently owns its binding canonically.
   bool get isCanonicalSourceOwner => _canonicalSourceOwner;
 
+  /// Whether this Session was immutably constructed as an explicit copy.
+  bool get isExplicitSeparateCopy => _explicitSeparateCopy;
+
   /// Resolution that authorized a completed close, when closed.
   CloseResolution? get closeResolution => _closeResolution;
 
@@ -144,8 +172,13 @@ final class DocumentSession {
   ///
   /// Notification snapshots listeners. Additions/removals affect later events,
   /// reentrancy is allowed, and listener exceptions are isolated.
-  void addListener(SessionListener listener) {
-    if (!_listeners.contains(listener)) _listeners.add(listener);
+  Result<void, StructuredFailure> addListener(SessionListener listener) {
+    if (_listeners.contains(listener)) return const Ok(null);
+    if (_listeners.length >= maximumListeners) {
+      return Err(_failure('listener_limit'));
+    }
+    _listeners.add(listener);
+    return const Ok(null);
   }
 
   /// Removes a listener from later notifications.
@@ -183,6 +216,9 @@ final class DocumentSession {
   Future<SessionSaveResult> save({
     required CancellationToken cancellationToken,
   }) {
+    if (_lifecycle != SessionLifecycle.open) {
+      return Future.value(_rejectedSave('not_open'));
+    }
     final binding = _sourceBinding;
     if (binding == null || !_canonicalSourceOwner) {
       return Future.value(
@@ -215,6 +251,13 @@ final class DocumentSession {
     required NormalizedSourceIdentity? destinationIdentity,
     required CancellationToken cancellationToken,
   }) {
+    if (_lifecycle != SessionLifecycle.open) {
+      return Future.value(_rejectedSave('not_open'));
+    }
+    if (_queuedPublications >= maximumQueuedPublications ||
+        _queuedPublications == 9007199254740991) {
+      return Future.value(_rejectedSave('publication_queue_limit'));
+    }
     final capture = coordinator.captureForSave();
     final completer = Completer<SessionSaveResult>();
     _invalidateCloseEvidence();
@@ -561,21 +604,36 @@ final class DocumentSession {
       _lifecycle = SessionLifecycle.closed;
     });
     if (changed is Ok<void, StructuredFailure>) {
+      _stopCoordinatorObservation();
       sourceRegistry._releaseSession(_sourceAccess);
+      _canonicalSourceOwner = false;
     }
     return changed;
   }
 
   /// Moves the Session to failed atomically when not already closed.
   Result<void, StructuredFailure> fail() {
-    if (_lifecycle == SessionLifecycle.closed) return Err(_failure('closed'));
-    return _mutate(() => _lifecycle = SessionLifecycle.failed);
+    if (_lifecycle != SessionLifecycle.open) return Err(_failure('not_open'));
+    if (_publicationActive || _queuedPublications > 0) {
+      return Err(_failure('publication_pending'));
+    }
+    final failed = _mutate(() => _lifecycle = SessionLifecycle.failed);
+    if (failed is Ok<void, StructuredFailure>) {
+      _stopCoordinatorObservation();
+      sourceRegistry._releaseSession(_sourceAccess);
+      _canonicalSourceOwner = false;
+    }
+    return failed;
   }
 
   /// Begins one exact, bounded Application registration transaction.
   Result<SessionRegistrationAttempt, StructuredFailure>
   _beginApplicationRegistration() {
-    if (_registeredWithApplication || _registrationAttempt != null) {
+    if (_lifecycle != SessionLifecycle.open ||
+        _publicationActive ||
+        _queuedPublications > 0 ||
+        _registeredWithApplication ||
+        _registrationAttempt != null) {
       return Err(_failure('registration_in_progress_or_complete'));
     }
     final attempt = SessionRegistrationAttempt._(id, _closeAuthority);
@@ -598,12 +656,20 @@ final class DocumentSession {
       _registeredWithApplication = true;
       return const Ok(null);
     }
+    if (_publicationActive || _queuedPublications > 0) {
+      return Err(_failure('publication_pending'));
+    }
     sourceRegistry._releaseSession(_sourceAccess);
     _canonicalSourceOwner = false;
+    _lifecycle = SessionLifecycle.failed;
+    _invalidateCloseEvidence();
+    _notify();
+    _stopCoordinatorObservation();
     return const Ok(null);
   }
 
   Result<void, StructuredFailure> _mutate(void Function() mutation) {
+    if (_lifecycle != SessionLifecycle.open) return Err(_failure('not_open'));
     if (_publicationActive) return Err(_failure('publication_active'));
     final next = _revision.increment();
     if (next is Err<SessionRevision, StructuredFailure>) return Err(next.error);
@@ -653,6 +719,13 @@ final class DocumentSession {
     _currentCloseAuthorization = null;
   }
 
+  void _stopCoordinatorObservation() {
+    final listener = _coordinatorListener;
+    if (listener == null) return;
+    _coordinatorListener = null;
+    coordinator.removeListener(listener);
+  }
+
   void _acknowledgeFailure(DocumentSaveCapture capture) {
     try {
       coordinator.acknowledgeSaveFailure(capture);
@@ -668,6 +741,10 @@ final class DocumentSession {
     StructuredFailure? failure,
   ]) {
     if (!completer.isCompleted) {
+      if (_queuedPublications <= 0) {
+        completer.complete(_rejectedSave('publication_counter_underflow'));
+        return;
+      }
       _queuedPublications -= 1;
       completer.complete(
         SessionSaveResult(
@@ -678,6 +755,12 @@ final class DocumentSession {
       );
     }
   }
+
+  SessionSaveResult _rejectedSave(String leaf) => SessionSaveResult(
+    disposition: SessionSaveDisposition.failed,
+    capturedIdentity: coordinator.snapshot.currentContentIdentity,
+    failure: _failure(leaf),
+  );
 }
 
 SessionRevision _zeroRevision() {
@@ -692,3 +775,5 @@ StructuredFailure _failure(String leaf) => StructuredFailure(
   retryDisposition: RetryDisposition.never,
   message: 'The Session operation could not be completed.',
 );
+
+bool _webSafeNonnegative(int value) => value >= 0 && value <= 9007199254740991;

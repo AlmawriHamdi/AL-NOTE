@@ -21,7 +21,11 @@ void main() {
       final first = _application(registry);
       Result<ApplicationState, StructuredFailure>? duplicate;
       expect(
-        () => duplicate = ApplicationState.create(sourceRegistry: registry),
+        () => duplicate = ApplicationState.create(
+          maximumListeners: 16,
+          maximumLifecycleListeners: 16,
+          sourceRegistry: registry,
+        ),
         returnsNormally,
       );
       expect(duplicate, isA<Err<ApplicationState, StructuredFailure>>());
@@ -103,7 +107,11 @@ void main() {
         isA<Ok<DocumentSession, StructuredFailure>>(),
       );
       expect(
-        ApplicationState.create(sourceRegistry: registry),
+        ApplicationState.create(
+          maximumListeners: 16,
+          maximumLifecycleListeners: 16,
+          sourceRegistry: registry,
+        ),
         isA<Err<ApplicationState, StructuredFailure>>(),
       );
       expect(
@@ -155,6 +163,8 @@ void main() {
     Result<DocumentSession, StructuredFailure>? collision;
     app.addListener((_) {
       collision = DocumentSession.create(
+        maximumQueuedPublications: 16,
+        maximumListeners: 16,
         coordinator: phase3Coordinator(),
         publisher: FakeSessionPublisher(),
         uuidGenerator: UuidSequenceGenerator.fromValues([testUuid(785)]),
@@ -182,6 +192,7 @@ void main() {
             .value;
     final fingerprint =
         (ExternalFingerprint.create(
+                  maximumDigestBytes: 64,
                   strength: FingerprintStrength.metadata,
                   byteLength: 1,
                   digest: const [0],
@@ -193,6 +204,8 @@ void main() {
       int id, {
       bool separate = false,
     }) => DocumentSession.create(
+      maximumQueuedPublications: 16,
+      maximumListeners: 16,
       coordinator: phase3Coordinator(),
       publisher: FakeSessionPublisher(),
       uuidGenerator: UuidSequenceGenerator.fromValues([testUuid(id)]),
@@ -232,6 +245,8 @@ void main() {
       final app = _application(sourceRegistry);
       final session =
           (DocumentSession.create(
+                    maximumQueuedPublications: 16,
+                    maximumListeners: 16,
                     coordinator: phase3Coordinator(),
                     publisher: FakeSessionPublisher(),
                     uuidGenerator: UuidSequenceGenerator.fromValues([
@@ -261,15 +276,196 @@ void main() {
       expect(app.snapshot.sessions, hasLength(1));
     },
   );
+
+  test(
+    'listener ceilings accept exact capacity, duplicates, removal and reentrancy',
+    () {
+      final registry = CanonicalSourceRegistry();
+      final app =
+          (ApplicationState.create(
+                    sourceRegistry: registry,
+                    maximumListeners: 1,
+                    maximumLifecycleListeners: 1,
+                  )
+                  as Ok<ApplicationState, StructuredFailure>)
+              .value;
+      var calls = 0;
+      late ApplicationStateListener listener;
+      listener = (_) {
+        calls += 1;
+        expect(app.addListener(listener), isA<Ok<void, StructuredFailure>>());
+      };
+      expect(app.addListener(listener), isA<Ok<void, StructuredFailure>>());
+      expect(app.addListener(listener), isA<Ok<void, StructuredFailure>>());
+      expect(app.addListener((_) {}), isA<Err<void, StructuredFailure>>());
+      app.focus(null);
+      expect(calls, 1);
+      app.removeListener(listener);
+      expect(app.addListener((_) {}), isA<Ok<void, StructuredFailure>>());
+
+      void lifecycle(PlatformLifecycleEvent _) {}
+      expect(
+        app.addLifecycleListener(lifecycle),
+        isA<Ok<void, StructuredFailure>>(),
+      );
+      expect(
+        app.addLifecycleListener(lifecycle),
+        isA<Ok<void, StructuredFailure>>(),
+      );
+      expect(
+        app.addLifecycleListener((_) {}),
+        isA<Err<void, StructuredFailure>>(),
+      );
+      app.removeLifecycleListener(lifecycle);
+      expect(
+        app.addLifecycleListener((_) {}),
+        isA<Ok<void, StructuredFailure>>(),
+      );
+    },
+  );
+
+  test(
+    'capacity rejection is terminal and releases only the exact claim',
+    () async {
+      final registry = CanonicalSourceRegistry();
+      final app = _application(registry);
+      final source =
+          (NormalizedSourceIdentity.create('terminal-rejection')
+                  as Ok<NormalizedSourceIdentity, StructuredFailure>)
+              .value;
+      final rejected = _boundSession(840, registry, source);
+      expect(
+        app.registerSession(rejected, maximumSessions: 0),
+        isA<Err<DocumentSession, StructuredFailure>>(),
+      );
+      expect(rejected.snapshot.lifecycle, SessionLifecycle.failed);
+      expect(rejected.isExplicitSeparateCopy, isFalse);
+      expect(
+        app.registerSession(rejected, maximumSessions: 1),
+        isA<Err<DocumentSession, StructuredFailure>>(),
+      );
+      expect(
+        await rejected.save(cancellationToken: CancellationController().token),
+        isA<SessionSaveResult>().having(
+          (value) => value.disposition,
+          'disposition',
+          SessionSaveDisposition.failed,
+        ),
+      );
+      expect(
+        await rejected.saveAs(
+          destinationIdentity: source,
+          cancellationToken: CancellationController().token,
+        ),
+        isA<SessionSaveResult>().having(
+          (value) => value.disposition,
+          'disposition',
+          SessionSaveDisposition.failed,
+        ),
+      );
+      expect(
+        rejected.attachView(ViewId.fromUuid(testUuid(841)), maximumViews: 1),
+        isA<Err<void, StructuredFailure>>(),
+      );
+      expect(
+        rejected.requestCloseDecision(validity: const Duration(seconds: 1)),
+        isA<Err<CloseDecisionRequest, StructuredFailure>>(),
+      );
+      expect(registry.ownerOf(source), isNull);
+
+      final rejectedCopy = _boundSession(843, registry, source, separate: true);
+      expect(rejectedCopy.isExplicitSeparateCopy, isTrue);
+      expect(
+        app.registerSession(rejectedCopy, maximumSessions: 0),
+        isA<Err<DocumentSession, StructuredFailure>>(),
+      );
+      expect(rejectedCopy.snapshot.lifecycle, SessionLifecycle.failed);
+      expect(
+        app.registerSession(rejectedCopy, maximumSessions: 1),
+        isA<Err<DocumentSession, StructuredFailure>>(),
+      );
+
+      final replacement = _boundSession(842, registry, source);
+      expect(
+        app.registerSession(replacement, maximumSessions: 1),
+        isA<Ok<DocumentSession, StructuredFailure>>(),
+      );
+      expect(registry.ownerOf(source), replacement.id);
+    },
+  );
+
+  test(
+    'internal Session observation failure leaves no partial registration',
+    () {
+      final registry = CanonicalSourceRegistry();
+      final app = _application(registry);
+      final session =
+          (DocumentSession.create(
+                    maximumQueuedPublications: 1,
+                    maximumListeners: 0,
+                    coordinator: phase3Coordinator(),
+                    publisher: FakeSessionPublisher(),
+                    uuidGenerator: UuidSequenceGenerator.fromValues([
+                      testUuid(850),
+                    ]),
+                    clock: ControllableClock(DateTime.utc(2026)),
+                    sourceRegistry: registry,
+                  )
+                  as Ok<DocumentSession, StructuredFailure>)
+              .value;
+      expect(
+        app.registerSession(session, maximumSessions: 1),
+        isA<Err<DocumentSession, StructuredFailure>>(),
+      );
+      expect(session.snapshot.lifecycle, SessionLifecycle.failed);
+      expect(app.snapshot.sessions, isEmpty);
+    },
+  );
+
+  test(
+    'registration rejection releases an exact coordinator listener slot',
+    () {
+      final sourceRegistry = CanonicalSourceRegistry();
+      final app = _application(sourceRegistry);
+      final coordinator = phase3Coordinator(maximumListeners: 1);
+      DocumentSession create(int id) =>
+          (DocumentSession.create(
+                    maximumQueuedPublications: 1,
+                    maximumListeners: 1,
+                    coordinator: coordinator,
+                    publisher: FakeSessionPublisher(),
+                    uuidGenerator: UuidSequenceGenerator.fromValues([
+                      testUuid(id),
+                    ]),
+                    clock: ControllableClock(DateTime.utc(2026)),
+                    sourceRegistry: sourceRegistry,
+                  )
+                  as Ok<DocumentSession, StructuredFailure>)
+              .value;
+      final rejected = create(860);
+      expect(
+        app.registerSession(rejected, maximumSessions: 0),
+        isA<Err<DocumentSession, StructuredFailure>>(),
+      );
+      expect(rejected.snapshot.lifecycle, SessionLifecycle.failed);
+      expect(() => create(861), returnsNormally);
+    },
+  );
 }
 
 ApplicationState _application(CanonicalSourceRegistry registry) =>
-    (ApplicationState.create(sourceRegistry: registry)
+    (ApplicationState.create(
+              maximumListeners: 16,
+              maximumLifecycleListeners: 16,
+              sourceRegistry: registry,
+            )
             as Ok<ApplicationState, StructuredFailure>)
         .value;
 
 DocumentSession _plainSession(int uuid, CanonicalSourceRegistry registry) =>
     (DocumentSession.create(
+              maximumQueuedPublications: 16,
+              maximumListeners: 16,
               coordinator: phase3Coordinator(),
               publisher: FakeSessionPublisher(),
               uuidGenerator: UuidSequenceGenerator.fromValues([testUuid(uuid)]),
@@ -287,6 +483,7 @@ DocumentSession _boundSession(
 }) {
   final fingerprint =
       (ExternalFingerprint.create(
+                maximumDigestBytes: 64,
                 strength: FingerprintStrength.metadata,
                 byteLength: 1,
                 digest: const [1],
@@ -294,6 +491,8 @@ DocumentSession _boundSession(
               as Ok<ExternalFingerprint, StructuredFailure>)
           .value;
   return (DocumentSession.create(
+            maximumQueuedPublications: 16,
+            maximumListeners: 16,
             coordinator: phase3Coordinator(),
             publisher: FakeSessionPublisher(),
             uuidGenerator: UuidSequenceGenerator.fromValues([testUuid(uuid)]),

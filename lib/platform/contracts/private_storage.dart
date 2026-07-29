@@ -53,8 +53,8 @@ final class PrivateByteRecord {
     required Iterable<int> bytes,
     required Iterable<int> checksum,
     required this.lastKnownGood,
-  }) : bytes = _copyBytes(bytes),
-       checksum = _copyBytes(checksum);
+  }) : bytes = List.unmodifiable(bytes),
+       checksum = List.unmodifiable(checksum);
   final PrivateRecordId id;
   final Revision recordRevision;
   final List<int> bytes;
@@ -70,13 +70,11 @@ final class PrivateByteRecord {
     required int maximumChecksumBytes,
   }) {
     try {
-      final copiedBytes = _checkedBytes(bytes);
-      final copiedChecksum = _checkedBytes(checksum);
-      if (maximumBytes < 0 ||
-          maximumChecksumBytes < 0 ||
-          copiedBytes.length > maximumBytes ||
-          copiedChecksum.isEmpty ||
-          copiedChecksum.length > maximumChecksumBytes)
+      final copiedBytes = _boundedBytes(bytes, maximumBytes);
+      final copiedChecksum = _boundedBytes(checksum, maximumChecksumBytes);
+      if (copiedBytes == null ||
+          copiedChecksum == null ||
+          copiedChecksum.isEmpty)
         return Err(_storageFailure('invalid_byte_record'));
       return Ok(
         PrivateByteRecord._(
@@ -108,7 +106,7 @@ final class WritePrivateRecord extends PrivateStorageMutation {
     required this.id,
     required Iterable<int> bytes,
     this.expectedRecordRevision,
-  }) : bytes = _copyBytes(bytes);
+  }) : bytes = List.unmodifiable(bytes);
   final PrivateRecordId id;
   final List<int> bytes;
   final Revision? expectedRecordRevision;
@@ -119,8 +117,8 @@ final class WritePrivateRecord extends PrivateStorageMutation {
     required int maximumBytes,
   }) {
     try {
-      final copied = _checkedBytes(bytes);
-      return maximumBytes >= 0 && copied.length <= maximumBytes
+      final copied = _boundedBytes(bytes, maximumBytes);
+      return copied != null
           ? Ok(
               WritePrivateRecord._(
                 id: id,
@@ -162,17 +160,16 @@ final class PrivateStorageBatch {
     required int maximumOperations,
   }) {
     try {
-      final copied = List<PrivateStorageMutation>.of(operations);
+      final copied = _boundedIterable(operations, maximumOperations);
+      if (copied == null) return Err(_storageFailure('invalid_batch'));
       final ids = <PrivateRecordId>{};
-      if (maximumOperations < 0 ||
-          copied.length > maximumOperations ||
-          copied.any(
-            (operation) => !ids.add(
-              operation is WritePrivateRecord
-                  ? operation.id
-                  : (operation as DeletePrivateRecord).id,
-            ),
-          ))
+      if (copied.any(
+        (operation) => !ids.add(
+          operation is WritePrivateRecord
+              ? operation.id
+              : (operation as DeletePrivateRecord).id,
+        ),
+      ))
         return Err(_storageFailure('invalid_batch'));
       return Ok(
         PrivateStorageBatch._(
@@ -322,11 +319,10 @@ final class PrivateStorageEnumeration {
     required int maximumRecordBytes,
   }) {
     try {
-      final copied = List<PrivateByteRecord>.of(records);
+      final copied = _boundedIterable(records, maximumResults);
+      if (copied == null) return Err(_storageFailure('invalid_enumeration'));
       final ids = <PrivateRecordId>{};
-      if (maximumResults < 0 ||
-          maximumRecordBytes < 0 ||
-          copied.length > maximumResults ||
+      if (maximumRecordBytes < 0 ||
           copied.any(
             (record) =>
                 record.bytes.length > maximumRecordBytes || !ids.add(record.id),
@@ -358,10 +354,8 @@ final class PrivateCleanupPlan {
     required int maximumRecords,
   }) {
     try {
-      final copied = List<PrivateRecordId>.of(records);
-      if (maximumRecords < 0 ||
-          copied.length > maximumRecords ||
-          copied.toSet().length != copied.length) {
+      final copied = _boundedIterable(records, maximumRecords);
+      if (copied == null || copied.toSet().length != copied.length) {
         return Err(_storageFailure('invalid_cleanup'));
       }
       return Ok(
@@ -412,13 +406,28 @@ abstract interface class PrivateStorage {
   pressure({required CancellationToken cancellationToken});
 }
 
-List<int> _copyBytes(Iterable<int> source) => List.unmodifiable(source);
+List<T>? _boundedIterable<T>(Iterable<T> source, int maximum) {
+  if (maximum < 0 || maximum > 9007199254740991) return null;
+  try {
+    if ((source is List<T> || source is Set<T>) && source.length > maximum) {
+      return null;
+    }
+    final copied = <T>[];
+    final iterator = source.iterator;
+    while (iterator.moveNext()) {
+      if (copied.length >= maximum) return null;
+      copied.add(iterator.current);
+    }
+    return List.unmodifiable(copied);
+  } on Object {
+    return null;
+  }
+}
 
-List<int> _checkedBytes(Iterable<int> source) {
-  final copied = List<int>.of(source);
-  if (copied.any((v) => v < 0 || v > 255))
-    throw ArgumentError('Bytes must be unsigned.');
-  return List.unmodifiable(copied);
+List<int>? _boundedBytes(Iterable<int> source, int maximum) {
+  final copied = _boundedIterable(source, maximum);
+  if (copied == null || copied.any((v) => v < 0 || v > 255)) return null;
+  return copied;
 }
 
 StructuredFailure _storageFailure(String leaf) => StructuredFailure(

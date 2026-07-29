@@ -4,7 +4,7 @@ part of '../../documents/sessions.dart';
 
 /// Immutable application-level Session and View ownership snapshot.
 final class ApplicationStateSnapshot {
-  ApplicationStateSnapshot({
+  ApplicationStateSnapshot._({
     required Map<SessionId, SessionSnapshot> sessions,
     required Map<ViewId, SessionId> viewSessions,
     required this.focusedView,
@@ -25,16 +25,28 @@ typedef ApplicationLifecycleListener =
 
 /// Instance-owned logical Session and view registry.
 final class ApplicationState {
-  ApplicationState._(this.sourceRegistry, this._sourceAccess);
+  ApplicationState._(
+    this.sourceRegistry,
+    this._sourceAccess,
+    this.maximumListeners,
+    this.maximumLifecycleListeners,
+  );
 
   /// Creates the sole Application coordinator for one source registry.
   static Result<ApplicationState, StructuredFailure> create({
     required CanonicalSourceRegistry sourceRegistry,
-  }) => sourceRegistry._createApplicationState();
+    required int maximumListeners,
+    required int maximumLifecycleListeners,
+  }) => sourceRegistry._createApplicationState(
+    maximumListeners: maximumListeners,
+    maximumLifecycleListeners: maximumLifecycleListeners,
+  );
 
   /// Shared cross-Session canonical source coordinator.
   final CanonicalSourceRegistry sourceRegistry;
   final _CanonicalSourceApplicationAccess _sourceAccess;
+  final int maximumListeners;
+  final int maximumLifecycleListeners;
   final Map<SessionId, DocumentSession> _sessions = {};
   final Map<ViewId, SessionId> _views = {};
   final Map<SessionId, SessionListener> _sessionListeners = {};
@@ -42,7 +54,7 @@ final class ApplicationState {
   final List<ApplicationStateListener> _listeners = [];
   final List<ApplicationLifecycleListener> _lifecycleListeners = [];
   ViewId? _focusedView;
-  ApplicationStateSnapshot get snapshot => ApplicationStateSnapshot(
+  ApplicationStateSnapshot get snapshot => ApplicationStateSnapshot._(
     sessions: {
       for (final entry in _sessions.entries) entry.key: entry.value.snapshot,
     },
@@ -53,15 +65,28 @@ final class ApplicationState {
   /// Adds one snapshot listener. Notification uses a listener snapshot;
   /// mutation affects later notifications, reentrancy is allowed, and listener
   /// exceptions are isolated.
-  void addListener(ApplicationStateListener listener) {
-    if (!_listeners.contains(listener)) _listeners.add(listener);
+  Result<void, StructuredFailure> addListener(
+    ApplicationStateListener listener,
+  ) {
+    if (_listeners.contains(listener)) return const Ok(null);
+    if (_listeners.length >= maximumListeners) {
+      return Err(_applicationFailure('listener_limit'));
+    }
+    _listeners.add(listener);
+    return const Ok(null);
   }
 
   void removeListener(ApplicationStateListener listener) =>
       _listeners.remove(listener);
-  void addLifecycleListener(ApplicationLifecycleListener listener) {
-    if (!_lifecycleListeners.contains(listener))
-      _lifecycleListeners.add(listener);
+  Result<void, StructuredFailure> addLifecycleListener(
+    ApplicationLifecycleListener listener,
+  ) {
+    if (_lifecycleListeners.contains(listener)) return const Ok(null);
+    if (_lifecycleListeners.length >= maximumLifecycleListeners) {
+      return Err(_applicationFailure('lifecycle_listener_limit'));
+    }
+    _lifecycleListeners.add(listener);
+    return const Ok(null);
   }
 
   void removeLifecycleListener(ApplicationLifecycleListener listener) =>
@@ -71,6 +96,9 @@ final class ApplicationState {
     DocumentSession session, {
     required int maximumSessions,
   }) {
+    if (!_webSafeNonnegative(maximumSessions)) {
+      return Err(_applicationFailure('invalid_session_limit'));
+    }
     if (!identical(session.sourceRegistry, sourceRegistry)) {
       return Err(_applicationFailure('source_registry_mismatch'));
     }
@@ -94,7 +122,7 @@ final class ApplicationState {
     }
     final attempt =
         (begun as Ok<SessionRegistrationAttempt, StructuredFailure>).value;
-    if (maximumSessions < 0 || _sessions.length >= maximumSessions) {
+    if (_sessions.length >= maximumSessions) {
       sourceRegistry._completeRegistration(
         _sourceAccess,
         session,
@@ -103,7 +131,6 @@ final class ApplicationState {
       );
       return Err(_applicationFailure('session_limit'));
     }
-    _sessions[session.id] = session;
     void listener(SessionSnapshot snapshot) {
       if (_controlledSessionMutations.contains(snapshot.id)) return;
       final currentBinding = snapshot.sourceBinding;
@@ -116,8 +143,18 @@ final class ApplicationState {
       _notify();
     }
 
+    final observed = session.addListener(listener);
+    if (observed is Err<void, StructuredFailure>) {
+      sourceRegistry._completeRegistration(
+        _sourceAccess,
+        session,
+        attempt,
+        accepted: false,
+      );
+      return Err(_applicationFailure('session_listener_limit'));
+    }
+    _sessions[session.id] = session;
     _sessionListeners[session.id] = listener;
-    session.addListener(listener);
     final completed = sourceRegistry._completeRegistration(
       _sourceAccess,
       session,

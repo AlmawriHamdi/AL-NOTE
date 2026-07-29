@@ -31,6 +31,7 @@ void main() {
         ).reconstruct(
           [record],
           context: _context(record),
+          maximumGenerations: 16,
           maximumCheckpointBytes: 10,
           maximumJournalBytes: 10,
           maximumSteps: 10,
@@ -65,6 +66,7 @@ void main() {
         ).reconstruct(
           [record],
           context: _context(record),
+          maximumGenerations: 16,
           maximumCheckpointBytes: 10,
           maximumJournalBytes: 10,
           maximumSteps: 10,
@@ -93,6 +95,7 @@ void main() {
         ).reconstruct(
           [record],
           context: _context(record),
+          maximumGenerations: 16,
           maximumCheckpointBytes: 10,
           maximumJournalBytes: 10,
           maximumSteps: 10,
@@ -125,6 +128,7 @@ void main() {
       final outcome = _reconstructor().reconstruct(
         [older, newest],
         context: _context(newest),
+        maximumGenerations: 16,
         maximumCheckpointBytes: 10,
         maximumJournalBytes: 10,
         maximumSteps: 10,
@@ -159,6 +163,7 @@ void main() {
         ).reconstruct(
           [record],
           context: _context(record),
+          maximumGenerations: 16,
           maximumCheckpointBytes: 10,
           maximumJournalBytes: 10,
           maximumSteps: 10,
@@ -185,6 +190,7 @@ void main() {
     final outcome = _reconstructor().reconstruct(
       [record],
       context: _context(record),
+      maximumGenerations: 16,
       maximumCheckpointBytes: 10,
       maximumJournalBytes: 10,
       maximumSteps: 10,
@@ -211,6 +217,7 @@ void main() {
     final outcome = _reconstructor().reconstruct(
       [record],
       context: _context(record),
+      maximumGenerations: 16,
       maximumCheckpointBytes: 10,
       maximumJournalBytes: 10,
       maximumSteps: 10,
@@ -237,6 +244,7 @@ void main() {
     final outcome = _reconstructor().reconstruct(
       [record],
       context: _context(record),
+      maximumGenerations: 16,
       maximumCheckpointBytes: 10,
       maximumJournalBytes: 10,
       maximumSteps: 10,
@@ -262,6 +270,7 @@ void main() {
       _reconstructor().reconstruct(
         [record],
         context: _context(record),
+        maximumGenerations: 16,
         maximumCheckpointBytes: 10,
         maximumJournalBytes: 10,
         maximumSteps: 10,
@@ -291,6 +300,7 @@ void main() {
     final outcome = _reconstructor().reconstruct(
       [newest, older],
       context: _context(newest),
+      maximumGenerations: 16,
       maximumCheckpointBytes: 10,
       maximumJournalBytes: 10,
       maximumSteps: 10,
@@ -319,6 +329,7 @@ void main() {
     final outcome = _reconstructor().reconstruct(
       [record],
       context: _context(record),
+      maximumGenerations: 16,
       maximumCheckpointBytes: 10,
       maximumJournalBytes: 10,
       maximumSteps: 10,
@@ -347,6 +358,7 @@ void main() {
       _reconstructor().reconstruct(
         [invalid],
         context: _context(invalid),
+        maximumGenerations: 16,
         maximumCheckpointBytes: 10,
         maximumJournalBytes: 10,
         maximumSteps: 10,
@@ -532,6 +544,7 @@ void main() {
     var fail = true;
     final values = <int>[];
     final writer = RecoveryWriter<int>(
+      maximumListeners: 16,
       maximumRetryAttempts: 0,
       publisher: (boundary, token) async {
         values.add(boundary.state);
@@ -557,6 +570,7 @@ void main() {
   test('cancelled and thrown attempts retain pending work', () async {
     var throwing = true;
     final writer = RecoveryWriter<int>(
+      maximumListeners: 16,
       maximumRetryAttempts: 0,
       publisher: (boundary, token) async {
         if (throwing) throw StateError('secret');
@@ -583,6 +597,7 @@ void main() {
     () async {
       var attempts = 0;
       final writer = RecoveryWriter<int>(
+        maximumListeners: 16,
         maximumRetryAttempts: 2,
         publisher: (boundary, token) async {
           attempts += 1;
@@ -604,6 +619,7 @@ void main() {
       var fail = true;
       RecoveryBoundary<int>? published;
       final writer = RecoveryWriter<int>(
+        maximumListeners: 16,
         maximumRetryAttempts: 0,
         publisher: (boundary, token) async {
           if (fail) return Failed(_writerFailure(RetryDisposition.never));
@@ -630,6 +646,7 @@ void main() {
 
   test('writer reports failed after bounded publisher failure', () async {
     final writer = RecoveryWriter<int>(
+      maximumListeners: 16,
       maximumRetryAttempts: 0,
       publisher: (boundary, token) async => Failed(
         StructuredFailure(
@@ -659,6 +676,7 @@ void main() {
     () async {
       RecoveryBoundary<int>? published;
       final writer = RecoveryWriter<int>(
+        maximumListeners: 16,
         maximumRetryAttempts: 1,
         publisher: (boundary, token) async {
           published = boundary;
@@ -696,6 +714,7 @@ void main() {
   test('fresh boundary is not poisoned by an older cancelled token', () async {
     final values = <int>[];
     final writer = RecoveryWriter<int>(
+      maximumListeners: 16,
       maximumRetryAttempts: 0,
       publisher: (boundary, token) async {
         values.add(boundary.state);
@@ -741,6 +760,106 @@ void main() {
       isA<Err<RecoveryQuotaEvidence, StructuredFailure>>(),
     );
   });
+
+  test('Recovery byte collection stops before an infinite rejected tail', () {
+    final source = _CountingIterable<int>(() => 7);
+    expect(
+      RecoveryHash.create(source, maximumBytes: 2),
+      isA<Err<RecoveryHash, StructuredFailure>>(),
+    );
+    expect(source.moveNextCalls, 3);
+    expect(source.currentReads, 2);
+  });
+
+  test(
+    'Recovery collection contains iterator failures at and before boundary',
+    () {
+      final before = _CountingIterable<int>(() => 1, throwOnMove: 1);
+      final boundary = _CountingIterable<int>(() => 1, throwOnMove: 3);
+      expect(
+        RecoveryHash.create(before, maximumBytes: 2),
+        isA<Err<RecoveryHash, StructuredFailure>>(),
+      );
+      expect(
+        RecoveryHash.create(boundary, maximumBytes: 2),
+        isA<Err<RecoveryHash, StructuredFailure>>(),
+      );
+      expect(boundary.currentReads, 2);
+    },
+  );
+
+  test('Recovery listener ceiling is exact, duplicate-safe and removable', () {
+    final writer = RecoveryWriter<int>(
+      publisher: (_, _) async => const Completed(null),
+      maximumRetryAttempts: 0,
+      maximumListeners: 1,
+    );
+    void listener(RecoveryStatus _) {}
+    expect(writer.addListener(listener), isA<Ok<void, StructuredFailure>>());
+    expect(writer.addListener(listener), isA<Ok<void, StructuredFailure>>());
+    expect(writer.addListener((_) {}), isA<Err<void, StructuredFailure>>());
+    writer.removeListener(listener);
+    expect(writer.addListener((_) {}), isA<Ok<void, StructuredFailure>>());
+  });
+
+  test(
+    'reconstruction bounds candidate collection before sorting or tail reads',
+    () {
+      final record = _generation(
+        tail: _transaction(resultHash: 2),
+        committed: true,
+        manifestLast: 1,
+      );
+      final source = _CountingIterable<RecoveryGenerationRecord>(() => record);
+      final outcome = _reconstructor().reconstruct(
+        source,
+        context: _context(record),
+        maximumGenerations: 1,
+        maximumCheckpointBytes: 10,
+        maximumJournalBytes: 10,
+        maximumSteps: 10,
+        maximumResources: 0,
+        cancellationToken: CancellationController().token,
+      );
+      expect(
+        outcome,
+        isA<Failed<RecoveredCandidate<int>, StructuredFailure>>(),
+      );
+      expect(source.moveNextCalls, 2);
+      expect(source.currentReads, 1);
+    },
+  );
+}
+
+final class _CountingIterable<T> extends Iterable<T> {
+  _CountingIterable(this.value, {this.throwOnMove});
+  final T Function() value;
+  final int? throwOnMove;
+  int moveNextCalls = 0;
+  int currentReads = 0;
+
+  @override
+  Iterator<T> get iterator => _CountingIterator(this);
+}
+
+final class _CountingIterator<T> implements Iterator<T> {
+  _CountingIterator(this.owner);
+  final _CountingIterable<T> owner;
+
+  @override
+  T get current {
+    owner.currentReads += 1;
+    return owner.value();
+  }
+
+  @override
+  bool moveNext() {
+    owner.moveNextCalls += 1;
+    if (owner.throwOnMove == owner.moveNextCalls) {
+      throw StateError('sensitive iterator');
+    }
+    return true;
+  }
 }
 
 RecoveryBoundary<int> _boundary(int state) => ok(

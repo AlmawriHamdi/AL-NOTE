@@ -363,7 +363,10 @@ void main() {
     'reentrant registry disposal invokes accepted disposer exactly once',
     () {
       final registry =
-          (CapabilityRegistry.create(maximumCapabilities: 2)
+          (CapabilityRegistry.create(
+                    maximumListeners: 16,
+                    maximumCapabilities: 2,
+                  )
                   as Ok<CapabilityRegistry, StructuredFailure>)
               .value;
       var disposals = 0;
@@ -388,7 +391,10 @@ void main() {
     'typed capability initialization enforces contract compatibility',
     () async {
       final registry =
-          (CapabilityRegistry.create(maximumCapabilities: 2)
+          (CapabilityRegistry.create(
+                    maximumListeners: 16,
+                    maximumCapabilities: 2,
+                  )
                   as Ok<CapabilityRegistry, StructuredFailure>)
               .value;
       final adapter = _TestCapabilityAdapter(_capabilityEvidence());
@@ -405,7 +411,10 @@ void main() {
       registry.dispose();
       expect(adapter.disposals, 1);
       final other =
-          (CapabilityRegistry.create(maximumCapabilities: 2)
+          (CapabilityRegistry.create(
+                    maximumListeners: 16,
+                    maximumCapabilities: 2,
+                  )
                   as Ok<CapabilityRegistry, StructuredFailure>)
               .value;
       expect(
@@ -435,7 +444,7 @@ void main() {
       _evidenceLike(metadata, adapter: equalAdapter),
     );
     final registry =
-        (CapabilityRegistry.create(maximumCapabilities: 1)
+        (CapabilityRegistry.create(maximumListeners: 16, maximumCapabilities: 1)
                 as Ok<CapabilityRegistry, StructuredFailure>)
             .value;
     expect(
@@ -456,7 +465,10 @@ void main() {
     () async {
       for (final throws in [false, true]) {
         final registry =
-            (CapabilityRegistry.create(maximumCapabilities: 1)
+            (CapabilityRegistry.create(
+                      maximumListeners: 16,
+                      maximumCapabilities: 1,
+                    )
                     as Ok<CapabilityRegistry, StructuredFailure>)
                 .value;
         final adapter = _TestCapabilityAdapter(
@@ -488,7 +500,10 @@ void main() {
     'reentrant initialization collision releases the losing adapter',
     () async {
       final registry =
-          (CapabilityRegistry.create(maximumCapabilities: 2)
+          (CapabilityRegistry.create(
+                    maximumListeners: 16,
+                    maximumCapabilities: 2,
+                  )
                   as Ok<CapabilityRegistry, StructuredFailure>)
               .value;
       final evidence = _capabilityEvidence();
@@ -547,7 +562,10 @@ void main() {
       ];
       for (final values in cases) {
         final registry =
-            (CapabilityRegistry.create(maximumCapabilities: 1)
+            (CapabilityRegistry.create(
+                      maximumListeners: 16,
+                      maximumCapabilities: 1,
+                    )
                     as Ok<CapabilityRegistry, StructuredFailure>)
                 .value;
         final adapter = _MismatchCapabilityAdapter(values.$1, values.$2);
@@ -570,7 +588,7 @@ void main() {
     final preCancelled = CancellationController()..cancel('before');
     final untouched = _TestCapabilityAdapter(_capabilityEvidence());
     final first =
-        (CapabilityRegistry.create(maximumCapabilities: 1)
+        (CapabilityRegistry.create(maximumListeners: 16, maximumCapabilities: 1)
                 as Ok<CapabilityRegistry, StructuredFailure>)
             .value;
     expect(
@@ -591,7 +609,7 @@ void main() {
       onInitialize: () => during.cancel('during'),
     );
     final second =
-        (CapabilityRegistry.create(maximumCapabilities: 1)
+        (CapabilityRegistry.create(maximumListeners: 16, maximumCapabilities: 1)
                 as Ok<CapabilityRegistry, StructuredFailure>)
             .value;
     expect(
@@ -612,7 +630,10 @@ void main() {
       final base = _capabilityEvidence();
       late CapabilityRegistry registry;
       registry =
-          (CapabilityRegistry.create(maximumCapabilities: 1)
+          (CapabilityRegistry.create(
+                    maximumListeners: 16,
+                    maximumCapabilities: 1,
+                  )
                   as Ok<CapabilityRegistry, StructuredFailure>)
               .value;
       final disposedDuring = _MismatchCapabilityAdapter(
@@ -631,7 +652,10 @@ void main() {
       expect(disposedDuring.disposals, 1);
 
       final other =
-          (CapabilityRegistry.create(maximumCapabilities: 1)
+          (CapabilityRegistry.create(
+                    maximumListeners: 16,
+                    maximumCapabilities: 1,
+                  )
                   as Ok<CapabilityRegistry, StructuredFailure>)
               .value;
       final throwing = _MismatchCapabilityAdapter(
@@ -950,7 +974,10 @@ void main() {
     'capability publication is immutable, generation-based and listener-safe',
     () {
       final registry =
-          (CapabilityRegistry.create(maximumCapabilities: 4)
+          (CapabilityRegistry.create(
+                    maximumListeners: 16,
+                    maximumCapabilities: 4,
+                  )
                   as Ok<CapabilityRegistry, StructuredFailure>)
               .value;
       var calls = 0;
@@ -968,6 +995,7 @@ void main() {
               .value;
       final evidence =
           (CapabilityEvidence.create(
+                    maximumLimitEntries: 16,
                     key: key,
                     contractVersion: version,
                     adapter:
@@ -1063,6 +1091,148 @@ void main() {
       );
     },
   );
+
+  test('platform byte factories stop before hostile oversized tails', () {
+    final digest = _InfinitePlatformBytes();
+    expect(
+      ExternalFingerprint.create(
+        strength: FingerprintStrength.fullContent,
+        byteLength: 1,
+        digest: digest,
+        maximumDigestBytes: 2,
+      ),
+      isA<Err<ExternalFingerprint, StructuredFailure>>(),
+    );
+    expect(digest.moveNextCalls, 3);
+    expect(digest.currentReads, 2);
+
+    final bytes = _InfinitePlatformBytes();
+    final id =
+        (PrivateRecordId.parse('hostile')
+                as Ok<PrivateRecordId, StructuredFailure>)
+            .value;
+    expect(
+      WritePrivateRecord.create(id: id, bytes: bytes, maximumBytes: 2),
+      isA<Err<WritePrivateRecord, StructuredFailure>>(),
+    );
+    expect(bytes.moveNextCalls, 3);
+    expect(bytes.currentReads, 2);
+  });
+
+  test('capability limit maps and listeners honor zero and exact ceilings', () {
+    final source = _capabilityEvidence();
+    final infiniteLimits = InfiniteValues(const MapEntry('bytes', 1));
+    expect(
+      CapabilityEvidence.create(
+        key: source.key,
+        contractVersion: source.contractVersion,
+        adapter: source.adapter,
+        availability: source.availability,
+        health: source.health,
+        degradation: source.degradation,
+        permission: source.permission,
+        limits: HostileMap(infiniteLimits, reportedLength: 0),
+        maximumLimitEntries: 1,
+        initialization: source.initialization,
+      ),
+      isA<Err<CapabilityEvidence, StructuredFailure>>(),
+    );
+    expect(infiniteLimits.moveNextCalls, 2);
+    expect(infiniteLimits.currentReads, 1);
+    expect(
+      CapabilityEvidence.create(
+        key: source.key,
+        contractVersion: source.contractVersion,
+        adapter: source.adapter,
+        availability: source.availability,
+        health: source.health,
+        degradation: source.degradation,
+        permission: source.permission,
+        limits: HostileMap(const [MapEntry('bytes', 1)], reportedLength: 0),
+        maximumLimitEntries: 1,
+        initialization: source.initialization,
+      ),
+      isA<Ok<CapabilityEvidence, StructuredFailure>>(),
+    );
+    expect(
+      CapabilityEvidence.create(
+        key: source.key,
+        contractVersion: source.contractVersion,
+        adapter: source.adapter,
+        availability: source.availability,
+        health: source.health,
+        degradation: source.degradation,
+        permission: source.permission,
+        limits: HostileMap(ThrowingValues(), reportedLength: 0),
+        maximumLimitEntries: 1,
+        initialization: source.initialization,
+      ),
+      isA<Err<CapabilityEvidence, StructuredFailure>>(),
+    );
+    expect(
+      CapabilityEvidence.create(
+        key: source.key,
+        contractVersion: source.contractVersion,
+        adapter: source.adapter,
+        availability: source.availability,
+        health: source.health,
+        degradation: source.degradation,
+        permission: source.permission,
+        limits: const {'bytes': 1},
+        maximumLimitEntries: 0,
+        initialization: source.initialization,
+      ),
+      isA<Err<CapabilityEvidence, StructuredFailure>>(),
+    );
+    expect(
+      CapabilityEvidence.create(
+        key: source.key,
+        contractVersion: source.contractVersion,
+        adapter: source.adapter,
+        availability: source.availability,
+        health: source.health,
+        degradation: source.degradation,
+        permission: source.permission,
+        limits: const {'bytes': 1},
+        maximumLimitEntries: 1,
+        initialization: source.initialization,
+      ),
+      isA<Ok<CapabilityEvidence, StructuredFailure>>(),
+    );
+    final registry =
+        (CapabilityRegistry.create(maximumCapabilities: 1, maximumListeners: 1)
+                as Ok<CapabilityRegistry, StructuredFailure>)
+            .value;
+    void listener(CapabilityRegistryChange _) {}
+    expect(registry.addListener(listener), isA<Ok<void, StructuredFailure>>());
+    expect(registry.addListener(listener), isA<Ok<void, StructuredFailure>>());
+    expect(registry.addListener((_) {}), isA<Err<void, StructuredFailure>>());
+    registry.removeListener(listener);
+    expect(registry.addListener((_) {}), isA<Ok<void, StructuredFailure>>());
+  });
+}
+
+final class _InfinitePlatformBytes extends Iterable<int> {
+  int moveNextCalls = 0;
+  int currentReads = 0;
+  @override
+  Iterator<int> get iterator => _InfinitePlatformByteIterator(this);
+}
+
+final class _InfinitePlatformByteIterator implements Iterator<int> {
+  _InfinitePlatformByteIterator(this.owner);
+  final _InfinitePlatformBytes owner;
+  @override
+  int get current {
+    owner.currentReads += 1;
+    return 1;
+  }
+
+  @override
+  bool moveNext() {
+    owner.moveNextCalls += 1;
+    return true;
+  }
 }
 
 final class _AllowTokenPolicy implements OpaqueTokenCapabilityPolicy {
@@ -1133,6 +1303,7 @@ CapabilityEvidence _capabilityEvidence({
   String adapterIdentity = 'test',
 }) =>
     (CapabilityEvidence.create(
+              maximumLimitEntries: 16,
               key:
                   (CapabilityKey.parse(keyIdentity)
                           as Ok<CapabilityKey, StructuredFailure>)
@@ -1165,6 +1336,7 @@ CapabilityEvidence _evidenceLike(
   AdapterEvidence? adapter,
 }) =>
     (CapabilityEvidence.create(
+              maximumLimitEntries: 16,
               key: key ?? source.key,
               contractVersion: version ?? source.contractVersion,
               adapter: adapter ?? source.adapter,

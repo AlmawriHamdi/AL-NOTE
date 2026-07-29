@@ -47,14 +47,30 @@ final class ExternalFingerprint {
     required FingerprintStrength strength,
     required int byteLength,
     required Iterable<int> digest,
+    required int maximumDigestBytes,
   }) {
     try {
-      final bytes = List<int>.of(digest);
+      if (maximumDigestBytes <= 0 ||
+          maximumDigestBytes > 64 ||
+          (digest is List<int> && digest.length > maximumDigestBytes)) {
+        return Err(_failure('invalid_fingerprint'));
+      }
+      final bytes = <int>[];
+      final iterator = digest.iterator;
+      while (iterator.moveNext()) {
+        if (bytes.length >= maximumDigestBytes) {
+          return Err(_failure('invalid_fingerprint'));
+        }
+        final value = iterator.current;
+        if (value < 0 || value > 255) {
+          return Err(_failure('invalid_fingerprint'));
+        }
+        bytes.add(value);
+      }
       if (byteLength < 0 ||
           byteLength > 9007199254740991 ||
           bytes.isEmpty ||
-          bytes.length > 64 ||
-          bytes.any((value) => value < 0 || value > 255)) {
+          bytes.length > 64) {
         return Err(_failure('invalid_fingerprint'));
       }
       return Ok(

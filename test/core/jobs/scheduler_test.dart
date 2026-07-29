@@ -8,13 +8,14 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../support/controllable_clock.dart';
 import '../../support/document_model_test_support.dart';
+import '../../support/phase5_test_support.dart';
 
 T ok<T>(Result<T, StructuredFailure> value) =>
     (value as Ok<T, StructuredFailure>).value;
 
 void main() {
   test('zero retry limit permits exactly one initial attempt', () async {
-    final registry = JobRegistry();
+    final registry = JobRegistry(maximumSchedulingClasses: 16);
     var runs = 0;
     final kind = ok(
       registry.register<int, int, String>(
@@ -39,7 +40,7 @@ void main() {
 
   test('retry ceiling counts retries after the initial invocation', () async {
     for (final retryLimit in [1, 2]) {
-      final registry = JobRegistry();
+      final registry = JobRegistry(maximumSchedulingClasses: 16);
       var runs = 0;
       final kind = ok(
         registry.register<int, int, String>(
@@ -71,7 +72,7 @@ void main() {
   });
 
   test('attempt ceiling beyond retry policy rejects before runner', () async {
-    final registry = JobRegistry();
+    final registry = JobRegistry(maximumSchedulingClasses: 16);
     var runs = 0;
     final kind = ok(
       registry.register<int, int, String>(
@@ -96,7 +97,7 @@ void main() {
   });
 
   test('failed retry reports exact total attempt count', () async {
-    final registry = JobRegistry();
+    final registry = JobRegistry(maximumSchedulingClasses: 16);
     final kind = ok(
       registry.register<int, int, String>(
         _ControlledKind(
@@ -116,7 +117,7 @@ void main() {
   });
 
   test('transient non-idempotent request is structurally rejected', () {
-    final registry = JobRegistry();
+    final registry = JobRegistry(maximumSchedulingClasses: 16);
     final kind = ok(
       registry.register<int, int, String>(
         _ControlledKind(
@@ -129,6 +130,7 @@ void main() {
     );
     expect(
       JobRequest.create<int, int, String>(
+        maximumRequiredCapabilities: 16,
         id: JobId.fromUuid(testUuid(7)),
         kind: kind,
         scope: ok(
@@ -156,7 +158,7 @@ void main() {
     );
   });
   test('late persistence work can use reserved capacity', () async {
-    final registry = JobRegistry();
+    final registry = JobRegistry(maximumSchedulingClasses: 16);
     final gate = Completer<int>();
     var ordinaryStarts = 0;
     var persistenceStarts = 0;
@@ -185,6 +187,8 @@ void main() {
     );
     final limits = ok(
       JobSchedulerLimits.create(
+        maximumResourceCategories: 16,
+        maximumProgressListeners: 16,
         globalQueued: 4,
         globalRunning: 2,
         perSessionQueued: 4,
@@ -223,11 +227,12 @@ void main() {
   });
 
   test('nullable normalized input preserves present null', () async {
-    final registry = JobRegistry();
+    final registry = JobRegistry(maximumSchedulingClasses: 16);
     final kind = ok(registry.register<int?, String, String>(_NullableKind()));
     final scheduler = _scheduler(registry);
     final request = ok(
       JobRequest.create<int?, String, String>(
+        maximumRequiredCapabilities: 16,
         id: JobId.fromUuid(testUuid(20)),
         kind: kind,
         scope: ok(
@@ -256,10 +261,12 @@ void main() {
   });
 
   test('throwing initial admission and clock become failed results', () async {
-    final registry = JobRegistry();
+    final registry = JobRegistry(maximumSchedulingClasses: 16);
     final kind = ok(registry.register<int, int, String>(_Kind()));
     final limits = ok(
       JobSchedulerLimits.create(
+        maximumResourceCategories: 16,
+        maximumProgressListeners: 16,
         globalQueued: 2,
         globalRunning: 1,
         perSessionQueued: 2,
@@ -296,7 +303,7 @@ void main() {
   });
 
   test('completed Job IDs remain unavailable for scheduler lifetime', () async {
-    final registry = JobRegistry();
+    final registry = JobRegistry(maximumSchedulingClasses: 16);
     final kind = ok(registry.register<int, int, String>(_Kind()));
     final scheduler = _scheduler(registry);
     final request = _requestWithId(kind, 24);
@@ -305,7 +312,7 @@ void main() {
   });
 
   test('progress coalescing emits first and latest within ceiling', () async {
-    final registry = JobRegistry();
+    final registry = JobRegistry(maximumSchedulingClasses: 16);
     final kind = ok(registry.register<int, int, String>(_ProgressKind()));
     final scheduler = _scheduler(registry);
     final values = <int>[];
@@ -317,7 +324,7 @@ void main() {
   });
 
   test('progress reported after terminal completion is ignored', () async {
-    final registry = JobRegistry();
+    final registry = JobRegistry(maximumSchedulingClasses: 16);
     final source = _LateProgressKind();
     final kind = ok(registry.register<int, int, String>(source));
     final scheduler = _scheduler(registry);
@@ -336,7 +343,7 @@ void main() {
   test(
     'required child failure fails parent without retrying its runner',
     () async {
-      final registry = JobRegistry();
+      final registry = JobRegistry(maximumSchedulingClasses: 16);
       final releaseParent = Completer<void>();
       var parentRuns = 0;
       final parentKind = ok(
@@ -378,7 +385,7 @@ void main() {
   );
 
   test('optional child failure degrades successful parent', () async {
-    final registry = JobRegistry();
+    final registry = JobRegistry(maximumSchedulingClasses: 16);
     final releaseParent = Completer<void>();
     final parentKind = ok(
       registry.register<int, int, String>(
@@ -415,7 +422,7 @@ void main() {
   });
 
   test('failing parent cancels and joins a running child', () async {
-    final registry = JobRegistry();
+    final registry = JobRegistry(maximumSchedulingClasses: 16);
     final releaseParent = Completer<void>();
     final childStarted = Completer<void>();
     final childCancelled = Completer<int>();
@@ -463,6 +470,8 @@ void main() {
     () {
       expect(
         JobSchedulerLimits.create(
+          maximumResourceCategories: 16,
+          maximumProgressListeners: 16,
           globalQueued: 1,
           globalRunning: 0,
           perSessionQueued: 1,
@@ -481,7 +490,7 @@ void main() {
   test(
     'registry rejects duplicates and scheduler runs normalized input',
     () async {
-      final registry = JobRegistry();
+      final registry = JobRegistry(maximumSchedulingClasses: 16);
       final source = _Kind();
       final kind = ok(registry.register<int, int, String>(source));
       expect(
@@ -498,8 +507,8 @@ void main() {
   test(
     'unregistered handles and duplicate ids reject without runner side effects',
     () async {
-      final owner = JobRegistry();
-      final foreign = JobRegistry();
+      final owner = JobRegistry(maximumSchedulingClasses: 16);
+      final foreign = JobRegistry(maximumSchedulingClasses: 16);
       final kind = ok(foreign.register<int, int, String>(_Kind()));
       final scheduler = _scheduler(owner);
       expect(
@@ -538,6 +547,199 @@ void main() {
       );
     },
   );
+
+  test(
+    'invalid and throwing validators never invoke admission or reserve IDs',
+    () async {
+      final admission = _AdmissionSpy();
+      final registry = JobRegistry(maximumSchedulingClasses: 1);
+      final invalid = ok(
+        registry.register<int, int, String>(
+          _ValidationKind(
+            'alnote.jobs.invalid_input',
+            (_) => Err(_testFailure('invalid')),
+          ),
+        ),
+      );
+      final throwing = ok(
+        registry.register<int, int, String>(
+          _ValidationKind(
+            'alnote.jobs.throwing_input',
+            (_) => throw StateError('sensitive input'),
+          ),
+        ),
+      );
+      final valid = ok(
+        registry.register<int, int, String>(
+          _ValidationKind('alnote.jobs.valid_input', (value) => Ok(value + 1)),
+        ),
+      );
+      final scheduler = _schedulerWithAdmission(registry, admission);
+      expect(
+        (await scheduler.submit(_requestWithId(invalid, 940))).outcome,
+        JobOutcome.failed,
+      );
+      expect(
+        (await scheduler.submit(_requestWithId(throwing, 941))).outcome,
+        JobOutcome.failed,
+      );
+      expect(admission.calls, 0);
+      final accepted = await scheduler.submit(_requestWithId(valid, 940));
+      expect(accepted.outcome, JobOutcome.completed);
+      expect(accepted.value, 4);
+      expect(admission.calls, 2);
+    },
+  );
+
+  test(
+    'denied admission publishes no normalized input and reserves no Job ID',
+    () async {
+      final admission = _AdmissionSpy()..allow = false;
+      final registry = JobRegistry(maximumSchedulingClasses: 1);
+      var runs = 0;
+      final kind = ok(
+        registry.register<int, int, String>(
+          _ValidationKind(
+            'alnote.jobs.denied_input',
+            (value) => Ok(value + 10),
+            onRun: (_) => runs += 1,
+          ),
+        ),
+      );
+      final scheduler = _schedulerWithAdmission(registry, admission);
+      expect(
+        (await scheduler.submit(_requestWithId(kind, 950))).outcome,
+        JobOutcome.failed,
+      );
+      expect(runs, 0);
+      admission.allow = true;
+      final accepted = await scheduler.submit(_requestWithId(kind, 950));
+      expect(accepted.outcome, JobOutcome.completed);
+      expect(accepted.value, 13);
+      expect(runs, 1);
+      expect(
+        (await scheduler.submit(_requestWithId(kind, 950))).outcome,
+        JobOutcome.failed,
+      );
+    },
+  );
+
+  test('Job capability collection stops before an infinite rejected tail', () {
+    final source = _InfiniteCapabilities();
+    expect(
+      JobAdmissionEvidence.create(
+        capabilities: source,
+        securityGeneration: 0,
+        maximumCapabilities: 2,
+      ),
+      isA<Err<JobAdmissionEvidence, StructuredFailure>>(),
+    );
+    expect(source.moveNextCalls, 3);
+    expect(source.currentReads, 2);
+  });
+
+  test('Job maps and scheduling sets distrust reported collection lengths', () {
+    final resourceEntries = InfiniteValues(const MapEntry('cpu', 1));
+    expect(
+      JobResourceEstimate.create(
+        HostileMap(resourceEntries, reportedLength: 0),
+        maximumCategories: 1,
+      ),
+      isA<Err<JobResourceEstimate, StructuredFailure>>(),
+    );
+    expect(resourceEntries.moveNextCalls, 2);
+    expect(resourceEntries.currentReads, 1);
+    expect(
+      JobResourceEstimate.create(
+        HostileMap(const [MapEntry('cpu', 1)], reportedLength: 0),
+        maximumCategories: 1,
+      ),
+      isA<Ok<JobResourceEstimate, StructuredFailure>>(),
+    );
+
+    final scheduling = InfiniteValues(SchedulingClass.userVisible);
+    expect(
+      JobRegistry(maximumSchedulingClasses: 1).register<int, int, String>(
+        _HostileKind(HostileSet(scheduling, reportedLength: 0)),
+      ),
+      isA<Err<RegisteredJobKind<int, int, String>, StructuredFailure>>(),
+    );
+    expect(scheduling.moveNextCalls, 2);
+    expect(scheduling.currentReads, 1);
+
+    final limitEntries = InfiniteValues(const MapEntry('cpu', 1));
+    expect(
+      JobSchedulerLimits.create(
+        globalQueued: 1,
+        globalRunning: 1,
+        perSessionQueued: 1,
+        perSessionRunning: 1,
+        reservedPersistenceSlots: 0,
+        maximumScopeDepth: 1,
+        maximumChildren: 1,
+        maximumRetryAttempts: 1,
+        maximumProgressListeners: 1,
+        maximumResourceCategories: 1,
+        resourceUnits: HostileMap(limitEntries, reportedLength: 0),
+      ),
+      isA<Err<JobSchedulerLimits, StructuredFailure>>(),
+    );
+    expect(limitEntries.moveNextCalls, 2);
+    expect(limitEntries.currentReads, 1);
+    expect(
+      JobResourceEstimate.create(
+        HostileMap(ThrowingValues(), reportedLength: 0),
+        maximumCategories: 1,
+      ),
+      isA<Err<JobResourceEstimate, StructuredFailure>>(),
+    );
+  });
+
+  test('Job progress listener ceiling is exact and duplicate-safe', () {
+    final registry = JobRegistry(maximumSchedulingClasses: 1);
+    final scheduler = _schedulerWithAdmission(registry, _Admission());
+    void listener(JobId _, JobProgress __) {}
+    expect(
+      scheduler.addProgressListener(listener),
+      isA<Ok<void, StructuredFailure>>(),
+    );
+    expect(
+      scheduler.addProgressListener(listener),
+      isA<Ok<void, StructuredFailure>>(),
+    );
+    expect(
+      scheduler.addProgressListener((_, _) {}),
+      isA<Err<void, StructuredFailure>>(),
+    );
+    scheduler.removeProgressListener(listener);
+    expect(
+      scheduler.addProgressListener((_, _) {}),
+      isA<Ok<void, StructuredFailure>>(),
+    );
+  });
+}
+
+final class _InfiniteCapabilities extends Iterable<String> {
+  int moveNextCalls = 0;
+  int currentReads = 0;
+  @override
+  Iterator<String> get iterator => _InfiniteCapabilityIterator(this);
+}
+
+final class _InfiniteCapabilityIterator implements Iterator<String> {
+  _InfiniteCapabilityIterator(this.owner);
+  final _InfiniteCapabilities owner;
+  @override
+  String get current {
+    owner.currentReads += 1;
+    return 'alnote.platform.capability';
+  }
+
+  @override
+  bool moveNext() {
+    owner.moveNextCalls += 1;
+    return true;
+  }
 }
 
 class _Kind implements JobKindSource<int, int, String> {
@@ -565,6 +767,15 @@ class _Kind implements JobKindSource<int, int, String> {
   @override
   JobRunner<int, int> get runner =>
       (value, context) async => value * 2;
+}
+
+final class _HostileKind extends _Kind {
+  _HostileKind(this.classes);
+  final Set<SchedulingClass> classes;
+  @override
+  String get identity => 'alnote.jobs.hostile_metadata';
+  @override
+  Set<SchedulingClass> get permittedSchedulingClasses => classes;
 }
 
 final class _NullableKind implements JobKindSource<int?, String, String> {
@@ -663,6 +874,50 @@ final class _Admission implements JobAdmissionController {
   }) => const Ok(null);
 }
 
+final class _AdmissionSpy implements JobAdmissionController {
+  int calls = 0;
+  bool allow = true;
+  @override
+  Result<void, StructuredFailure> validate({
+    required List<String> requiredCapabilities,
+    required JobAdmissionEvidence evidence,
+  }) {
+    calls += 1;
+    return allow ? const Ok(null) : Err(_testFailure('denied'));
+  }
+}
+
+final class _ValidationKind implements JobKindSource<int, int, String> {
+  _ValidationKind(this.identity, this.validation, {this.onRun});
+  @override
+  final String identity;
+  final JobInputValidator<int> validation;
+  final void Function(int value)? onRun;
+  @override
+  String get ownerSubsystem => 'test';
+  @override
+  String get payloadContractIdentity => 'test.validation';
+  @override
+  Set<SchedulingClass> get permittedSchedulingClasses => {
+    SchedulingClass.userVisible,
+  };
+  @override
+  bool get supportsSupersession => false;
+  @override
+  bool get supportsRetry => false;
+  @override
+  bool get supportsPartialResults => false;
+  @override
+  bool get supportsDetachedExecution => false;
+  @override
+  JobInputValidator<int> get validator => validation;
+  @override
+  JobRunner<int, int> get runner => (value, context) async {
+    onRun?.call(value);
+    return value;
+  };
+}
+
 final class _ThrowAdmission implements JobAdmissionController {
   @override
   Result<void, StructuredFailure> validate({
@@ -676,6 +931,13 @@ final class _ThrowClock implements Clock {
   DateTime nowUtc() => throw StateError('secret');
 }
 
+StructuredFailure _testFailure(String leaf) => StructuredFailure(
+  code: 'test.jobs.$leaf',
+  category: FailureCategory.validation,
+  retryDisposition: RetryDisposition.never,
+  message: 'Test failure.',
+);
+
 JobScheduler _scheduler(JobRegistry registry) => ok(
   JobScheduler.create(
     clock: ControllableClock(DateTime.utc(2026)),
@@ -683,6 +945,8 @@ JobScheduler _scheduler(JobRegistry registry) => ok(
     admissionController: _Admission(),
     limits: ok(
       JobSchedulerLimits.create(
+        maximumResourceCategories: 16,
+        maximumProgressListeners: 16,
         globalQueued: 8,
         globalRunning: 2,
         perSessionQueued: 8,
@@ -697,6 +961,32 @@ JobScheduler _scheduler(JobRegistry registry) => ok(
   ),
 );
 
+JobScheduler _schedulerWithAdmission(
+  JobRegistry registry,
+  JobAdmissionController admission,
+) => ok(
+  JobScheduler.create(
+    clock: ControllableClock(DateTime.utc(2026)),
+    registry: registry,
+    admissionController: admission,
+    limits: ok(
+      JobSchedulerLimits.create(
+        maximumResourceCategories: 1,
+        maximumProgressListeners: 1,
+        globalQueued: 4,
+        globalRunning: 1,
+        perSessionQueued: 4,
+        perSessionRunning: 1,
+        reservedPersistenceSlots: 0,
+        maximumScopeDepth: 4,
+        maximumChildren: 1,
+        maximumRetryAttempts: 0,
+        resourceUnits: const {'cpu': 1},
+      ),
+    ),
+  ),
+);
+
 JobScheduler _schedulerWithRetryLimit(JobRegistry registry, int retries) => ok(
   JobScheduler.create(
     clock: ControllableClock(DateTime.utc(2026)),
@@ -704,6 +994,8 @@ JobScheduler _schedulerWithRetryLimit(JobRegistry registry, int retries) => ok(
     admissionController: _Admission(),
     limits: ok(
       JobSchedulerLimits.create(
+        maximumResourceCategories: 16,
+        maximumProgressListeners: 16,
         globalQueued: 4,
         globalRunning: 1,
         perSessionQueued: 4,
@@ -725,6 +1017,7 @@ JobRequest<int, int, String> _retryRequest(
   required bool transient,
 }) => ok(
   JobRequest.create<int, int, String>(
+    maximumRequiredCapabilities: 16,
     id: JobId.fromUuid(testUuid(id)),
     kind: kind,
     scope: ok(
@@ -759,6 +1052,7 @@ JobRequest<int, int, String> _request(
   int input,
 ) => ok(
   JobRequest.create<int, int, String>(
+    maximumRequiredCapabilities: 16,
     id: JobId.fromUuid(testUuid(10)),
     kind: kind,
     scope: ok(
@@ -804,6 +1098,7 @@ JobRequest<T, R, String> _requestWithId<T, R>(
   DateTime? expiresAtUtc,
 }) => ok(
   JobRequest.create<T, R, String>(
+    maximumRequiredCapabilities: 16,
     id: JobId.fromUuid(testUuid(id)),
     kind: kind,
     scope: ok(
@@ -836,6 +1131,7 @@ JobRequest<int, int, String> _classifiedRequest(
   SchedulingClass schedulingClass,
 ) => ok(
   JobRequest.create<int, int, String>(
+    maximumRequiredCapabilities: 16,
     id: JobId.fromUuid(testUuid(id)),
     kind: kind,
     scope: ok(
@@ -866,6 +1162,7 @@ JobRequest<int, int, String> _parentRequest(
   int id,
 ) => ok(
   JobRequest.create<int, int, String>(
+    maximumRequiredCapabilities: 16,
     id: JobId.fromUuid(testUuid(id)),
     kind: kind,
     scope: ok(
@@ -902,6 +1199,7 @@ JobRequest<int, int, String> _childRequest(
   ChildRequirement requirement,
 ) => ok(
   JobRequest.create<int, int, String>(
+    maximumRequiredCapabilities: 16,
     id: JobId.fromUuid(testUuid(id)),
     kind: kind,
     scope: ok(

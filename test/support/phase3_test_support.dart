@@ -72,12 +72,14 @@ DocumentMutationCoordinator phase3Coordinator({
   int historyCount = 10,
   int historyBytes = 10000,
   int estimatedEntryBytes = 100,
+  int maximumListeners = 16,
 }) {
   final validator = DocumentValidator(registry ?? editableTestRegistry());
   final generator = UuidSequenceGenerator.fromValues([
     for (var value = 100; value < 140; value += 1) testUuid(value),
   ]);
   return (DocumentMutationCoordinator.create(
+            maximumListeners: maximumListeners,
             initialRoot: root ?? phase3Notebook(),
             validator: validator,
             uuidGenerator: generator,

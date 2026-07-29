@@ -165,9 +165,11 @@ final class JobResourceEstimate {
     required int maximumCategories,
   }) {
     try {
-      final copied = Map<String, int>.of(units);
-      if (maximumCategories < 0 ||
-          copied.length > maximumCategories ||
+      if (maximumCategories < 0 || maximumCategories > 9007199254740991) {
+        return Err(_failure('invalid_resource_estimate'));
+      }
+      final copied = _boundedJobMap(units, maximumCategories);
+      if (copied == null ||
           copied.keys.any(
             (key) => !RegExp(r'^[a-z][a-z0-9._-]{0,127}$').hasMatch(key),
           ) ||
@@ -196,7 +198,17 @@ final class JobAdmissionEvidence {
     required int maximumCapabilities,
   }) {
     try {
-      final copied = Set<String>.of(capabilities);
+      final bounded = _boundedJobIterable(
+        capabilities,
+        maximumCapabilities,
+        'invalid_admission_evidence',
+      );
+      if (bounded is Err<List<String>, StructuredFailure>) {
+        return Err(bounded.error);
+      }
+      final copied = Set<String>.of(
+        (bounded as Ok<List<String>, StructuredFailure>).value,
+      );
       if (securityGeneration < 0 ||
           securityGeneration > 9007199254740991 ||
           maximumCapabilities < 0 ||
@@ -338,6 +350,8 @@ final class RegisteredJobKind<T, R, S> {
 
 /// Central registry that exclusively issues submit-capable kind handles.
 final class JobRegistry {
+  JobRegistry({required this.maximumSchedulingClasses});
+  final int maximumSchedulingClasses;
   final Object _owner = Object();
   final Map<String, Object> _kinds = {};
 
@@ -345,13 +359,19 @@ final class JobRegistry {
   Result<RegisteredJobKind<T, R, S>, StructuredFailure> register<T, R, S>(
     JobKindSource<T, R, S> source,
   ) {
+    if (maximumSchedulingClasses < 0 ||
+        maximumSchedulingClasses > 9007199254740991) {
+      return Err(_failure('invalid_kind_metadata'));
+    }
     try {
       final identity = source.identity;
       final ownerSubsystem = source.ownerSubsystem;
       final payload = source.payloadContractIdentity;
-      final classes = Set<SchedulingClass>.of(
-        source.permittedSchedulingClasses,
-      );
+      final sourceClasses = source.permittedSchedulingClasses;
+      final classes = _boundedJobSet(sourceClasses, maximumSchedulingClasses);
+      if (classes == null) {
+        return Err(_failure('invalid_or_duplicate_kind'));
+      }
       final supersession = source.supportsSupersession;
       final retry = source.supportsRetry;
       final partial = source.supportsPartialResults;
@@ -437,6 +457,7 @@ final class JobRequest<T, R, S> {
     required SchedulingClass schedulingClass,
     required JobResourceEstimate resources,
     required Iterable<String> requiredCapabilities,
+    required int maximumRequiredCapabilities,
     required JobAdmissionEvidence admissionEvidence,
     DateTime? expiresAtUtc,
     SupersessionKey<S>? supersessionKey,
@@ -448,7 +469,16 @@ final class JobRequest<T, R, S> {
     ChildRequirement childRequirement = ChildRequirement.required,
   }) {
     try {
-      final capabilities = List<String>.of(requiredCapabilities);
+      final bounded = _boundedJobIterable(
+        requiredCapabilities,
+        maximumRequiredCapabilities,
+        'invalid_request',
+      );
+      if (bounded is Err<List<String>, StructuredFailure>) {
+        return Err(bounded.error);
+      }
+      final capabilities =
+          (bounded as Ok<List<String>, StructuredFailure>).value;
       final expiry = expiresAtUtc?.toUtc();
       if (maximumAttempts <= 0 ||
           maximumAttempts > 9007199254740991 ||
@@ -546,7 +576,64 @@ final Map<String, ResourceLimitUnit> alnoteJobLimitRequirements =
       'alnote.jobs.retry_attempts': ResourceLimitUnit.count,
       'alnote.jobs.progress_events': ResourceLimitUnit.count,
       'alnote.jobs.reserved_resource_units': ResourceLimitUnit.count,
+      'alnote.jobs.required_capabilities': ResourceLimitUnit.count,
+      'alnote.jobs.resource_categories': ResourceLimitUnit.count,
+      'alnote.jobs.scheduling_classes': ResourceLimitUnit.count,
+      'alnote.jobs.progress_listeners': ResourceLimitUnit.count,
     });
+
+Result<List<T>, StructuredFailure> _boundedJobIterable<T>(
+  Iterable<T> source,
+  int maximum,
+  String failure,
+) {
+  if (maximum < 0 || maximum > 9007199254740991) {
+    return Err(_failure(failure));
+  }
+  try {
+    if ((source is List<T> || source is Set<T>) && source.length > maximum) {
+      return Err(_failure(failure));
+    }
+    final copied = <T>[];
+    final iterator = source.iterator;
+    while (iterator.moveNext()) {
+      if (copied.length >= maximum) return Err(_failure(failure));
+      copied.add(iterator.current);
+    }
+    return Ok(List.unmodifiable(copied));
+  } on Object {
+    return Err(_failure(failure));
+  }
+}
+
+Set<T>? _boundedJobSet<T>(Iterable<T> source, int maximum) {
+  final bounded = _boundedJobIterable(source, maximum, 'metadata_limit');
+  if (bounded is! Ok<List<T>, StructuredFailure>) return null;
+  final captured = <T>{};
+  for (final value in bounded.value) {
+    if (!captured.add(value)) return null;
+  }
+  return Set.unmodifiable(captured);
+}
+
+Map<K, V>? _boundedJobMap<K, V>(Map<K, V> source, int maximum) {
+  if (maximum < 0 || maximum > 9007199254740991) return null;
+  try {
+    final captured = <K, V>{};
+    final iterator = source.entries.iterator;
+    while (iterator.moveNext()) {
+      if (captured.length >= maximum) return null;
+      final entry = iterator.current;
+      final key = entry.key;
+      final value = entry.value;
+      if (captured.containsKey(key)) return null;
+      captured[key] = value;
+    }
+    return Map.unmodifiable(captured);
+  } on Object {
+    return null;
+  }
+}
 
 StructuredFailure _failure(String leaf) => StructuredFailure(
   code: 'core.jobs.$leaf',

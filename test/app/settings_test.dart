@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import 'dart:async';
+
 import 'package:al_note/app/settings.dart';
 import 'package:al_note/core/primitives.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -20,7 +22,11 @@ void main() {
   });
 
   test('validated change sets are repository-owned and one-use', () async {
-    final registry = SettingRegistry()..register(_IntDefinition());
+    final registry = SettingRegistry(
+      maximumPersistentScopes: 8,
+      maximumMigrations: 16,
+      maximumResourceLimits: 16,
+    )..register(_IntDefinition());
     final first = await _openRepository(
       registry,
       InMemorySettingsAdapter(initial: _emptyPersistence()),
@@ -75,7 +81,11 @@ void main() {
   test(
     'unexpected post-commit evidence poisons until bounded reload',
     () async {
-      final registry = SettingRegistry()..register(_IntDefinition());
+      final registry = SettingRegistry(
+        maximumPersistentScopes: 8,
+        maximumMigrations: 16,
+        maximumResourceLimits: 16,
+      )..register(_IntDefinition());
       final adapter = InMemorySettingsAdapter(initial: _emptyPersistence())
         ..returnUnexpectedCommitRevision = true;
       final repository = await _openRepository(registry, adapter);
@@ -112,6 +122,8 @@ void main() {
       );
       expect(
         await repository.reload(
+          maximumUnknownRecords: 16,
+          maximumUnknownFieldsPerRecord: 16,
           maximumRecords: 10,
           maximumValueBytes: 10,
           cancellationToken: CancellationController().token,
@@ -123,7 +135,11 @@ void main() {
   );
 
   test('definition metadata is snapshotted and duplicate keys reject', () {
-    final registry = SettingRegistry();
+    final registry = SettingRegistry(
+      maximumPersistentScopes: 8,
+      maximumMigrations: 16,
+      maximumResourceLimits: 16,
+    );
     final source = _IntDefinition();
     expect(registry.register(source), isA<Ok<void, StructuredFailure>>());
     expect(registry.register(source), isA<Err<void, StructuredFailure>>());
@@ -131,10 +147,192 @@ void main() {
     expect(() => registry.keys.clear(), throwsUnsupportedError);
   });
 
+  test('definition metadata ignores false lengths and stops at ceilings', () {
+    final infiniteScopes = InfiniteValues(SettingScope.user);
+    final oversized = _MetadataDefinition(
+      scopes: HostileSet(infiniteScopes, reportedLength: 0),
+    );
+    expect(
+      SettingRegistry(
+        maximumPersistentScopes: 1,
+        maximumMigrations: 0,
+        maximumResourceLimits: 1,
+      ).register(oversized),
+      isA<Err<void, StructuredFailure>>(),
+    );
+    expect(infiniteScopes.moveNextCalls, 2);
+    expect(infiniteScopes.currentReads, 1);
+
+    final exact = _MetadataDefinition(
+      scopes: HostileSet(const [
+        SettingScope.user,
+        SettingScope.deviceLocal,
+      ], reportedLength: 0),
+      migrationsSource: HostileList(const [], reportedLength: 99),
+      limits: HostileMap(const [MapEntry('bytes', 1)], reportedLength: 0),
+    );
+    expect(
+      SettingRegistry(
+        maximumPersistentScopes: 2,
+        maximumMigrations: 0,
+        maximumResourceLimits: 1,
+      ).register(exact),
+      isA<Ok<void, StructuredFailure>>(),
+    );
+    expect(
+      SettingRegistry(
+        maximumPersistentScopes: 2,
+        maximumMigrations: 1,
+        maximumResourceLimits: 1,
+      ).register(
+        _MetadataDefinition(
+          limits: HostileMap(ThrowingValues(), reportedLength: 0),
+        ),
+      ),
+      isA<Err<void, StructuredFailure>>(),
+    );
+  });
+
+  test(
+    'unknown fields are bounded incrementally and revalidated on load',
+    () async {
+      final zero =
+          (Revision.create(0) as Ok<Revision, StructuredFailure>).value;
+      final recordRevision = SettingsRecordRevision(zero);
+      final key = (_IntDefinition().key);
+      final infiniteEntries = InfiniteValues(
+        const MapEntry('future', <int>[1]),
+      );
+      expect(
+        SettingsLogicalRecord.create(
+          key: key,
+          scope: SettingScope.user,
+          schemaVersion: 1,
+          codecIdentity: 'test.int',
+          recordRevision: recordRevision,
+          valueBytes: const [1],
+          unknownFields: HostileMap(infiniteEntries, reportedLength: 0),
+          active: true,
+          lastKnownGood: true,
+          maximumValueBytes: 2,
+          maximumUnknownFields: 1,
+        ),
+        isA<Err<SettingsLogicalRecord, StructuredFailure>>(),
+      );
+      expect(infiniteEntries.moveNextCalls, 2);
+      expect(infiniteEntries.currentReads, 1);
+
+      for (final fields in <Map<String, List<int>>>[
+        GetterThrowingMap<String, List<int>>.key('future'),
+        GetterThrowingMap<String, List<int>>.value('future'),
+      ]) {
+        expect(
+          SettingsLogicalRecord.create(
+            key: key,
+            scope: SettingScope.user,
+            schemaVersion: 1,
+            codecIdentity: 'test.int',
+            recordRevision: recordRevision,
+            valueBytes: const [1],
+            unknownFields: fields,
+            active: true,
+            lastKnownGood: true,
+            maximumValueBytes: 1,
+            maximumUnknownFields: 1,
+          ),
+          isA<Err<SettingsLogicalRecord, StructuredFailure>>(),
+        );
+      }
+
+      final record =
+          (SettingsLogicalRecord.create(
+                    key: key,
+                    scope: SettingScope.user,
+                    schemaVersion: 1,
+                    codecIdentity: 'test.int',
+                    recordRevision: recordRevision,
+                    valueBytes: const [1, 2],
+                    unknownFields: HostileMap(const [
+                      MapEntry('future', <int>[3, 4]),
+                    ], reportedLength: 0),
+                    active: true,
+                    lastKnownGood: true,
+                    maximumValueBytes: 2,
+                    maximumUnknownFields: 1,
+                  )
+                  as Ok<SettingsLogicalRecord, StructuredFailure>)
+              .value;
+      expect(
+        SettingsPersistenceSnapshot.create(
+          storeRevision: SettingsStoreRevision(zero),
+          records: [record],
+          unknownRecords: const [],
+          damaged: false,
+          lastKnownGoodAvailable: true,
+          maximumRecords: 1,
+          maximumUnknownRecords: 0,
+          maximumUnknownFieldsPerRecord: 0,
+          maximumValueBytes: 2,
+        ),
+        isA<Err<SettingsPersistenceSnapshot, StructuredFailure>>(),
+      );
+      expect(
+        SettingsPersistenceSnapshot.create(
+          storeRevision: SettingsStoreRevision(zero),
+          records: [record],
+          unknownRecords: const [],
+          damaged: false,
+          lastKnownGoodAvailable: true,
+          maximumRecords: 1,
+          maximumUnknownRecords: 0,
+          maximumUnknownFieldsPerRecord: 1,
+          maximumValueBytes: 1,
+        ),
+        isA<Err<SettingsPersistenceSnapshot, StructuredFailure>>(),
+      );
+      final oldSnapshot =
+          (SettingsPersistenceSnapshot.create(
+                    storeRevision: SettingsStoreRevision(zero),
+                    records: [record],
+                    unknownRecords: const [],
+                    damaged: false,
+                    lastKnownGoodAvailable: true,
+                    maximumRecords: 1,
+                    maximumUnknownRecords: 0,
+                    maximumUnknownFieldsPerRecord: 1,
+                    maximumValueBytes: 2,
+                  )
+                  as Ok<SettingsPersistenceSnapshot, StructuredFailure>)
+              .value;
+      final registry = SettingRegistry(
+        maximumPersistentScopes: 2,
+        maximumMigrations: 0,
+        maximumResourceLimits: 1,
+      )..register(_IntDefinition());
+      expect(
+        await SettingsRepository.open(
+          registry: registry,
+          adapter: InMemorySettingsAdapter(initial: oldSnapshot),
+          maximumRecords: 1,
+          maximumUnknownRecords: 0,
+          maximumUnknownFieldsPerRecord: 0,
+          maximumValueBytes: 2,
+          maximumListeners: 1,
+          cancellationToken: CancellationController().token,
+        ),
+        isA<Failed<SettingsRepository, StructuredFailure>>(),
+      );
+    },
+  );
+
   test(
     'defaults, user/device precedence, preview, cancel and reset are transactional',
     () async {
-      final registry = SettingRegistry();
+      final registry = SettingRegistry(
+        maximumPersistentScopes: 8,
+        maximumMigrations: 16,
+        maximumResourceLimits: 16,
+      );
       registry.register(_IntDefinition());
       final key =
           (SettingKey.parse('alnote.settings.test.number')
@@ -146,6 +344,8 @@ void main() {
       final adapter = InMemorySettingsAdapter(
         initial:
             (SettingsPersistenceSnapshot.create(
+                      maximumUnknownRecords: 16,
+                      maximumUnknownFieldsPerRecord: 16,
                       storeRevision: SettingsStoreRevision(zero),
                       records: const [],
                       unknownRecords: [
@@ -167,6 +367,9 @@ void main() {
                 .value,
       );
       final opened = await SettingsRepository.open(
+        maximumUnknownRecords: 16,
+        maximumUnknownFieldsPerRecord: 16,
+        maximumListeners: 16,
         registry: registry,
         adapter: adapter,
         maximumRecords: 10,
@@ -261,12 +464,18 @@ void main() {
   test(
     'stale writers and hostile adapter exceptions become fixed failures',
     () async {
-      final registry = SettingRegistry()..register(_IntDefinition());
+      final registry = SettingRegistry(
+        maximumPersistentScopes: 8,
+        maximumMigrations: 16,
+        maximumResourceLimits: 16,
+      )..register(_IntDefinition());
       final zero =
           (Revision.create(0) as Ok<Revision, StructuredFailure>).value;
       final adapter = InMemorySettingsAdapter(
         initial:
             (SettingsPersistenceSnapshot.create(
+                      maximumUnknownRecords: 16,
+                      maximumUnknownFieldsPerRecord: 16,
                       storeRevision: SettingsStoreRevision(zero),
                       records: const [],
                       unknownRecords: const [],
@@ -280,6 +489,9 @@ void main() {
         fault: TestAdapterFault.exception,
       );
       final outcome = await SettingsRepository.open(
+        maximumUnknownRecords: 16,
+        maximumUnknownFieldsPerRecord: 16,
+        maximumListeners: 16,
         registry: registry,
         adapter: adapter,
         maximumRecords: 1,
@@ -290,6 +502,306 @@ void main() {
       expect(outcome.toString(), isNot(contains('sensitive')));
     },
   );
+
+  test(
+    'apply guard rejects overlap without consuming the second change set',
+    () async {
+      final registry = SettingRegistry(
+        maximumPersistentScopes: 8,
+        maximumMigrations: 16,
+        maximumResourceLimits: 16,
+      )..register(_IntDefinition());
+      final adapter = InMemorySettingsAdapter(initial: _emptyPersistence());
+      final repository = await _openRepository(registry, adapter);
+      final first = _change(repository, registry, 6);
+      final second = _change(repository, registry, 7);
+      final gate = Completer<void>();
+      adapter.commitGate = gate;
+      var events = 0;
+      repository.addListener((_) {
+        events += 1;
+        expect(
+          repository.apply(
+            second,
+            maximumValueBytes: 10,
+            cancellationToken: CancellationController().token,
+          ),
+          completion(isA<Failed<SettingsCommitEvidence, StructuredFailure>>()),
+        );
+      });
+      final active = repository.apply(
+        first,
+        maximumValueBytes: 10,
+        cancellationToken: CancellationController().token,
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        await repository.apply(
+          second,
+          maximumValueBytes: 10,
+          cancellationToken: CancellationController().token,
+        ),
+        isA<Failed<SettingsCommitEvidence, StructuredFailure>>(),
+      );
+      expect(adapter.commitInvocations, 1);
+      expect(
+        await repository.reload(
+          maximumRecords: 10,
+          maximumUnknownRecords: 10,
+          maximumUnknownFieldsPerRecord: 10,
+          maximumValueBytes: 10,
+          cancellationToken: CancellationController().token,
+        ),
+        isA<Failed<void, StructuredFailure>>(),
+      );
+      expect(adapter.loadInvocations, 1);
+      gate.complete();
+      expect(
+        await active,
+        isA<Completed<SettingsCommitEvidence, StructuredFailure>>(),
+      );
+      expect(events, 1);
+      expect(adapter.commitInvocations, 1);
+      expect(
+        await repository.apply(
+          second,
+          maximumValueBytes: 10,
+          cancellationToken: CancellationController().token,
+        ),
+        isA<Failed<SettingsCommitEvidence, StructuredFailure>>(),
+      );
+    },
+  );
+
+  test(
+    'reload guard rejects apply overlap and releases after completion',
+    () async {
+      final registry = SettingRegistry(
+        maximumPersistentScopes: 8,
+        maximumMigrations: 16,
+        maximumResourceLimits: 16,
+      )..register(_IntDefinition());
+      final adapter = InMemorySettingsAdapter(initial: _emptyPersistence());
+      final repository = await _openRepository(registry, adapter);
+      final changes = _change(repository, registry, 6);
+      final gate = Completer<void>();
+      adapter.loadGate = gate;
+      final reload = repository.reload(
+        maximumRecords: 10,
+        maximumUnknownRecords: 10,
+        maximumUnknownFieldsPerRecord: 10,
+        maximumValueBytes: 10,
+        cancellationToken: CancellationController().token,
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        await repository.apply(
+          changes,
+          maximumValueBytes: 10,
+          cancellationToken: CancellationController().token,
+        ),
+        isA<Failed<SettingsCommitEvidence, StructuredFailure>>(),
+      );
+      expect(adapter.commitInvocations, 0);
+      gate.complete();
+      expect(await reload, isA<Completed<void, StructuredFailure>>());
+      adapter.loadGate = null;
+      expect(
+        await repository.apply(
+          changes,
+          maximumValueBytes: 10,
+          cancellationToken: CancellationController().token,
+        ),
+        isA<Completed<SettingsCommitEvidence, StructuredFailure>>(),
+      );
+    },
+  );
+
+  test(
+    'adapter exception releases mutation guard and listener ceiling is exact',
+    () async {
+      final registry = SettingRegistry(
+        maximumPersistentScopes: 8,
+        maximumMigrations: 16,
+        maximumResourceLimits: 16,
+      )..register(_IntDefinition());
+      final adapter = InMemorySettingsAdapter(initial: _emptyPersistence());
+      final opened = await SettingsRepository.open(
+        registry: registry,
+        adapter: adapter,
+        maximumRecords: 10,
+        maximumUnknownRecords: 10,
+        maximumUnknownFieldsPerRecord: 10,
+        maximumValueBytes: 10,
+        maximumListeners: 1,
+        cancellationToken: CancellationController().token,
+      );
+      final repository =
+          (opened as Completed<SettingsRepository, StructuredFailure>).value;
+      void listener(SettingsChangeEvent _) {}
+      expect(
+        repository.addListener(listener),
+        isA<Ok<void, StructuredFailure>>(),
+      );
+      expect(
+        repository.addListener(listener),
+        isA<Ok<void, StructuredFailure>>(),
+      );
+      expect(
+        repository.addListener((_) {}),
+        isA<Err<void, StructuredFailure>>(),
+      );
+      repository.removeListener(listener);
+      expect(
+        repository.addListener((_) {}),
+        isA<Ok<void, StructuredFailure>>(),
+      );
+
+      adapter.fault = TestAdapterFault.exception;
+      expect(
+        await repository.apply(
+          _change(repository, registry, 6),
+          maximumValueBytes: 10,
+          cancellationToken: CancellationController().token,
+        ),
+        isA<Failed<SettingsCommitEvidence, StructuredFailure>>(),
+      );
+      adapter.fault = TestAdapterFault.none;
+      expect(
+        await repository.apply(
+          _change(repository, registry, 7),
+          maximumValueBytes: 10,
+          cancellationToken: CancellationController().token,
+        ),
+        isA<Completed<SettingsCommitEvidence, StructuredFailure>>(),
+      );
+
+      adapter.fault = TestAdapterFault.cancellation;
+      expect(
+        await repository.apply(
+          _change(repository, registry, 8),
+          maximumValueBytes: 10,
+          cancellationToken: CancellationController().token,
+        ),
+        isA<Cancelled<SettingsCommitEvidence, StructuredFailure>>(),
+      );
+      adapter.fault = TestAdapterFault.none;
+      expect(
+        await repository.apply(
+          _change(repository, registry, 9),
+          maximumValueBytes: 10,
+          cancellationToken: CancellationController().token,
+        ),
+        isA<Completed<SettingsCommitEvidence, StructuredFailure>>(),
+      );
+    },
+  );
+
+  test('Settings byte factories stop before hostile oversized tails', () {
+    final bytes = _InfiniteBytes();
+    expect(
+      UnknownSettingsRecord.create(
+        identity: 'future',
+        bytes: bytes,
+        supported: false,
+        maximumBytes: 2,
+      ),
+      isA<Err<UnknownSettingsRecord, StructuredFailure>>(),
+    );
+    expect(bytes.moveNextCalls, 3);
+    expect(bytes.currentReads, 2);
+
+    final zero = (Revision.create(0) as Ok<Revision, StructuredFailure>).value;
+    final operation = ResetSettingValue(
+      key: _IntDefinition().key,
+      scope: SettingScope.user,
+    );
+    final operations = _InfiniteOperations(operation);
+    expect(
+      SettingsDraftTransaction.create(
+        expectedRevision: SettingsStoreRevision(zero),
+        operations: operations,
+        maximumOperations: 1,
+      ),
+      isA<Err<SettingsDraftTransaction, StructuredFailure>>(),
+    );
+    expect(operations.moveNextCalls, 2);
+    expect(operations.currentReads, 1);
+  });
+}
+
+ValidatedSettingsChangeSet _change(
+  SettingsRepository repository,
+  SettingRegistry registry,
+  int value,
+) {
+  final definition = registry.definition<int>(_IntDefinition().key)!;
+  return (repository.validate(
+            _draft(
+              expectedRevision: repository.snapshot.storeRevision,
+              operations: [
+                SetSettingValue(
+                  key: definition.key,
+                  scope: SettingScope.user,
+                  definition: definition,
+                  value: value,
+                ),
+              ],
+            ),
+            maximumOperations: 1,
+          )
+          as Ok<ValidatedSettingsChangeSet, StructuredFailure>)
+      .value;
+}
+
+final class _InfiniteBytes extends Iterable<int> {
+  int moveNextCalls = 0;
+  int currentReads = 0;
+  @override
+  Iterator<int> get iterator => _InfiniteByteIterator(this);
+}
+
+final class _InfiniteByteIterator implements Iterator<int> {
+  _InfiniteByteIterator(this.owner);
+  final _InfiniteBytes owner;
+  @override
+  int get current {
+    owner.currentReads += 1;
+    return 1;
+  }
+
+  @override
+  bool moveNext() {
+    owner.moveNextCalls += 1;
+    return true;
+  }
+}
+
+final class _InfiniteOperations extends Iterable<SettingsDraftOperation> {
+  _InfiniteOperations(this.operation);
+  final SettingsDraftOperation operation;
+  int moveNextCalls = 0;
+  int currentReads = 0;
+  @override
+  Iterator<SettingsDraftOperation> get iterator =>
+      _InfiniteOperationIterator(this);
+}
+
+final class _InfiniteOperationIterator
+    implements Iterator<SettingsDraftOperation> {
+  _InfiniteOperationIterator(this.owner);
+  final _InfiniteOperations owner;
+  @override
+  SettingsDraftOperation get current {
+    owner.currentReads += 1;
+    return owner.operation;
+  }
+
+  @override
+  bool moveNext() {
+    owner.moveNextCalls += 1;
+    return true;
+  }
 }
 
 SettingsDraftTransaction _draft({
@@ -307,6 +819,8 @@ SettingsDraftTransaction _draft({
 SettingsPersistenceSnapshot _emptyPersistence() {
   final zero = (Revision.create(0) as Ok<Revision, StructuredFailure>).value;
   return (SettingsPersistenceSnapshot.create(
+            maximumUnknownRecords: 16,
+            maximumUnknownFieldsPerRecord: 16,
             storeRevision: SettingsStoreRevision(zero),
             records: const [],
             unknownRecords: const [],
@@ -324,6 +838,9 @@ Future<SettingsRepository> _openRepository(
   InMemorySettingsAdapter adapter,
 ) async =>
     ((await SettingsRepository.open(
+              maximumUnknownRecords: 16,
+              maximumUnknownFieldsPerRecord: 16,
+              maximumListeners: 16,
               registry: registry,
               adapter: adapter,
               maximumRecords: 10,
@@ -333,7 +850,7 @@ Future<SettingsRepository> _openRepository(
             as Completed<SettingsRepository, StructuredFailure>)
         .value;
 
-final class _IntDefinition implements SettingDefinitionSource<int> {
+class _IntDefinition implements SettingDefinitionSource<int> {
   @override
   MandatorySettingConstraints<int> get mandatoryConstraints => _allow;
   static Result<int, StructuredFailure> _allow(int value) => Ok(value);
@@ -384,6 +901,22 @@ final class _IntDefinition implements SettingDefinitionSource<int> {
       (value) => value >= 0 && value <= 10
       ? const Ok(null)
       : Err(testFailure('invalid_setting'));
+}
+
+final class _MetadataDefinition extends _IntDefinition {
+  _MetadataDefinition({this.scopes, this.migrationsSource, this.limits});
+  final Set<SettingScope>? scopes;
+  final List<SettingMigrationStep<int>>? migrationsSource;
+  final Map<String, int>? limits;
+  @override
+  Set<SettingScope> get permittedPersistentScopes =>
+      scopes ?? super.permittedPersistentScopes;
+  @override
+  List<SettingMigrationStep<int>> get migrations =>
+      migrationsSource ?? super.migrations;
+  @override
+  Map<String, int> get requiredResourceLimits =>
+      limits ?? super.requiredResourceLimits;
 }
 
 final class _IntCodec implements SettingValueCodec<int> {

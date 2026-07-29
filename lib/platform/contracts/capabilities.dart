@@ -146,10 +146,17 @@ final class CapabilityEvidence {
     required CapabilityDegradation degradation,
     required CapabilityPermission permission,
     required Map<String, int> limits,
+    required int maximumLimitEntries,
     required CapabilityInitializationEvidence initialization,
   }) {
     try {
-      final copied = Map<String, int>.of(limits);
+      if (maximumLimitEntries < 0 || maximumLimitEntries > 9007199254740991) {
+        return Err(_capabilityFailure('invalid_evidence'));
+      }
+      final copied = _boundedCapabilityMap(limits, maximumLimitEntries);
+      if (copied == null) {
+        return Err(_capabilityFailure('invalid_evidence'));
+      }
       final safeCode =
           initialization.failureCode == null ||
           RegExp(
@@ -214,7 +221,7 @@ final class RegistryGeneration implements Comparable<RegistryGeneration> {
 
 /// Complete immutable registry snapshot.
 final class CapabilitySnapshot {
-  CapabilitySnapshot({
+  CapabilitySnapshot._({
     required this.generation,
     required Map<CapabilityKey, CapabilityEvidence> capabilities,
   }) : capabilities = UnmodifiableMapView(
@@ -257,28 +264,44 @@ abstract interface class CapabilityAdapter<T> {
 
 /// Instance-owned capability registry with isolated initialization failures.
 final class CapabilityRegistry {
-  CapabilityRegistry._(this.maximumCapabilities)
+  CapabilityRegistry._(this.maximumCapabilities, this.maximumListeners)
     : _generation = const RegistryGeneration._(0);
   static Result<CapabilityRegistry, StructuredFailure> create({
     required int maximumCapabilities,
-  }) => maximumCapabilities >= 0 && maximumCapabilities <= 9007199254740991
-      ? Ok(CapabilityRegistry._(maximumCapabilities))
+    required int maximumListeners,
+  }) =>
+      maximumCapabilities >= 0 &&
+          maximumCapabilities <= 9007199254740991 &&
+          maximumListeners >= 0 &&
+          maximumListeners <= 9007199254740991
+      ? Ok(CapabilityRegistry._(maximumCapabilities, maximumListeners))
       : Err(_capabilityFailure('invalid_capability_limit'));
   final int maximumCapabilities;
+  final int maximumListeners;
   final Map<CapabilityKey, CapabilityEvidence> _capabilities = {};
   final Map<CapabilityKey, CapabilityDisposer> _disposers = {};
   final Set<CapabilityKey> _disposedAdapters = {};
   final List<CapabilityRegistryListener> _listeners = [];
   RegistryGeneration _generation;
   bool _disposed = false;
-  CapabilitySnapshot get snapshot =>
-      CapabilitySnapshot(generation: _generation, capabilities: _capabilities);
+  CapabilitySnapshot get snapshot => CapabilitySnapshot._(
+    generation: _generation,
+    capabilities: _capabilities,
+  );
 
   /// Adds a listener once. Notifications use a listener snapshot; mutations
   /// affect later events, reentrant publication is permitted and queued by the
   /// call stack, and listener exceptions are contained.
-  void addListener(CapabilityRegistryListener listener) {
-    if (!_disposed && !_listeners.contains(listener)) _listeners.add(listener);
+  Result<void, StructuredFailure> addListener(
+    CapabilityRegistryListener listener,
+  ) {
+    if (_disposed) return Err(_capabilityFailure('disposed'));
+    if (_listeners.contains(listener)) return const Ok(null);
+    if (_listeners.length >= maximumListeners) {
+      return Err(_capabilityFailure('listener_limit'));
+    }
+    _listeners.add(listener);
+    return const Ok(null);
   }
 
   void removeListener(CapabilityRegistryListener listener) =>
@@ -371,6 +394,7 @@ final class CapabilityRegistry {
         degradation: CapabilityDegradation.none,
         permission: CapabilityPermission.unknown,
         limits: const {},
+        maximumLimitEntries: 0,
         initialization: const CapabilityInitializationEvidence(
           attempted: true,
           completed: false,
@@ -464,12 +488,16 @@ final class CapabilityRegistry {
 final Map<String, ResourceLimitUnit> alnotePlatformLimitRequirements =
     UnmodifiableMapView({
       'alnote.platform.capability_count': ResourceLimitUnit.count,
+      'alnote.platform.capability_limit_entries': ResourceLimitUnit.count,
       'alnote.platform.token_count': ResourceLimitUnit.count,
       'alnote.platform.record_count': ResourceLimitUnit.count,
       'alnote.platform.record_bytes': ResourceLimitUnit.bytes,
+      'alnote.platform.checksum_bytes': ResourceLimitUnit.bytes,
+      'alnote.platform.fingerprint_digest_bytes': ResourceLimitUnit.bytes,
       'alnote.platform.transaction_operations': ResourceLimitUnit.count,
       'alnote.platform.enumeration_results': ResourceLimitUnit.count,
       'alnote.platform.temporary_bytes': ResourceLimitUnit.bytes,
+      'alnote.platform.capability_listeners': ResourceLimitUnit.count,
     });
 
 StructuredFailure _capabilityFailure(String leaf) => StructuredFailure(
@@ -478,3 +506,21 @@ StructuredFailure _capabilityFailure(String leaf) => StructuredFailure(
   retryDisposition: RetryDisposition.never,
   message: 'The capability registry operation was rejected.',
 );
+
+Map<K, V>? _boundedCapabilityMap<K, V>(Map<K, V> source, int maximum) {
+  try {
+    final captured = <K, V>{};
+    final iterator = source.entries.iterator;
+    while (iterator.moveNext()) {
+      if (captured.length >= maximum) return null;
+      final entry = iterator.current;
+      final key = entry.key;
+      final value = entry.value;
+      if (captured.containsKey(key)) return null;
+      captured[key] = value;
+    }
+    return Map.unmodifiable(captured);
+  } on Object {
+    return null;
+  }
+}

@@ -19,6 +19,7 @@ final class JobSchedulerLimits {
     required this.maximumScopeDepth,
     required this.maximumChildren,
     required this.maximumRetryAttempts,
+    required this.maximumProgressListeners,
     required this.resourceUnits,
   });
   final int globalQueued;
@@ -29,6 +30,7 @@ final class JobSchedulerLimits {
   final int maximumScopeDepth;
   final int maximumChildren;
   final int maximumRetryAttempts;
+  final int maximumProgressListeners;
   final Map<String, int> resourceUnits;
 
   /// Creates validated Web-safe scheduler limits.
@@ -41,10 +43,20 @@ final class JobSchedulerLimits {
     required int maximumScopeDepth,
     required int maximumChildren,
     required int maximumRetryAttempts,
+    required int maximumProgressListeners,
+    required int maximumResourceCategories,
     required Map<String, int> resourceUnits,
   }) {
     try {
-      final resources = Map<String, int>.of(resourceUnits);
+      if (maximumResourceCategories < 0 ||
+          maximumResourceCategories > 9007199254740991) {
+        return Err(_failure('invalid_limits'));
+      }
+      final resources = _boundedSchedulerMap(
+        resourceUnits,
+        maximumResourceCategories,
+      );
+      if (resources == null) return Err(_failure('invalid_limits'));
       final values = [
         globalQueued,
         globalRunning,
@@ -54,6 +66,8 @@ final class JobSchedulerLimits {
         maximumScopeDepth,
         maximumChildren,
         maximumRetryAttempts,
+        maximumProgressListeners,
+        maximumResourceCategories,
         ...resources.values,
       ];
       if (values.any((value) => value < 0 || value > 9007199254740991) ||
@@ -75,6 +89,7 @@ final class JobSchedulerLimits {
           maximumScopeDepth: maximumScopeDepth,
           maximumChildren: maximumChildren,
           maximumRetryAttempts: maximumRetryAttempts,
+          maximumProgressListeners: maximumProgressListeners,
           resourceUnits: Map.unmodifiable(resources),
         ),
       );
@@ -335,9 +350,15 @@ final class JobScheduler {
   JobLifecycleState _lifecycle = JobLifecycleState.foreground;
 
   /// Adds a snapshot-based, exception-isolated progress listener.
-  void addProgressListener(JobProgressListener listener) {
-    if (!_progressListeners.contains(listener))
-      _progressListeners.add(listener);
+  Result<void, StructuredFailure> addProgressListener(
+    JobProgressListener listener,
+  ) {
+    if (_progressListeners.contains(listener)) return const Ok(null);
+    if (_progressListeners.length >= limits.maximumProgressListeners) {
+      return Err(_failure('progress_listener_limit'));
+    }
+    _progressListeners.add(listener);
+    return const Ok(null);
   }
 
   /// Removes a progress listener from later events.
@@ -365,8 +386,6 @@ final class JobScheduler {
       rejection = _failure('retry_limit');
     } else if (!_resourcesKnownAndBounded(request.resources)) {
       rejection = _failure('resource_denied');
-    } else if (_initialAdmission(request) is Err<void, StructuredFailure>) {
-      rejection = _failure('admission_denied');
     } else if (_queue.length >= limits.globalQueued ||
         (request.scope.sessionKey != null &&
             _queue
@@ -384,6 +403,8 @@ final class JobScheduler {
         (_children[request.parentJobId]?.length ?? 0) >=
             limits.maximumChildren) {
       rejection = _failure('child_limit');
+    } else if (_sequence == 9007199254740991) {
+      rejection = _failure('sequence_overflow');
     } else {
       try {
         final validated = request.kind.validator(request.input);
@@ -396,12 +417,12 @@ final class JobScheduler {
         rejection = _failure('validator_failure');
       }
     }
+    if (rejection == null &&
+        _initialAdmission(request) is Err<void, StructuredFailure>) {
+      rejection = _failure('admission_denied');
+    }
     if (rejection != null) {
       completer.complete(_failed(request.id, rejection, 0));
-      return completer.future;
-    }
-    if (_sequence == 9007199254740991) {
-      completer.complete(_failed(request.id, _failure('sequence_overflow'), 0));
       return completer.future;
     }
     final controller = CancellationController();
@@ -792,3 +813,21 @@ StructuredFailure _failure(String leaf) => StructuredFailure(
   retryDisposition: RetryDisposition.never,
   message: 'The Job operation could not be completed.',
 );
+
+Map<K, V>? _boundedSchedulerMap<K, V>(Map<K, V> source, int maximum) {
+  try {
+    final captured = <K, V>{};
+    final iterator = source.entries.iterator;
+    while (iterator.moveNext()) {
+      if (captured.length >= maximum) return null;
+      final entry = iterator.current;
+      final key = entry.key;
+      final value = entry.value;
+      if (captured.containsKey(key)) return null;
+      captured[key] = value;
+    }
+    return Map.unmodifiable(captured);
+  } on Object {
+    return null;
+  }
+}

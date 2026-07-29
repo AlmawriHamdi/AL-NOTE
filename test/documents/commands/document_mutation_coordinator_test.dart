@@ -69,8 +69,10 @@ DocumentMutationCoordinator customCoordinator({
   ObjectRegistry? registry,
   int historyCount = 10,
   int historyBytes = 10000,
+  int maximumListeners = 16,
 }) =>
     (DocumentMutationCoordinator.create(
+              maximumListeners: maximumListeners,
               initialRoot: root ?? phase3Notebook(),
               validator: DocumentValidator(registry ?? editableTestRegistry()),
               uuidGenerator: uuidGenerator,
@@ -101,6 +103,26 @@ void expectPersistentStateUnchanged(
 
 void main() {
   group('DocumentMutationCoordinator', () {
+    test('listener ceiling accepts exact capacity, duplicates and removal', () {
+      final coordinator = customCoordinator(
+        uuidGenerator: UuidSequenceGenerator.fromValues([testUuid(999)]),
+        estimator: FixedHistoryCostEstimator(1),
+        maximumListeners: 1,
+      );
+      void listener(CommittedChange _) {}
+      expect(
+        coordinator.addListener(listener),
+        isA<Ok<void, CommandFailure>>(),
+      );
+      expect(
+        coordinator.addListener(listener),
+        isA<Ok<void, CommandFailure>>(),
+      );
+      expect(coordinator.addListener((_) {}), isA<Err<void, CommandFailure>>());
+      coordinator.removeListener(listener);
+      expect(coordinator.addListener((_) {}), isA<Ok<void, CommandFailure>>());
+    });
+
     test('publishes atomically with scoped revisions and one notification', () {
       final coordinator = phase3Coordinator();
       final before = coordinator.snapshot;

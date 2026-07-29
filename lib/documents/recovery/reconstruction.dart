@@ -88,22 +88,51 @@ final class RecoveryReconstructor<T> {
     required RecoveryReconstructionContext context,
     required int maximumCheckpointBytes,
     required int maximumJournalBytes,
+    required int maximumGenerations,
     required int maximumSteps,
     required int maximumResources,
     required CancellationToken cancellationToken,
   }) {
     if (maximumCheckpointBytes < 0 ||
         maximumJournalBytes < 0 ||
+        maximumGenerations < 0 ||
         maximumSteps < 0 ||
-        maximumResources < 0) {
+        maximumResources < 0 ||
+        maximumCheckpointBytes > 9007199254740991 ||
+        maximumJournalBytes > 9007199254740991 ||
+        maximumGenerations > 9007199254740991 ||
+        maximumSteps > 9007199254740991 ||
+        maximumResources > 9007199254740991) {
       return Failed(_failure('invalid_limits'));
     }
-    final candidates = List<RecoveryGenerationRecord>.of(records)
-      ..sort(
-        (left, right) =>
-            right.manifest.generation.compareTo(left.manifest.generation),
-      );
+    final candidates = <RecoveryGenerationRecord>[];
     var steps = 0;
+    try {
+      if ((records is List<RecoveryGenerationRecord> ||
+              records is Set<RecoveryGenerationRecord>) &&
+          records.length > maximumGenerations) {
+        return Failed(_failure('generation_limit'));
+      }
+      final iterator = records.iterator;
+      while (iterator.moveNext()) {
+        if (cancellationToken.isCancelled) {
+          return Cancelled(cancellationToken.reason);
+        }
+        if (candidates.length >= maximumGenerations) {
+          return Failed(_failure('generation_limit'));
+        }
+        if (!_takeStep(++steps, maximumSteps)) {
+          return Failed(_failure('step_limit'));
+        }
+        candidates.add(iterator.current);
+      }
+    } on Object {
+      return Failed(_failure('generation_collection_failed'));
+    }
+    candidates.sort(
+      (left, right) =>
+          right.manifest.generation.compareTo(left.manifest.generation),
+    );
     for (
       var candidateIndex = 0;
       candidateIndex < candidates.length;

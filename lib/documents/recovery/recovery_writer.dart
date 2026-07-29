@@ -51,9 +51,14 @@ enum RecoveryFlushDisposition { completed, delayed, failed }
 
 /// Serializes writes and retains one newest safely coalesced pending boundary.
 final class RecoveryWriter<T> {
-  RecoveryWriter({required this.publisher, required this.maximumRetryAttempts});
+  RecoveryWriter({
+    required this.publisher,
+    required this.maximumRetryAttempts,
+    required this.maximumListeners,
+  });
   final RecoveryBoundaryPublisher<T> publisher;
   final int maximumRetryAttempts;
+  final int maximumListeners;
   final List<RecoveryStatusListener> _listeners = [];
   _PendingBoundary<T>? _pending;
   bool _active = false;
@@ -64,8 +69,15 @@ final class RecoveryWriter<T> {
   RecoveryStatus get status => _status;
 
   /// Adds a listener using snapshot mutation and exception isolation semantics.
-  void addListener(RecoveryStatusListener listener) {
-    if (!_listeners.contains(listener)) _listeners.add(listener);
+  Result<void, StructuredFailure> addListener(RecoveryStatusListener listener) {
+    if (_listeners.contains(listener)) return const Ok(null);
+    if (maximumListeners < 0 ||
+        maximumListeners > 9007199254740991 ||
+        _listeners.length >= maximumListeners) {
+      return Err(_failure('listener_limit'));
+    }
+    _listeners.add(listener);
+    return const Ok(null);
   }
 
   /// Removes a listener from later status notifications.

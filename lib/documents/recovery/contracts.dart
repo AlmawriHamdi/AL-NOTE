@@ -103,19 +103,16 @@ final class RecoveryHash {
     Iterable<int> bytes, {
     required int maximumBytes,
   }) {
-    try {
-      final copied = List<int>.of(bytes);
-      if (maximumBytes <= 0 ||
-          maximumBytes > 64 ||
-          copied.isEmpty ||
-          copied.length > maximumBytes ||
-          copied.any((byte) => byte < 0 || byte > 255)) {
-        return Err(_failure('invalid_hash'));
-      }
-      return Ok(RecoveryHash._(List.unmodifiable(copied)));
-    } on Object {
+    if (maximumBytes <= 0 || maximumBytes > 64) {
       return Err(_failure('invalid_hash'));
     }
+    final captured = _boundedBytes(bytes, maximumBytes, 'invalid_hash');
+    if (captured case Ok<List<int>, StructuredFailure>(value: final copied)) {
+      return copied.isEmpty
+          ? Err(_failure('invalid_hash'))
+          : Ok(RecoveryHash._(copied));
+    }
+    return Err(_failure('invalid_hash'));
   }
 
   @override
@@ -229,10 +226,17 @@ final class RecoveryManifest {
     required int maximumRetainedResources,
   }) {
     try {
-      final resources = List<RetainedResourceEvidence>.of(retainedResources);
+      final captured = _boundedList(
+        retainedResources,
+        maximumRetainedResources,
+        'invalid_manifest_resources',
+      );
+      if (captured is! Ok<List<RetainedResourceEvidence>, StructuredFailure>) {
+        return Err(_failure('invalid_manifest_resources'));
+      }
+      final resources = captured.value;
       final ids = <ResourceIdentity>{};
       if (maximumRetainedResources < 0 ||
-          resources.length > maximumRetainedResources ||
           resources.any((resource) => !ids.add(resource.id))) {
         return Err(_failure('invalid_manifest_resources'));
       }
@@ -266,7 +270,7 @@ final class RecoveryCheckpoint {
     required this.hash,
     required Iterable<RetainedResourceEvidence> resources,
     required this.committed,
-  }) : bytes = _copyBytes(bytes),
+  }) : bytes = List.unmodifiable(bytes),
        resources = List.unmodifiable(resources);
   final RecoveryGeneration generation;
   final List<int> bytes;
@@ -285,14 +289,26 @@ final class RecoveryCheckpoint {
     required int maximumResources,
   }) {
     try {
-      final copied = List<int>.of(bytes);
-      final retained = List<RetainedResourceEvidence>.of(resources);
+      final capturedBytes = _boundedBytes(
+        bytes,
+        maximumBytes,
+        'invalid_checkpoint',
+      );
+      final capturedResources = _boundedList(
+        resources,
+        maximumResources,
+        'invalid_checkpoint',
+      );
+      if (capturedBytes is! Ok<List<int>, StructuredFailure> ||
+          capturedResources
+              is! Ok<List<RetainedResourceEvidence>, StructuredFailure>) {
+        return Err(_failure('invalid_checkpoint'));
+      }
+      final copied = capturedBytes.value;
+      final retained = capturedResources.value;
       final ids = <ResourceIdentity>{};
       if (maximumBytes < 0 ||
           maximumResources < 0 ||
-          copied.length > maximumBytes ||
-          copied.any((byte) => byte < 0 || byte > 255) ||
-          retained.length > maximumResources ||
           retained.any((resource) => !ids.add(resource.id))) {
         return Err(_failure('invalid_checkpoint'));
       }
@@ -324,13 +340,24 @@ final class RecoveryCheckpoint {
     required int maximumResources,
   }) {
     try {
-      final copied = List<int>.of(bytes);
-      final retained = List<RetainedResourceEvidence>.of(resources);
-      if (maximumBytes < 0 ||
-          maximumResources < 0 ||
-          copied.length > maximumBytes ||
-          copied.any((byte) => byte < 0 || byte > 255) ||
-          retained.length > maximumResources) {
+      final capturedBytes = _boundedBytes(
+        bytes,
+        maximumBytes,
+        'invalid_checkpoint',
+      );
+      final capturedResources = _boundedList(
+        resources,
+        maximumResources,
+        'invalid_checkpoint',
+      );
+      if (capturedBytes is! Ok<List<int>, StructuredFailure> ||
+          capturedResources
+              is! Ok<List<RetainedResourceEvidence>, StructuredFailure>) {
+        return Err(_failure('invalid_checkpoint'));
+      }
+      final copied = capturedBytes.value;
+      final retained = capturedResources.value;
+      if (maximumBytes < 0 || maximumResources < 0) {
         return Err(_failure('invalid_checkpoint'));
       }
       return Ok(
@@ -361,7 +388,7 @@ final class RecoveryJournalTransaction {
     required this.resultingHash,
     required Iterable<int> replacementBytes,
     required Iterable<RetainedResourceEvidence> resourceChanges,
-  }) : replacementBytes = _copyBytes(replacementBytes),
+  }) : replacementBytes = List.unmodifiable(replacementBytes),
        resourceChanges = List.unmodifiable(resourceChanges);
   final JournalSequence sequence;
   final RecoveryTransactionId transactionId;
@@ -385,15 +412,27 @@ final class RecoveryJournalTransaction {
     required int maximumResources,
   }) {
     try {
-      final bytes = List<int>.of(replacementBytes);
-      final resources = List<RetainedResourceEvidence>.of(resourceChanges);
+      final capturedBytes = _boundedBytes(
+        replacementBytes,
+        maximumBytes,
+        'invalid_journal_transaction',
+      );
+      final capturedResources = _boundedList(
+        resourceChanges,
+        maximumResources,
+        'invalid_journal_transaction',
+      );
+      if (capturedBytes is! Ok<List<int>, StructuredFailure> ||
+          capturedResources
+              is! Ok<List<RetainedResourceEvidence>, StructuredFailure>) {
+        return Err(_failure('invalid_journal_transaction'));
+      }
+      final bytes = capturedBytes.value;
+      final resources = capturedResources.value;
       final ids = <ResourceIdentity>{};
       if (sequence.value < 1 ||
           maximumBytes < 0 ||
           maximumResources < 0 ||
-          bytes.length > maximumBytes ||
-          bytes.any((byte) => byte < 0 || byte > 255) ||
-          resources.length > maximumResources ||
           resources.any((resource) => !ids.add(resource.id))) {
         return Err(_failure('invalid_journal_transaction'));
       }
@@ -446,7 +485,15 @@ final class RecoveryGenerationRecord {
     required int maximumJournalBytes,
   }) {
     try {
-      final records = List<RecoveryJournalRecord>.of(journal);
+      final captured = _boundedList(
+        journal,
+        maximumTransactions,
+        'incoherent_generation',
+      );
+      if (captured is! Ok<List<RecoveryJournalRecord>, StructuredFailure>) {
+        return Err(_failure('incoherent_generation'));
+      }
+      final records = captured.value;
       final sequences = <int>{};
       final transactions = <RecoveryTransactionId>{};
       var cumulativeBytes = 0;
@@ -456,8 +503,7 @@ final class RecoveryGenerationRecord {
           manifest.checkpointHash != checkpoint.hash ||
           !checkpoint.committed ||
           maximumTransactions < 0 ||
-          maximumJournalBytes < 0 ||
-          records.length > maximumTransactions) {
+          maximumJournalBytes < 0) {
         return Err(_failure('incoherent_generation'));
       }
       for (final record in records) {
@@ -513,11 +559,17 @@ final class RecoveryGenerationRecord {
     required int maximumJournalBytes,
   }) {
     try {
-      final records = List<RecoveryJournalRecord>.of(journal);
+      final captured = _boundedList(
+        journal,
+        maximumTransactions,
+        'incoherent_generation',
+      );
+      if (captured is! Ok<List<RecoveryJournalRecord>, StructuredFailure>) {
+        return Err(_failure('incoherent_generation'));
+      }
+      final records = captured.value;
       var bytes = 0;
-      if (maximumTransactions < 0 ||
-          maximumJournalBytes < 0 ||
-          records.length > maximumTransactions)
+      if (maximumTransactions < 0 || maximumJournalBytes < 0)
         return Err(_failure('incoherent_generation'));
       for (final record in records) {
         final length = record.transaction.replacementBytes.length;
@@ -543,12 +595,20 @@ final class RecoveryGenerationRecord {
 
 /// Bounded enumeration of available Recovery generations.
 final class RecoveryEnumeration {
-  RecoveryEnumeration({
+  RecoveryEnumeration._({
     required Iterable<RecoverySetId> sets,
     required this.truncated,
   }) : sets = List.unmodifiable(sets);
   final List<RecoverySetId> sets;
   final bool truncated;
+
+  static Result<RecoveryEnumeration, StructuredFailure> create({
+    required Iterable<RecoverySetId> sets,
+    required bool truncated,
+    required int maximumSets,
+  }) => _boundedList(sets, maximumSets, 'invalid_enumeration').map(
+    (captured) => RecoveryEnumeration._(sets: captured, truncated: truncated),
+  );
 }
 
 /// Validated quota and durability evidence from Recovery storage.
@@ -596,10 +656,16 @@ final class RecoveryCleanupPlan {
     required RecoveryOwnershipEvidence expectedOwnership,
     required int maximumGenerations,
   }) {
-    final copied = List<RecoveryGeneration>.of(generations);
-    if (maximumGenerations < 0 ||
-        copied.isEmpty ||
-        copied.length > maximumGenerations ||
+    final captured = _boundedList(
+      generations,
+      maximumGenerations,
+      'invalid_cleanup_plan',
+    );
+    if (captured is! Ok<List<RecoveryGeneration>, StructuredFailure>) {
+      return Err(_failure('invalid_cleanup_plan'));
+    }
+    final copied = captured.value;
+    if (copied.isEmpty ||
         copied.map((value) => value.value).toSet().length != copied.length) {
       return Err(_failure('invalid_cleanup_plan'));
     }
@@ -687,14 +753,54 @@ final Map<String, ResourceLimitUnit> alnoteRecoveryLimitRequirements =
       'alnote.recovery.quiet_period_ms': ResourceLimitUnit.milliseconds,
       'alnote.recovery.maximum_dirty_age_ms': ResourceLimitUnit.milliseconds,
       'alnote.recovery.checkpoint_period_ms': ResourceLimitUnit.milliseconds,
+      'alnote.recovery.listeners': ResourceLimitUnit.count,
     });
 
 bool _valid(int value) => value >= 0 && value <= 9007199254740991;
-List<int> _copyBytes(Iterable<int> source) {
-  final result = List<int>.of(source);
-  if (result.any((v) => v < 0 || v > 255))
-    throw ArgumentError('Invalid bytes.');
-  return List.unmodifiable(result);
+Result<List<T>, StructuredFailure> _boundedList<T>(
+  Iterable<T> source,
+  int maximum,
+  String failureLeaf,
+) {
+  if (!_valid(maximum)) return Err(_failure(failureLeaf));
+  try {
+    if ((source is List<T> || source is Set<T>) && source.length > maximum) {
+      return Err(_failure(failureLeaf));
+    }
+    final result = <T>[];
+    final iterator = source.iterator;
+    while (iterator.moveNext()) {
+      if (result.length >= maximum) return Err(_failure(failureLeaf));
+      result.add(iterator.current);
+    }
+    return Ok(List.unmodifiable(result));
+  } on Object {
+    return Err(_failure(failureLeaf));
+  }
+}
+
+Result<List<int>, StructuredFailure> _boundedBytes(
+  Iterable<int> source,
+  int maximum,
+  String failureLeaf,
+) {
+  if (!_valid(maximum)) return Err(_failure(failureLeaf));
+  try {
+    if (source is List<int> && source.length > maximum) {
+      return Err(_failure(failureLeaf));
+    }
+    final result = <int>[];
+    final iterator = source.iterator;
+    while (iterator.moveNext()) {
+      if (result.length >= maximum) return Err(_failure(failureLeaf));
+      final value = iterator.current;
+      if (value < 0 || value > 255) return Err(_failure(failureLeaf));
+      result.add(value);
+    }
+    return Ok(List.unmodifiable(result));
+  } on Object {
+    return Err(_failure(failureLeaf));
+  }
 }
 
 bool _bytesEqual(List<int> a, List<int> b) {

@@ -115,13 +115,25 @@ final class CanonicalSourceRegistry {
   final Map<SessionId, _CanonicalSourceAccess> _accesses = {};
   _CanonicalSourceApplicationAccess? _applicationAccess;
 
-  Result<ApplicationState, StructuredFailure> _createApplicationState() {
+  Result<ApplicationState, StructuredFailure> _createApplicationState({
+    required int maximumListeners,
+    required int maximumLifecycleListeners,
+  }) {
+    if (!_webSafeNonnegative(maximumListeners) ||
+        !_webSafeNonnegative(maximumLifecycleListeners)) {
+      return Err(_sessionFailure('invalid_application_limits'));
+    }
     if (_applicationAccess != null) {
       return Err(_sessionFailure('application_access_claimed'));
     }
     try {
       final access = _CanonicalSourceApplicationAccess(_owner);
-      final application = ApplicationState._(this, access);
+      final application = ApplicationState._(
+        this,
+        access,
+        maximumListeners,
+        maximumLifecycleListeners,
+      );
       _applicationAccess = access;
       return Ok(application);
     } on Object {
@@ -271,7 +283,7 @@ final class CanonicalSourceRegistry {
 
 /// Complete immutable snapshot of one logical Session.
 final class SessionSnapshot {
-  SessionSnapshot({
+  SessionSnapshot._({
     required this.id,
     required this.lifecycle,
     required this.readiness,
@@ -526,6 +538,11 @@ final Map<String, ResourceLimitUnit> alnoteSessionLimitRequirements =
       'alnote.sessions.views_per_session': ResourceLimitUnit.count,
       'alnote.sessions.restoration_entries': ResourceLimitUnit.count,
       'alnote.sessions.concurrent_operations': ResourceLimitUnit.count,
+      'alnote.sessions.publication_queue': ResourceLimitUnit.count,
+      'alnote.sessions.listeners': ResourceLimitUnit.count,
+      'alnote.sessions.application_listeners': ResourceLimitUnit.count,
+      'alnote.sessions.lifecycle_listeners': ResourceLimitUnit.count,
+      'alnote.sessions.document_listeners': ResourceLimitUnit.count,
     });
 
 StructuredFailure _sessionFailure(String leaf) => StructuredFailure(

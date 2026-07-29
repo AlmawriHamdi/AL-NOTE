@@ -1,12 +1,150 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:al_note/app/settings.dart';
 import 'package:al_note/core/primitives.dart';
 import 'package:al_note/documents/recovery.dart';
 import 'package:al_note/documents/sessions.dart';
 import 'package:al_note/platform/platform.dart';
+
+/// Collection doubles whose reported lengths are deliberately untrustworthy.
+final class HostileSet<E> extends SetBase<E> {
+  HostileSet(this.values, {required this.reportedLength});
+  final Iterable<E> values;
+  final int reportedLength;
+  @override
+  int get length => reportedLength;
+  @override
+  Iterator<E> get iterator => values.iterator;
+  @override
+  bool contains(Object? element) => values.contains(element);
+  @override
+  E? lookup(Object? element) {
+    for (final value in values) {
+      if (value == element) return value;
+    }
+    return null;
+  }
+
+  @override
+  bool add(E value) => throw UnsupportedError('hostile');
+  @override
+  bool remove(Object? value) => throw UnsupportedError('hostile');
+  @override
+  void clear() => throw UnsupportedError('hostile');
+  @override
+  Set<E> toSet() => throw UnsupportedError('hostile');
+}
+
+final class HostileList<E> extends ListBase<E> {
+  HostileList(this.values, {required this.reportedLength});
+  final Iterable<E> values;
+  final int reportedLength;
+  @override
+  int get length => reportedLength;
+  @override
+  set length(int value) => throw UnsupportedError('hostile');
+  @override
+  E operator [](int index) => throw UnsupportedError('hostile');
+  @override
+  void operator []=(int index, E value) => throw UnsupportedError('hostile');
+  @override
+  Iterator<E> get iterator => values.iterator;
+}
+
+final class HostileMap<K, V> extends MapBase<K, V> {
+  HostileMap(this.sourceEntries, {required this.reportedLength});
+  final Iterable<MapEntry<K, V>> sourceEntries;
+  final int reportedLength;
+  @override
+  int get length => reportedLength;
+  @override
+  Iterable<MapEntry<K, V>> get entries => sourceEntries;
+  @override
+  Iterable<K> get keys => sourceEntries.map((entry) => entry.key);
+  @override
+  V? operator [](Object? key) => throw UnsupportedError('hostile');
+  @override
+  void operator []=(K key, V value) => throw UnsupportedError('hostile');
+  @override
+  V? remove(Object? key) => throw UnsupportedError('hostile');
+  @override
+  void clear() => throw UnsupportedError('hostile');
+}
+
+/// Uses [MapBase.entries] so key-current and value-lookup failures are exposed.
+final class GetterThrowingMap<K, V> extends MapBase<K, V> {
+  GetterThrowingMap.key(this.key) : throwKey = true;
+  GetterThrowingMap.value(this.key) : throwKey = false;
+  final K key;
+  final bool throwKey;
+  @override
+  Iterable<K> get keys => throwKey ? CurrentThrowingValues<K>() : [key];
+  @override
+  V? operator [](Object? key) => throw StateError('secret map value');
+  @override
+  void operator []=(K key, V value) => throw UnsupportedError('hostile');
+  @override
+  V? remove(Object? key) => throw UnsupportedError('hostile');
+  @override
+  void clear() => throw UnsupportedError('hostile');
+}
+
+final class InfiniteValues<E> extends Iterable<E> {
+  InfiniteValues(this.value);
+  final E value;
+  int moveNextCalls = 0;
+  int currentReads = 0;
+  @override
+  Iterator<E> get iterator => _InfiniteValuesIterator(this);
+}
+
+final class _InfiniteValuesIterator<E> implements Iterator<E> {
+  _InfiniteValuesIterator(this.owner);
+  final InfiniteValues<E> owner;
+  @override
+  E get current {
+    owner.currentReads += 1;
+    return owner.value;
+  }
+
+  @override
+  bool moveNext() {
+    owner.moveNextCalls += 1;
+    return true;
+  }
+}
+
+final class ThrowingValues<E> extends Iterable<E> {
+  @override
+  Iterator<E> get iterator => _ThrowingValuesIterator<E>();
+}
+
+final class CurrentThrowingValues<E> extends Iterable<E> {
+  @override
+  Iterator<E> get iterator => _CurrentThrowingValuesIterator<E>();
+}
+
+final class _CurrentThrowingValuesIterator<E> implements Iterator<E> {
+  bool _moved = false;
+  @override
+  E get current => throw StateError('secret collection current');
+  @override
+  bool moveNext() {
+    if (_moved) return false;
+    _moved = true;
+    return true;
+  }
+}
+
+final class _ThrowingValuesIterator<E> implements Iterator<E> {
+  @override
+  E get current => throw StateError('secret collection value');
+  @override
+  bool moveNext() => throw StateError('secret collection iterator');
+}
 
 final class FakeSessionPublisher implements SessionPublisher {
   final List<SessionPublicationRequest> requests = [];
@@ -41,19 +179,44 @@ final class InMemorySettingsAdapter implements SettingsPersistenceAdapter {
   SettingsPersistenceSnapshot current;
   TestAdapterFault fault;
   bool returnUnexpectedCommitRevision = false;
+  Completer<void>? loadGate;
+  Completer<void>? commitGate;
+  int loadInvocations = 0;
+  int commitInvocations = 0;
   @override
   Future<OperationOutcome<SettingsPersistenceSnapshot, StructuredFailure>>
   load({
     required int maximumRecords,
+    required int maximumUnknownRecords,
+    required int maximumUnknownFieldsPerRecord,
     required int maximumValueBytes,
     required CancellationToken cancellationToken,
   }) async {
+    loadInvocations += 1;
+    if (loadGate != null) await loadGate!.future;
     if (fault == TestAdapterFault.exception)
       throw StateError('sensitive adapter value');
     if (cancellationToken.isCancelled || fault == TestAdapterFault.cancellation)
       return Cancelled(cancellationToken.reason);
     if (fault == TestAdapterFault.failure ||
-        current.records.length > maximumRecords)
+        current.records.length > maximumRecords ||
+        current.unknownRecords.length > maximumUnknownRecords ||
+        current.records.any(
+          (record) =>
+              record.valueBytes.length > maximumValueBytes ||
+              record.valueBytes.any((byte) => byte < 0 || byte > 255) ||
+              record.unknownFields.length > maximumUnknownFieldsPerRecord ||
+              record.unknownFields.values.any(
+                (bytes) =>
+                    bytes.length > maximumValueBytes ||
+                    bytes.any((byte) => byte < 0 || byte > 255),
+              ),
+        ) ||
+        current.unknownRecords.any(
+          (record) =>
+              record.bytes.length > maximumValueBytes ||
+              record.bytes.any((byte) => byte < 0 || byte > 255),
+        ))
       return Failed(testFailure('settings_load'));
     return Completed(current);
   }
@@ -65,6 +228,8 @@ final class InMemorySettingsAdapter implements SettingsPersistenceAdapter {
     required List<UnknownSettingsRecord> preservedUnknownRecords,
     required CancellationToken cancellationToken,
   }) async {
+    commitInvocations += 1;
+    if (commitGate != null) await commitGate!.future;
     if (fault == TestAdapterFault.exception)
       throw StateError('sensitive adapter value');
     if (cancellationToken.isCancelled || fault == TestAdapterFault.cancellation)
@@ -79,6 +244,8 @@ final class InMemorySettingsAdapter implements SettingsPersistenceAdapter {
     );
     current =
         (SettingsPersistenceSnapshot.create(
+                  maximumUnknownRecords: 16,
+                  maximumUnknownFieldsPerRecord: 16,
                   storeRevision: revision,
                   records: records,
                   unknownRecords: preservedUnknownRecords,
@@ -174,12 +341,16 @@ final class InMemoryRecoveryStore implements RecoveryStore {
     if (cancellationToken.isCancelled || fault == TestAdapterFault.cancellation)
       return Cancelled(cancellationToken.reason);
     final values = records.keys.take(maximumResults).toList();
-    return Completed(
-      RecoveryEnumeration(
-        sets: values,
-        truncated: records.length > values.length,
-      ),
+    final captured = RecoveryEnumeration.create(
+      sets: values,
+      truncated: records.length > values.length,
+      maximumSets: maximumResults,
     );
+    return captured is Ok<RecoveryEnumeration, StructuredFailure>
+        ? Completed(captured.value)
+        : Failed(
+            (captured as Err<RecoveryEnumeration, StructuredFailure>).error,
+          );
   }
 
   @override

@@ -160,13 +160,32 @@ final class RegisteredSettingDefinition<T> {
 
   static Result<RegisteredSettingDefinition<T>, StructuredFailure> _capture<T>(
     SettingDefinitionSource<T> source,
+    int maximumPersistentScopes,
+    int maximumMigrations,
+    int maximumResourceLimits,
   ) {
+    if (maximumPersistentScopes < 0 ||
+        maximumMigrations < 0 ||
+        maximumResourceLimits < 0 ||
+        maximumPersistentScopes > 9007199254740991 ||
+        maximumMigrations > 9007199254740991 ||
+        maximumResourceLimits > 9007199254740991) {
+      return Err(_failure('metadata_limit'));
+    }
     try {
       final key = source.key;
       final codec = source.codec;
       final schemaVersion = source.schemaVersion;
       final defaultProvider = source.defaultProvider;
-      final scopes = Set<SettingScope>.of(source.permittedPersistentScopes);
+      final sourceScopes = source.permittedPersistentScopes;
+      final capturedScopes = _boundedDefinitionSet(
+        sourceScopes,
+        maximumPersistentScopes,
+      );
+      if (capturedScopes == null) {
+        return Err(_failure('metadata_limit'));
+      }
+      final scopes = capturedScopes;
       final validator = source.validator;
       final normalizer = source.normalizer;
       final mandatoryConstraints = source.mandatoryConstraints;
@@ -177,8 +196,19 @@ final class RegisteredSettingDefinition<T> {
       final restart = source.restartRequirement;
       final deprecation = source.deprecationState;
       final owner = source.owningDomain;
-      final migrations = List<SettingMigrationStep<T>>.of(source.migrations);
-      final limits = Map<String, int>.of(source.requiredResourceLimits);
+      final sourceMigrations = source.migrations;
+      final migrations = _boundedDefinitionList(
+        sourceMigrations,
+        maximumMigrations,
+      );
+      if (migrations == null) {
+        return Err(_failure('metadata_limit'));
+      }
+      final sourceLimits = source.requiredResourceLimits;
+      final limits = _boundedDefinitionMap(sourceLimits, maximumResourceLimits);
+      if (limits == null) {
+        return Err(_failure('metadata_limit'));
+      }
       if (schemaVersion <= 0 ||
           schemaVersion > 9007199254740991 ||
           codec.identity.isEmpty ||
@@ -273,11 +303,12 @@ final class RegisteredSettingDefinition<T> {
       if (encoded is Err<List<int>, StructuredFailure>) {
         return Err(_failure('encoding_failed'));
       }
-      final bytes = List<int>.of(
-        (encoded as Ok<List<int>, StructuredFailure>).value,
-      );
-      if (bytes.length > maximumBytes ||
-          bytes.any((byte) => byte < 0 || byte > 255)) {
+      final sourceBytes = (encoded as Ok<List<int>, StructuredFailure>).value;
+      if (sourceBytes.length > maximumBytes) {
+        return Err(_failure('encoding_failed'));
+      }
+      final bytes = List<int>.of(sourceBytes);
+      if (bytes.any((byte) => byte < 0 || byte > 255)) {
         return Err(_failure('encoding_failed'));
       }
       return Ok(List.unmodifiable(bytes));
@@ -291,12 +322,14 @@ final class RegisteredSettingDefinition<T> {
     List<int> bytes, {
     required int maximumBytes,
   }) {
-    if (maximumBytes < 0 ||
-        bytes.length > maximumBytes ||
-        bytes.any((byte) => byte < 0 || byte > 255)) {
+    if (maximumBytes < 0 || maximumBytes > 9007199254740991) {
       return Err(_failure('decoding_failed'));
     }
     try {
+      if (bytes.length > maximumBytes ||
+          bytes.any((byte) => byte < 0 || byte > 255)) {
+        return Err(_failure('decoding_failed'));
+      }
       final decoded = codec.decode(
         List.unmodifiable(List<int>.of(bytes)),
         maximumBytes: maximumBytes,
@@ -339,6 +372,14 @@ final class RegisteredSettingDefinition<T> {
 
 /// Instance-owned registry that preserves typed definition handles.
 final class SettingRegistry {
+  SettingRegistry({
+    required this.maximumPersistentScopes,
+    required this.maximumMigrations,
+    required this.maximumResourceLimits,
+  });
+  final int maximumPersistentScopes;
+  final int maximumMigrations;
+  final int maximumResourceLimits;
   final Map<SettingKey, RegisteredSettingDefinition<Object?>> _definitions = {};
 
   /// Number of immutable registered definitions.
@@ -349,7 +390,12 @@ final class SettingRegistry {
   Result<void, StructuredFailure> register<T>(
     SettingDefinitionSource<T> source,
   ) {
-    final captured = RegisteredSettingDefinition._capture(source);
+    final captured = RegisteredSettingDefinition._capture(
+      source,
+      maximumPersistentScopes,
+      maximumMigrations,
+      maximumResourceLimits,
+    );
     if (captured is Err<RegisteredSettingDefinition<T>, StructuredFailure>)
       return Err(captured.error);
     final value =
@@ -387,12 +433,17 @@ abstract interface class SettingDefinitionVisitor<R> {
 final Map<String, ResourceLimitUnit> alnoteSettingsLimitRequirements =
     UnmodifiableMapView({
       'alnote.settings.record_count': ResourceLimitUnit.count,
+      'alnote.settings.unknown_record_count': ResourceLimitUnit.count,
+      'alnote.settings.unknown_field_entries': ResourceLimitUnit.count,
       'alnote.settings.key_length': ResourceLimitUnit.count,
       'alnote.settings.value_bytes': ResourceLimitUnit.bytes,
       'alnote.settings.nested_depth': ResourceLimitUnit.depth,
       'alnote.settings.migration_steps': ResourceLimitUnit.count,
       'alnote.settings.preview_overrides': ResourceLimitUnit.count,
+      'alnote.settings.definition_scopes': ResourceLimitUnit.count,
+      'alnote.settings.definition_resource_limits': ResourceLimitUnit.count,
       'alnote.settings.change_event_batch': ResourceLimitUnit.count,
+      'alnote.settings.listeners': ResourceLimitUnit.count,
     });
 
 StructuredFailure _failure(String leaf) => StructuredFailure(
@@ -401,3 +452,45 @@ StructuredFailure _failure(String leaf) => StructuredFailure(
   retryDisposition: RetryDisposition.never,
   message: 'The Setting definition or value is invalid.',
 );
+
+List<T>? _boundedDefinitionList<T>(Iterable<T> source, int maximum) {
+  try {
+    final captured = <T>[];
+    final iterator = source.iterator;
+    while (iterator.moveNext()) {
+      if (captured.length >= maximum) return null;
+      captured.add(iterator.current);
+    }
+    return List.unmodifiable(captured);
+  } on Object {
+    return null;
+  }
+}
+
+Set<T>? _boundedDefinitionSet<T>(Iterable<T> source, int maximum) {
+  final captured = _boundedDefinitionList(source, maximum);
+  if (captured == null) return null;
+  final values = <T>{};
+  for (final value in captured) {
+    if (!values.add(value)) return null;
+  }
+  return Set.unmodifiable(values);
+}
+
+Map<K, V>? _boundedDefinitionMap<K, V>(Map<K, V> source, int maximum) {
+  try {
+    final captured = <K, V>{};
+    final iterator = source.entries.iterator;
+    while (iterator.moveNext()) {
+      if (captured.length >= maximum) return null;
+      final entry = iterator.current;
+      final key = entry.key;
+      final value = entry.value;
+      if (captured.containsKey(key)) return null;
+      captured[key] = value;
+    }
+    return Map.unmodifiable(captured);
+  } on Object {
+    return null;
+  }
+}
