@@ -64,7 +64,7 @@ final class DocumentCoordinatorSnapshot {
   final ContentIdentity currentContentIdentity;
 
   /// Last successfully acknowledged saved identity.
-  final ContentIdentity savedContentIdentity;
+  final ContentIdentity? savedContentIdentity;
 
   /// Whether one valid Undo entry is reachable.
   final bool canUndo;
@@ -79,6 +79,15 @@ final class DocumentCoordinatorSnapshot {
   bool get isDirty => currentContentIdentity != savedContentIdentity;
 }
 
+/// Whether the initial coordinator root has a canonical saved baseline.
+enum InitialDocumentSaveState {
+  /// The initial root was loaded from or acknowledged by canonical storage.
+  saved,
+
+  /// The initial root has never been canonically saved, including Recovery.
+  unsaved,
+}
+
 /// The sole document-scoped gateway for Phase 3 persistent mutations.
 final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   DocumentMutationCoordinator._({
@@ -88,6 +97,8 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     required HistoryLimits historyLimits,
     required HistoryRetainedCostEstimator retainedCostEstimator,
     required ContentIdentity initialIdentity,
+    required InitialDocumentSaveState initialSaveState,
+    required this.maximumListeners,
   }) : _root = root,
        _validator = validator,
        _uuidGenerator = uuidGenerator,
@@ -95,7 +106,10 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
        _retainedCostEstimator = retainedCostEstimator,
        _revisions = DocumentRevisionSnapshot.initial(root),
        _currentContentIdentity = initialIdentity,
-       _savedContentIdentity = initialIdentity,
+       _savedContentIdentity =
+           initialSaveState == InitialDocumentSaveState.saved
+           ? initialIdentity
+           : null,
        _issuedContentIdentities = <ContentIdentity>{initialIdentity};
 
   /// Creates a coordinator after validating the baseline and generating its
@@ -106,7 +120,14 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     required UuidGenerator uuidGenerator,
     required HistoryLimits historyLimits,
     required HistoryRetainedCostEstimator retainedCostEstimator,
+    required int maximumListeners,
+    InitialDocumentSaveState initialSaveState = InitialDocumentSaveState.saved,
   }) {
+    if (maximumListeners < 0 || maximumListeners > Revision.maximumValue) {
+      return Err(
+        _failure('invalid_listener_limit', FailureCategory.validation),
+      );
+    }
     if (!validator.validate(initialRoot).isValid) {
       return Err(
         _failure('invalid_initial_document', FailureCategory.validation),
@@ -122,6 +143,8 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
             historyLimits: historyLimits,
             retainedCostEstimator: retainedCostEstimator,
             initialIdentity: ContentIdentity(uuid),
+            initialSaveState: initialSaveState,
+            maximumListeners: maximumListeners,
           ),
         ),
         onErr: (_) => Err(
@@ -145,10 +168,11 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   final UuidGenerator _uuidGenerator;
   final HistoryLimits _historyLimits;
   final HistoryRetainedCostEstimator _retainedCostEstimator;
+  final int maximumListeners;
   DocumentRoot _root;
   DocumentRevisionSnapshot _revisions;
   ContentIdentity _currentContentIdentity;
-  ContentIdentity _savedContentIdentity;
+  ContentIdentity? _savedContentIdentity;
   final Set<ContentIdentity> _issuedContentIdentities;
   final List<_HistoryEntry> _history = [];
   int _historyCursor = 0;
@@ -178,8 +202,13 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
 
   /// Adds [listener] once. Listener mutation during notification affects only
   /// later notifications.
-  void addListener(CommittedChangeListener listener) {
-    if (!_listeners.contains(listener)) _listeners.add(listener);
+  Result<void, CommandFailure> addListener(CommittedChangeListener listener) {
+    if (_listeners.contains(listener)) return const Ok(null);
+    if (_listeners.length >= maximumListeners) {
+      return Err(_failure('listener_limit', FailureCategory.state));
+    }
+    _listeners.add(listener);
+    return const Ok(null);
   }
 
   /// Removes [listener] for later notifications.
