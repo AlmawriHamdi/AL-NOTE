@@ -50,9 +50,7 @@ final class ExternalFingerprint {
     required int maximumDigestBytes,
   }) {
     try {
-      if (maximumDigestBytes <= 0 ||
-          maximumDigestBytes > 64 ||
-          (digest is List<int> && digest.length > maximumDigestBytes)) {
+      if (maximumDigestBytes <= 0 || maximumDigestBytes > 64) {
         return Err(_failure('invalid_fingerprint'));
       }
       final bytes = <int>[];

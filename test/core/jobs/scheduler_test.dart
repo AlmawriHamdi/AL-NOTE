@@ -591,6 +591,114 @@ void main() {
     },
   );
 
+  test('validation precedes clock and expiry precedes admission', () async {
+    final expiry = DateTime.utc(2027);
+    var foreignValidatorCalls = 0;
+    final ownerRegistry = JobRegistry(maximumSchedulingClasses: 1);
+    final foreignRegistry = JobRegistry(maximumSchedulingClasses: 1);
+    final foreignKind = ok(
+      foreignRegistry.register<int, int, String>(
+        _ValidationKind('alnote.jobs.foreign_preclock', (_) {
+          foreignValidatorCalls += 1;
+          throw StateError('secret foreign validator');
+        }),
+      ),
+    );
+    final foreignClock = _CountingClock(DateTime.utc(2026));
+    final foreignAdmission = _AdmissionSpy();
+    expect(
+      (await _schedulerWithClockAdmission(
+        ownerRegistry,
+        foreignAdmission,
+        foreignClock,
+      ).submit(_requestWithId(foreignKind, 969, expiresAtUtc: expiry))).outcome,
+      JobOutcome.failed,
+    );
+    expect(foreignValidatorCalls, 0);
+    expect(foreignClock.calls, 0);
+    expect(foreignAdmission.calls, 0);
+
+    for (final validation in <JobInputValidator<int>>[
+      (_) => Err(_testFailure('invalid secret input 731')),
+      (_) => throw StateError('secret validator text 731'),
+    ]) {
+      final clock = _CountingClock(DateTime.utc(2026));
+      final admission = _AdmissionSpy();
+      final registry = JobRegistry(maximumSchedulingClasses: 1);
+      final kind = ok(
+        registry.register<int, int, String>(
+          _ValidationKind('alnote.jobs.preclock_${clock.hashCode}', validation),
+        ),
+      );
+      final scheduler = _schedulerWithClockAdmission(
+        registry,
+        admission,
+        clock,
+      );
+      final result = await scheduler.submit(
+        _requestWithId(kind, 970, expiresAtUtc: expiry),
+      );
+      expect(result.outcome, JobOutcome.failed);
+      expect(result.failure.toString(), isNot(contains('731')));
+      expect(result.failure.toString(), isNot(contains('secret')));
+      expect(clock.calls, 0);
+      expect(admission.calls, 0);
+    }
+
+    final validClock = _CountingClock(DateTime.utc(2026));
+    late _AdmissionSpy validAdmission;
+    validAdmission = _AdmissionSpy(
+      onValidate: () {
+        if (validAdmission.calls == 1) expect(validClock.calls, 1);
+      },
+    );
+    final validRegistry = JobRegistry(maximumSchedulingClasses: 1);
+    var normalizedRunInput = -1;
+    final validKind = ok(
+      validRegistry.register<int, int, String>(
+        _ValidationKind(
+          'alnote.jobs.preclock_valid',
+          (value) => Ok(value + 4),
+          onRun: (value) => normalizedRunInput = value,
+        ),
+      ),
+    );
+    final validScheduler = _schedulerWithClockAdmission(
+      validRegistry,
+      validAdmission,
+      validClock,
+    );
+    final validResult = await validScheduler.submit(
+      _requestWithId(validKind, 971, expiresAtUtc: expiry),
+    );
+    expect(validResult.outcome, JobOutcome.completed);
+    expect(normalizedRunInput, 7);
+
+    final expiredClock = _CountingClock(DateTime.utc(2028));
+    final expiredAdmission = _AdmissionSpy();
+    final expiredRegistry = JobRegistry(maximumSchedulingClasses: 1);
+    final expiredKind = ok(
+      expiredRegistry.register<int, int, String>(
+        _ValidationKind('alnote.jobs.preclock_expired', Ok.new),
+      ),
+    );
+    final expiredScheduler = _schedulerWithClockAdmission(
+      expiredRegistry,
+      expiredAdmission,
+      expiredClock,
+    );
+    final expiredResult = await expiredScheduler.submit(
+      _requestWithId(expiredKind, 972, expiresAtUtc: expiry),
+    );
+    expect(expiredResult.outcome, JobOutcome.failed);
+    expect(expiredClock.calls, 1);
+    expect(expiredAdmission.calls, 0);
+    expect(
+      (await expiredScheduler.submit(_requestWithId(expiredKind, 972))).outcome,
+      JobOutcome.completed,
+    );
+  });
+
   test(
     'denied admission publishes no normalized input and reserves no Job ID',
     () async {
@@ -636,6 +744,56 @@ void main() {
     );
     expect(source.moveNextCalls, 3);
     expect(source.currentReads, 2);
+
+    for (final exact in <Iterable<String>>[
+      HostileList(const [
+        'alnote.platform.one',
+        'alnote.platform.two',
+      ], reportedLength: 0),
+      HostileList(const [
+        'alnote.platform.one',
+        'alnote.platform.two',
+      ], reportedLength: 999),
+      ThrowingLengthList(const ['alnote.platform.one', 'alnote.platform.two']),
+    ]) {
+      expect(
+        JobAdmissionEvidence.create(
+          capabilities: exact,
+          securityGeneration: 0,
+          maximumCapabilities: 2,
+        ),
+        isA<Ok<JobAdmissionEvidence, StructuredFailure>>(),
+      );
+    }
+    for (final hostile in <Iterable<String>>[
+      IteratorCreationThrowingValues(),
+      ThrowingValues(),
+      CurrentThrowingValues(),
+    ]) {
+      expect(
+        JobAdmissionEvidence.create(
+          capabilities: hostile,
+          securityGeneration: 0,
+          maximumCapabilities: 2,
+        ),
+        isA<Err<JobAdmissionEvidence, StructuredFailure>>(),
+      );
+    }
+    final finite = TrackingValues([
+      'alnote.platform.one',
+      'alnote.platform.two',
+      'tail must not be read',
+    ]);
+    expect(
+      JobAdmissionEvidence.create(
+        capabilities: HostileList(finite, reportedLength: 0),
+        securityGeneration: 0,
+        maximumCapabilities: 2,
+      ),
+      isA<Err<JobAdmissionEvidence, StructuredFailure>>(),
+    );
+    expect(finite.moveNextCalls, 3);
+    expect(finite.currentReads, 2);
   });
 
   test('Job maps and scheduling sets distrust reported collection lengths', () {
@@ -875,14 +1033,17 @@ final class _Admission implements JobAdmissionController {
 }
 
 final class _AdmissionSpy implements JobAdmissionController {
+  _AdmissionSpy({this.onValidate});
   int calls = 0;
   bool allow = true;
+  final void Function()? onValidate;
   @override
   Result<void, StructuredFailure> validate({
     required List<String> requiredCapabilities,
     required JobAdmissionEvidence evidence,
   }) {
     calls += 1;
+    onValidate?.call();
     return allow ? const Ok(null) : Err(_testFailure('denied'));
   }
 }
@@ -931,6 +1092,17 @@ final class _ThrowClock implements Clock {
   DateTime nowUtc() => throw StateError('secret');
 }
 
+final class _CountingClock implements Clock {
+  _CountingClock(this.value);
+  final DateTime value;
+  int calls = 0;
+  @override
+  DateTime nowUtc() {
+    calls += 1;
+    return value;
+  }
+}
+
 StructuredFailure _testFailure(String leaf) => StructuredFailure(
   code: 'test.jobs.$leaf',
   category: FailureCategory.validation,
@@ -967,6 +1139,33 @@ JobScheduler _schedulerWithAdmission(
 ) => ok(
   JobScheduler.create(
     clock: ControllableClock(DateTime.utc(2026)),
+    registry: registry,
+    admissionController: admission,
+    limits: ok(
+      JobSchedulerLimits.create(
+        maximumResourceCategories: 1,
+        maximumProgressListeners: 1,
+        globalQueued: 4,
+        globalRunning: 1,
+        perSessionQueued: 4,
+        perSessionRunning: 1,
+        reservedPersistenceSlots: 0,
+        maximumScopeDepth: 4,
+        maximumChildren: 1,
+        maximumRetryAttempts: 0,
+        resourceUnits: const {'cpu': 1},
+      ),
+    ),
+  ),
+);
+
+JobScheduler _schedulerWithClockAdmission(
+  JobRegistry registry,
+  JobAdmissionController admission,
+  Clock clock,
+) => ok(
+  JobScheduler.create(
+    clock: clock,
     registry: registry,
     admissionController: admission,
     limits: ok(

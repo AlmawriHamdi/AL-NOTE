@@ -409,9 +409,6 @@ abstract interface class PrivateStorage {
 List<T>? _boundedIterable<T>(Iterable<T> source, int maximum) {
   if (maximum < 0 || maximum > 9007199254740991) return null;
   try {
-    if ((source is List<T> || source is Set<T>) && source.length > maximum) {
-      return null;
-    }
     final copied = <T>[];
     final iterator = source.iterator;
     while (iterator.moveNext()) {

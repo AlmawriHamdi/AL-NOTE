@@ -711,6 +711,49 @@ void main() {
     expect(bytes.moveNextCalls, 3);
     expect(bytes.currentReads, 2);
 
+    for (final exact in <Iterable<int>>[
+      HostileList(const [1, 2], reportedLength: 0),
+      HostileList(const [1, 2], reportedLength: 999),
+      ThrowingLengthList(const [1, 2]),
+    ]) {
+      expect(
+        UnknownSettingsRecord.create(
+          identity: 'future',
+          bytes: exact,
+          supported: false,
+          maximumBytes: 2,
+        ),
+        isA<Ok<UnknownSettingsRecord, StructuredFailure>>(),
+      );
+    }
+    for (final hostile in <Iterable<int>>[
+      IteratorCreationThrowingValues(),
+      ThrowingValues(),
+      CurrentThrowingValues(),
+    ]) {
+      expect(
+        UnknownSettingsRecord.create(
+          identity: 'future',
+          bytes: hostile,
+          supported: false,
+          maximumBytes: 2,
+        ),
+        isA<Err<UnknownSettingsRecord, StructuredFailure>>(),
+      );
+    }
+    final finite = TrackingValues([1, 2, 222]);
+    expect(
+      UnknownSettingsRecord.create(
+        identity: 'future',
+        bytes: HostileList(finite, reportedLength: 0),
+        supported: false,
+        maximumBytes: 2,
+      ),
+      isA<Err<UnknownSettingsRecord, StructuredFailure>>(),
+    );
+    expect(finite.moveNextCalls, 3);
+    expect(finite.currentReads, 2);
+
     final zero = (Revision.create(0) as Ok<Revision, StructuredFailure>).value;
     final operation = ResetSettingValue(
       key: _IntDefinition().key,
@@ -728,6 +771,89 @@ void main() {
     expect(operations.moveNextCalls, 2);
     expect(operations.currentReads, 1);
   });
+
+  test(
+    'Settings codec bytes are captured without consulting hostile length',
+    () {
+      final codec = _BoundaryCodec();
+      final registry = SettingRegistry(
+        maximumPersistentScopes: 2,
+        maximumMigrations: 0,
+        maximumResourceLimits: 1,
+      )..register(_CodecDefinition(codec));
+      final definition = registry.definition<int>(_IntDefinition().key)!;
+
+      codec.encoded = HostileList(const [7], reportedLength: 99);
+      final encoded = definition.encodeValue(7, maximumBytes: 1);
+      expect(encoded, isA<Ok<List<int>, StructuredFailure>>());
+      final publicBytes = (encoded as Ok<List<int>, StructuredFailure>).value;
+      expect(publicBytes, [7]);
+      expect(() => publicBytes.add(8), throwsUnsupportedError);
+
+      codec.encoded = ThrowingLengthList(const [7]);
+      expect(
+        definition.encodeValue(7, maximumBytes: 1),
+        isA<Ok<List<int>, StructuredFailure>>(),
+      );
+      expect(
+        definition.decodeValue(ThrowingLengthList(const [7]), maximumBytes: 1),
+        isA<Ok<int, StructuredFailure>>(),
+      );
+      expect(codec.decodeSawImmutableInput, isTrue);
+
+      final infiniteEncode = InfiniteValues(7);
+      codec.encoded = HostileList(infiniteEncode, reportedLength: 0);
+      expect(
+        definition.encodeValue(7, maximumBytes: 1),
+        isA<Err<List<int>, StructuredFailure>>(),
+      );
+      expect(infiniteEncode.moveNextCalls, 2);
+      expect(infiniteEncode.currentReads, 1);
+
+      final finiteEncode = TrackingValues([7, 222]);
+      codec.encoded = HostileList(finiteEncode, reportedLength: 0);
+      expect(
+        definition.encodeValue(7, maximumBytes: 1),
+        isA<Err<List<int>, StructuredFailure>>(),
+      );
+      expect(finiteEncode.moveNextCalls, 2);
+      expect(finiteEncode.currentReads, 1);
+
+      for (final hostile in <List<int>>[
+        HostileList(IteratorCreationThrowingValues(), reportedLength: 0),
+        HostileList(ThrowingValues(), reportedLength: 0),
+        HostileList(CurrentThrowingValues(), reportedLength: 0),
+        HostileList(const [256], reportedLength: 0),
+      ]) {
+        codec.encoded = hostile;
+        final failure = definition.encodeValue(7, maximumBytes: 1);
+        expect(failure, isA<Err<List<int>, StructuredFailure>>());
+        expect(failure.toString(), isNot(contains('secret')));
+      }
+
+      final infiniteDecode = InfiniteValues(7);
+      expect(
+        definition.decodeValue(
+          HostileList(infiniteDecode, reportedLength: 0),
+          maximumBytes: 1,
+        ),
+        isA<Err<int, StructuredFailure>>(),
+      );
+      expect(infiniteDecode.moveNextCalls, 2);
+      expect(infiniteDecode.currentReads, 1);
+
+      for (final hostile in <List<int>>[
+        HostileList(IteratorCreationThrowingValues(), reportedLength: 0),
+        HostileList(ThrowingValues(), reportedLength: 0),
+        HostileList(CurrentThrowingValues(), reportedLength: 0),
+        HostileList(const [-1], reportedLength: 0),
+      ]) {
+        final failure = definition.decodeValue(hostile, maximumBytes: 1);
+        expect(failure, isA<Err<int, StructuredFailure>>());
+        expect(failure.toString(), isNot(contains('secret')));
+      }
+    },
+  );
 }
 
 ValidatedSettingsChangeSet _change(
@@ -917,6 +1043,39 @@ final class _MetadataDefinition extends _IntDefinition {
   @override
   Map<String, int> get requiredResourceLimits =>
       limits ?? super.requiredResourceLimits;
+}
+
+final class _CodecDefinition extends _IntDefinition {
+  _CodecDefinition(this.boundaryCodec);
+  final _BoundaryCodec boundaryCodec;
+  @override
+  SettingValueCodec<int> get codec => boundaryCodec;
+}
+
+final class _BoundaryCodec implements SettingValueCodec<int> {
+  List<int> encoded = const [7];
+  bool decodeSawImmutableInput = false;
+  @override
+  String get identity => 'test.boundary';
+  @override
+  Result<List<int>, StructuredFailure> encode(
+    int value, {
+    required int maximumBytes,
+  }) => Ok(encoded);
+  @override
+  Result<int, StructuredFailure> decode(
+    List<int> bytes, {
+    required int maximumBytes,
+  }) {
+    try {
+      bytes.add(9);
+    } on UnsupportedError {
+      decodeSawImmutableInput = true;
+    }
+    return bytes.length == 1
+        ? Ok(bytes.single)
+        : Err(testFailure('boundary_decode'));
+  }
 }
 
 final class _IntCodec implements SettingValueCodec<int> {

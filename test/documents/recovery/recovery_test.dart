@@ -769,6 +769,37 @@ void main() {
     );
     expect(source.moveNextCalls, 3);
     expect(source.currentReads, 2);
+
+    for (final exact in <Iterable<int>>[
+      HostileList(const [1, 2], reportedLength: 0),
+      HostileList(const [1, 2], reportedLength: 999),
+      ThrowingLengthList(const [1, 2]),
+    ]) {
+      expect(
+        RecoveryHash.create(exact, maximumBytes: 2),
+        isA<Ok<RecoveryHash, StructuredFailure>>(),
+      );
+    }
+    for (final hostile in <Iterable<int>>[
+      IteratorCreationThrowingValues(),
+      ThrowingValues(),
+      CurrentThrowingValues(),
+    ]) {
+      expect(
+        RecoveryHash.create(hostile, maximumBytes: 2),
+        isA<Err<RecoveryHash, StructuredFailure>>(),
+      );
+    }
+    final finite = TrackingValues([1, 2, 222]);
+    expect(
+      RecoveryHash.create(
+        HostileList(finite, reportedLength: 0),
+        maximumBytes: 2,
+      ),
+      isA<Err<RecoveryHash, StructuredFailure>>(),
+    );
+    expect(finite.moveNextCalls, 3);
+    expect(finite.currentReads, 2);
   });
 
   test(
@@ -827,6 +858,45 @@ void main() {
       );
       expect(source.moveNextCalls, 2);
       expect(source.currentReads, 1);
+
+      for (final exact in <Iterable<RecoveryGenerationRecord>>[
+        HostileList([record], reportedLength: 0),
+        HostileList([record], reportedLength: 999),
+        ThrowingLengthList([record]),
+      ]) {
+        expect(
+          _reconstructor().reconstruct(
+            exact,
+            context: _context(record),
+            maximumGenerations: 1,
+            maximumCheckpointBytes: 10,
+            maximumJournalBytes: 10,
+            maximumSteps: 10,
+            maximumResources: 0,
+            cancellationToken: CancellationController().token,
+          ),
+          isA<Completed<RecoveredCandidate<int>, StructuredFailure>>(),
+        );
+      }
+      for (final hostile in <Iterable<RecoveryGenerationRecord>>[
+        IteratorCreationThrowingValues(),
+        ThrowingValues(),
+        CurrentThrowingValues(),
+      ]) {
+        expect(
+          _reconstructor().reconstruct(
+            hostile,
+            context: _context(record),
+            maximumGenerations: 1,
+            maximumCheckpointBytes: 10,
+            maximumJournalBytes: 10,
+            maximumSteps: 10,
+            maximumResources: 0,
+            cancellationToken: CancellationController().token,
+          ),
+          isA<Failed<RecoveredCandidate<int>, StructuredFailure>>(),
+        );
+      }
     },
   );
 }

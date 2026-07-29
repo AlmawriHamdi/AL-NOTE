@@ -304,14 +304,11 @@ final class RegisteredSettingDefinition<T> {
         return Err(_failure('encoding_failed'));
       }
       final sourceBytes = (encoded as Ok<List<int>, StructuredFailure>).value;
-      if (sourceBytes.length > maximumBytes) {
+      final bytes = _boundedDefinitionBytes(sourceBytes, maximumBytes);
+      if (bytes == null) {
         return Err(_failure('encoding_failed'));
       }
-      final bytes = List<int>.of(sourceBytes);
-      if (bytes.any((byte) => byte < 0 || byte > 255)) {
-        return Err(_failure('encoding_failed'));
-      }
-      return Ok(List.unmodifiable(bytes));
+      return Ok(bytes);
     } on Object {
       return Err(_failure('encoding_failed'));
     }
@@ -326,14 +323,11 @@ final class RegisteredSettingDefinition<T> {
       return Err(_failure('decoding_failed'));
     }
     try {
-      if (bytes.length > maximumBytes ||
-          bytes.any((byte) => byte < 0 || byte > 255)) {
+      final captured = _boundedDefinitionBytes(bytes, maximumBytes);
+      if (captured == null) {
         return Err(_failure('decoding_failed'));
       }
-      final decoded = codec.decode(
-        List.unmodifiable(List<int>.of(bytes)),
-        maximumBytes: maximumBytes,
-      );
+      final decoded = codec.decode(captured, maximumBytes: maximumBytes);
       if (decoded is Err<T, StructuredFailure>) {
         return Err(_failure('decoding_failed'));
       }
@@ -460,6 +454,22 @@ List<T>? _boundedDefinitionList<T>(Iterable<T> source, int maximum) {
     while (iterator.moveNext()) {
       if (captured.length >= maximum) return null;
       captured.add(iterator.current);
+    }
+    return List.unmodifiable(captured);
+  } on Object {
+    return null;
+  }
+}
+
+List<int>? _boundedDefinitionBytes(Iterable<int> source, int maximum) {
+  try {
+    final captured = <int>[];
+    final iterator = source.iterator;
+    while (iterator.moveNext()) {
+      if (captured.length >= maximum) return null;
+      final value = iterator.current;
+      if (value < 0 || value > 255) return null;
+      captured.add(value);
     }
     return List.unmodifiable(captured);
   } on Object {

@@ -591,9 +591,6 @@ Result<List<T>, StructuredFailure> _boundedJobIterable<T>(
     return Err(_failure(failure));
   }
   try {
-    if ((source is List<T> || source is Set<T>) && source.length > maximum) {
-      return Err(_failure(failure));
-    }
     final copied = <T>[];
     final iterator = source.iterator;
     while (iterator.moveNext()) {

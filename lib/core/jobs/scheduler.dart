@@ -380,8 +380,6 @@ final class JobScheduler {
       rejection = _failure('scheduling_class_rejected');
     } else if (request.scope.depth > limits.maximumScopeDepth) {
       rejection = _failure('scope_depth');
-    } else if (_expiredRequest(request.expiresAtUtc)) {
-      rejection = _failure('expired');
     } else if (request.maximumAttempts > _maximumTotalAttempts()) {
       rejection = _failure('retry_limit');
     } else if (!_resourcesKnownAndBounded(request.resources)) {
@@ -416,6 +414,9 @@ final class JobScheduler {
       } on Object {
         rejection = _failure('validator_failure');
       }
+    }
+    if (rejection == null && _expiredRequest(request.expiresAtUtc)) {
+      rejection = _failure('expired');
     }
     if (rejection == null &&
         _initialAdmission(request) is Err<void, StructuredFailure>) {

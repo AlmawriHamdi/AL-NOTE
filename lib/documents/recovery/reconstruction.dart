@@ -108,11 +108,6 @@ final class RecoveryReconstructor<T> {
     final candidates = <RecoveryGenerationRecord>[];
     var steps = 0;
     try {
-      if ((records is List<RecoveryGenerationRecord> ||
-              records is Set<RecoveryGenerationRecord>) &&
-          records.length > maximumGenerations) {
-        return Failed(_failure('generation_limit'));
-      }
       final iterator = records.iterator;
       while (iterator.moveNext()) {
         if (cancellationToken.isCancelled) {

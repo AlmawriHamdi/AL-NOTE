@@ -1106,6 +1106,49 @@ void main() {
     expect(digest.moveNextCalls, 3);
     expect(digest.currentReads, 2);
 
+    for (final exact in <Iterable<int>>[
+      HostileList(const [1, 2], reportedLength: 0),
+      HostileList(const [1, 2], reportedLength: 999),
+      ThrowingLengthList(const [1, 2]),
+    ]) {
+      expect(
+        ExternalFingerprint.create(
+          strength: FingerprintStrength.fullContent,
+          byteLength: 2,
+          digest: exact,
+          maximumDigestBytes: 2,
+        ),
+        isA<Ok<ExternalFingerprint, StructuredFailure>>(),
+      );
+    }
+    for (final hostile in <Iterable<int>>[
+      IteratorCreationThrowingValues(),
+      ThrowingValues(),
+      CurrentThrowingValues(),
+    ]) {
+      expect(
+        ExternalFingerprint.create(
+          strength: FingerprintStrength.fullContent,
+          byteLength: 1,
+          digest: hostile,
+          maximumDigestBytes: 2,
+        ),
+        isA<Err<ExternalFingerprint, StructuredFailure>>(),
+      );
+    }
+    final finiteDigest = TrackingValues([1, 2, 222]);
+    expect(
+      ExternalFingerprint.create(
+        strength: FingerprintStrength.fullContent,
+        byteLength: 2,
+        digest: HostileList(finiteDigest, reportedLength: 0),
+        maximumDigestBytes: 2,
+      ),
+      isA<Err<ExternalFingerprint, StructuredFailure>>(),
+    );
+    expect(finiteDigest.moveNextCalls, 3);
+    expect(finiteDigest.currentReads, 2);
+
     final bytes = _InfinitePlatformBytes();
     final id =
         (PrivateRecordId.parse('hostile')
@@ -1117,6 +1160,37 @@ void main() {
     );
     expect(bytes.moveNextCalls, 3);
     expect(bytes.currentReads, 2);
+    for (final exact in <Iterable<int>>[
+      HostileList(const [1, 2], reportedLength: 0),
+      HostileList(const [1, 2], reportedLength: 999),
+      ThrowingLengthList(const [1, 2]),
+    ]) {
+      expect(
+        WritePrivateRecord.create(id: id, bytes: exact, maximumBytes: 2),
+        isA<Ok<WritePrivateRecord, StructuredFailure>>(),
+      );
+    }
+    for (final hostile in <Iterable<int>>[
+      IteratorCreationThrowingValues(),
+      ThrowingValues(),
+      CurrentThrowingValues(),
+    ]) {
+      expect(
+        WritePrivateRecord.create(id: id, bytes: hostile, maximumBytes: 2),
+        isA<Err<WritePrivateRecord, StructuredFailure>>(),
+      );
+    }
+    final finiteBytes = TrackingValues([1, 2, 222]);
+    expect(
+      WritePrivateRecord.create(
+        id: id,
+        bytes: HostileList(finiteBytes, reportedLength: 0),
+        maximumBytes: 2,
+      ),
+      isA<Err<WritePrivateRecord, StructuredFailure>>(),
+    );
+    expect(finiteBytes.moveNextCalls, 3);
+    expect(finiteBytes.currentReads, 2);
   });
 
   test('capability limit maps and listeners honor zero and exact ceilings', () {

@@ -54,6 +54,21 @@ final class HostileList<E> extends ListBase<E> {
   Iterator<E> get iterator => values.iterator;
 }
 
+final class ThrowingLengthList<E> extends ListBase<E> {
+  ThrowingLengthList(this.values);
+  final Iterable<E> values;
+  @override
+  int get length => throw StateError('secret collection length');
+  @override
+  set length(int value) => throw UnsupportedError('hostile');
+  @override
+  E operator [](int index) => throw UnsupportedError('hostile');
+  @override
+  void operator []=(int index, E value) => throw UnsupportedError('hostile');
+  @override
+  Iterator<E> get iterator => values.iterator;
+}
+
 final class HostileMap<K, V> extends MapBase<K, V> {
   HostileMap(this.sourceEntries, {required this.reportedLength});
   final Iterable<MapEntry<K, V>> sourceEntries;
@@ -99,6 +114,38 @@ final class InfiniteValues<E> extends Iterable<E> {
   int currentReads = 0;
   @override
   Iterator<E> get iterator => _InfiniteValuesIterator(this);
+}
+
+final class TrackingValues<E> extends Iterable<E> {
+  TrackingValues(this.values);
+  final List<E> values;
+  int moveNextCalls = 0;
+  int currentReads = 0;
+  @override
+  Iterator<E> get iterator => _TrackingValuesIterator(this);
+}
+
+final class _TrackingValuesIterator<E> implements Iterator<E> {
+  _TrackingValuesIterator(this.owner);
+  final TrackingValues<E> owner;
+  int _index = -1;
+  @override
+  E get current {
+    owner.currentReads += 1;
+    return owner.values[_index];
+  }
+
+  @override
+  bool moveNext() {
+    owner.moveNextCalls += 1;
+    _index += 1;
+    return _index < owner.values.length;
+  }
+}
+
+final class IteratorCreationThrowingValues<E> extends Iterable<E> {
+  @override
+  Iterator<E> get iterator => throw StateError('secret iterator creation');
 }
 
 final class _InfiniteValuesIterator<E> implements Iterator<E> {

@@ -764,9 +764,6 @@ Result<List<T>, StructuredFailure> _boundedList<T>(
 ) {
   if (!_valid(maximum)) return Err(_failure(failureLeaf));
   try {
-    if ((source is List<T> || source is Set<T>) && source.length > maximum) {
-      return Err(_failure(failureLeaf));
-    }
     final result = <T>[];
     final iterator = source.iterator;
     while (iterator.moveNext()) {
@@ -786,9 +783,6 @@ Result<List<int>, StructuredFailure> _boundedBytes(
 ) {
   if (!_valid(maximum)) return Err(_failure(failureLeaf));
   try {
-    if (source is List<int> && source.length > maximum) {
-      return Err(_failure(failureLeaf));
-    }
     final result = <int>[];
     final iterator = source.iterator;
     while (iterator.moveNext()) {
