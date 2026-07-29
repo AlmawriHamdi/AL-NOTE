@@ -1,29 +1,38 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 
-/// The feature-free application shell used by the Phase 0 baseline.
+import '../ui/canvas/phase6_canvas.dart';
+import '../ui/canvas/phase6_canvas_runtime.dart';
+
+/// The accessible Phase 6 AL NOTE application shell.
 class AlNoteApp extends StatelessWidget {
   /// Creates the AL NOTE application shell.
-  const AlNoteApp({super.key});
+  const AlNoteApp({required this.runtime, super.key});
+
+  /// Fully validated injected Canvas runtime.
+  final Phase6CanvasRuntime runtime;
 
   @override
   Widget build(final BuildContext context) {
-    return WidgetsApp(
-      builder: (final BuildContext context, final Widget? child) {
-        return const ColoredBox(
-          color: Color(0xFFF7F8FA),
-          child: Center(
-            child: Text(
-              'AL NOTE',
-              style: TextStyle(color: Color(0xFF1B365D), fontSize: 24),
-            ),
-          ),
-        );
-      },
-      color: const Color(0xFF1B365D),
+    return MaterialApp(
+      home: Phase6Canvas(runtime: runtime),
       debugShowCheckedModeBanner: false,
       title: 'AL NOTE',
     );
   }
+}
+
+/// Safe noninteractive state used when production composition fails.
+final class AlNoteInitializationFailureApp extends StatelessWidget {
+  /// Creates the failure shell.
+  const AlNoteInitializationFailureApp({super.key});
+
+  @override
+  Widget build(BuildContext context) => const MaterialApp(
+    debugShowCheckedModeBanner: false,
+    home: Scaffold(
+      body: Center(child: Text('AL NOTE could not initialize safely.')),
+    ),
+  );
 }
