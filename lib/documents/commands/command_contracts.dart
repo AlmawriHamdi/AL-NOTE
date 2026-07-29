@@ -32,6 +32,11 @@ final class CommandFamily implements Comparable<CommandFamily> {
     'alnote.commands.object.transform',
   );
 
+  /// Atomic Page Object collection editing for Pen and Eraser gestures.
+  static final CommandFamily objectCollectionEdit = _trustedCommandFamily(
+    'alnote.commands.object.collection_edit',
+  );
+
   /// The wrapped identifier.
   final NamespacedIdentifier identifier;
 
@@ -265,6 +270,98 @@ sealed class CommandRequest {
   @override
   String toString() =>
       '$runtimeType(document: $documentId, family: ${metadata.family})';
+}
+
+/// One ordered Object addition to an explicitly identified content Layer.
+final class ObjectCollectionAddition {
+  /// Creates an immutable append operation.
+  const ObjectCollectionAddition({required this.layerId, required this.object});
+
+  /// Target editable Layer.
+  final LayerId layerId;
+
+  /// Object appended in request order.
+  final ObjectEnvelope object;
+}
+
+/// One atomic collection edit confined to exactly one Page.
+final class AtomicObjectCollectionEditRequest extends CommandRequest {
+  AtomicObjectCollectionEditRequest._({
+    required super.documentId,
+    required super.metadata,
+    required super.preconditions,
+    required this.pageId,
+    required List<ObjectCollectionAddition> additions,
+    required List<ObjectId> removals,
+    required List<ObjectEnvelope> replacements,
+  }) : additions = List.unmodifiable(additions),
+       removals = List.unmodifiable(removals),
+       replacements = List.unmodifiable(replacements);
+
+  /// Safely creates a bounded nonempty collection edit.
+  static Result<AtomicObjectCollectionEditRequest, StructuredFailure> create({
+    required DocumentId documentId,
+    required CommandMetadata metadata,
+    required RevisionPreconditions preconditions,
+    required PageId pageId,
+    Iterable<ObjectCollectionAddition> additions = const [],
+    Iterable<ObjectId> removals = const [],
+    Iterable<ObjectEnvelope> replacements = const [],
+    required int maximumOperations,
+  }) {
+    if (maximumOperations < 0 || maximumOperations > Revision.maximumValue) {
+      return Err(_requestFailure('invalid_collection_edit'));
+    }
+    final added = _boundedCapture(additions, maximumOperations);
+    final removed = added == null
+        ? null
+        : _boundedCapture(removals, maximumOperations - added.length);
+    final replaced = added == null || removed == null
+        ? null
+        : _boundedCapture(
+            replacements,
+            maximumOperations - added.length - removed.length,
+          );
+    if (added == null ||
+        removed == null ||
+        replaced == null ||
+        added.isEmpty && removed.isEmpty && replaced.isEmpty ||
+        metadata.family != CommandFamily.objectCollectionEdit ||
+        metadata.coalescing != null) {
+      return Err(_requestFailure('invalid_collection_edit'));
+    }
+    final ids = <ObjectId>{};
+    for (final item in added)
+      if (!ids.add(item.object.id))
+        return Err(_requestFailure('duplicate_target'));
+    for (final id in removed)
+      if (!ids.add(id)) return Err(_requestFailure('duplicate_target'));
+    for (final item in replaced)
+      if (!ids.add(item.id)) return Err(_requestFailure('duplicate_target'));
+    return Ok(
+      AtomicObjectCollectionEditRequest._(
+        documentId: documentId,
+        metadata: metadata,
+        preconditions: preconditions,
+        pageId: pageId,
+        additions: added,
+        removals: removed,
+        replacements: replaced,
+      ),
+    );
+  }
+
+  /// Only affected Page.
+  final PageId pageId;
+
+  /// Ordered additions.
+  final List<ObjectCollectionAddition> additions;
+
+  /// Complete Object removals.
+  final List<ObjectId> removals;
+
+  /// Same-ID replacements.
+  final List<ObjectEnvelope> replacements;
 }
 
 /// An atomic ordered set of whole-Object replacements.
@@ -760,6 +857,21 @@ bool _listEquals<T>(List<T> left, List<T> right) {
     if (left[index] != right[index]) return false;
   }
   return true;
+}
+
+List<T>? _boundedCapture<T>(Iterable<T> source, int maximum) {
+  if (maximum < 0 || maximum > Revision.maximumValue) return null;
+  final result = <T>[];
+  try {
+    final iterator = source.iterator;
+    while (iterator.moveNext()) {
+      if (result.length >= maximum) return null;
+      result.add(iterator.current);
+    }
+  } on Object {
+    return null;
+  }
+  return List.unmodifiable(result);
 }
 
 final RegExp _failureCodePattern = RegExp(

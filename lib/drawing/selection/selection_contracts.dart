@@ -39,6 +39,13 @@ final class SelectionSubTargetKind {
   String toString() => value;
 }
 
+/// Stable closed built-in kind for one Handwriting Stroke sub-target.
+final SelectionSubTargetKind handwritingStrokeSelectionSubTargetKind =
+    SelectionSubTargetKind.parse('alnote.selection.handwriting_stroke').fold(
+      onOk: (value) => value,
+      onErr: (_) => throw StateError('Built-in Selection kind must be valid.'),
+    );
+
 /// UUID-backed stable identity of a sub-target within one Object.
 final class SelectionSubTargetId {
   /// Creates an identity from an AL NOTE UUID.
@@ -357,12 +364,9 @@ final class SelectionState {
         copied.any((target) => target.pageId != activePageId)) {
       return Err(_selectionContractFailure('invalid_selection_state'));
     }
-    final wholeIds = copied
-        .where((target) => target.isWholeObject)
-        .map((target) => target.objectId)
-        .toSet();
+    final containingObjectIds = copied.map((target) => target.objectId).toSet();
     if (layerMembership.keys.toSet().length != layerMembership.length ||
-        !_setEquals(layerMembership.keys.toSet(), wholeIds) ||
+        !_setEquals(layerMembership.keys.toSet(), containingObjectIds) ||
         (!empty && aggregateBounds == null) ||
         (empty && (aggregateBounds != null || transformPreview != null))) {
       return Err(_selectionContractFailure('invalid_selection_derived_state'));

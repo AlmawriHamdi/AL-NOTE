@@ -8,6 +8,8 @@ import '../../core/outcomes/structured_failure.dart';
 import '../../core/versioning/revision.dart';
 import '../../documents/commands.dart';
 import '../../documents/document_model.dart';
+import '../../documents/objects/handwriting.dart';
+import '../geometry.dart';
 import 'selection_contracts.dart';
 
 /// Owns one view's temporary page-scoped editable Selection.
@@ -16,6 +18,9 @@ final class SelectionController {
   SelectionController({
     required ObjectRegistry objectRegistry,
     required CoalescingBoundarySink coalescingBoundarySink,
+    this.maximumTargets = Revision.maximumValue,
+    this.handwritingLimits,
+    this.strokeGeometryResolver,
     Revision? initialRevision,
   }) : _registry = objectRegistry,
        _boundarySink = coalescingBoundarySink,
@@ -23,6 +28,15 @@ final class SelectionController {
 
   final ObjectRegistry _registry;
   final CoalescingBoundarySink _boundarySink;
+
+  /// Maximum targets captured by one operation.
+  final int maximumTargets;
+
+  /// Decode limits required for Handwriting Stroke targets.
+  final HandwritingLimits? handwritingLimits;
+
+  /// Shared geometry required for exact Stroke bounds.
+  final StrokeGeometryResolver? strokeGeometryResolver;
   SelectionState _state;
   DocumentCoordinatorSnapshot? _previewBase;
 
@@ -34,12 +48,16 @@ final class SelectionController {
     required DocumentRoot root,
     required Iterable<SelectionTarget> targets,
     SelectionTarget? primaryTarget,
-  }) => _setTargets(
-    root: root,
-    proposed: List.of(targets),
-    primary: primaryTarget,
-    rejectIneligible: true,
-  );
+  }) {
+    final captured = _captureTargets(targets);
+    if (captured == null) return Err(_selectionFailure('target_limit'));
+    return _setTargets(
+      root: root,
+      proposed: captured,
+      primary: primaryTarget,
+      rejectIneligible: true,
+    );
+  }
 
   /// Adds unique [targets] after existing targets.
   Result<SelectionState, SelectionFailure> add({
@@ -47,7 +65,8 @@ final class SelectionController {
     required Iterable<SelectionTarget> targets,
     SelectionTarget? primaryTarget,
   }) {
-    final additions = List<SelectionTarget>.of(targets);
+    final additions = _captureTargets(targets);
+    if (additions == null) return Err(_selectionFailure('target_limit'));
     if (additions.toSet().length != additions.length) {
       return Err(_selectionFailure('duplicate_target'));
     }
@@ -67,7 +86,8 @@ final class SelectionController {
     required DocumentRoot root,
     required Iterable<SelectionTarget> targets,
   }) {
-    final removals = List<SelectionTarget>.of(targets);
+    final removals = _captureTargets(targets);
+    if (removals == null) return Err(_selectionFailure('target_limit'));
     if (removals.toSet().length != removals.length) {
       return Err(_selectionFailure('duplicate_target'));
     }
@@ -89,7 +109,8 @@ final class SelectionController {
     required DocumentRoot root,
     required Iterable<SelectionTarget> targets,
   }) {
-    final toggles = List<SelectionTarget>.of(targets);
+    final toggles = _captureTargets(targets);
+    if (toggles == null) return Err(_selectionFailure('target_limit'));
     if (toggles.toSet().length != toggles.length) {
       return Err(_selectionFailure('duplicate_target'));
     }
@@ -322,7 +343,10 @@ final class SelectionController {
     required SelectionTarget? primary,
     required bool rejectIneligible,
   }) {
-    if (proposed.toSet().length != proposed.length) {
+    if (maximumTargets < 0 ||
+        maximumTargets > Revision.maximumValue ||
+        proposed.length > maximumTargets ||
+        proposed.toSet().length != proposed.length) {
       return Err(_selectionFailure('duplicate_target'));
     }
     final pageIds = proposed.map((target) => target.pageId).toSet();
@@ -340,11 +364,6 @@ final class SelectionController {
     final accepted = <SelectionTarget>[];
     final memberships = <ObjectId, LayerId>{};
     for (final target in proposed) {
-      if (!target.isWholeObject) {
-        if (rejectIneligible)
-          return Err(_selectionFailure('unsupported_sub_target'));
-        continue;
-      }
       final resolved = page == null
           ? null
           : _resolve(page, root.resources, target);
@@ -359,9 +378,14 @@ final class SelectionController {
     final resolvedPrimary = accepted.contains(primary)
         ? primary
         : (accepted.isEmpty ? null : accepted.first);
-    final bounds = _aggregateBounds(
-      accepted.map((target) => _resolve(page!, root.resources, target)!.object),
-    );
+    final resolvedBounds = <Rect2>[];
+    for (final target in accepted) {
+      final resolved = _resolve(page!, root.resources, target);
+      if (resolved == null)
+        return Err(_selectionFailure('target_not_selectable'));
+      resolvedBounds.add(resolved.bounds);
+    }
+    final bounds = _aggregateRectBounds(resolvedBounds);
     final unchanged =
         _listEquals(accepted, _state.targets) &&
         resolvedPrimary == _state.primaryTarget &&
@@ -438,12 +462,17 @@ final class SelectionController {
     if (target.pageId != page.id) return null;
     _Resolved? result;
     for (final layer in page.layers) {
+      if (layer is! ContentLayer) continue;
       for (final object in layer.objects) {
         if (object.id != target.objectId) continue;
         if (result != null ||
             !layer.isObjectEffectivelyVisible(object) ||
             layer.isObjectEffectivelyLocked(object))
           return null;
+        if (object.typeKey == handwritingObjectTypeKey &&
+            object.typeSchemaVersion != handwritingSchemaVersion) {
+          return null;
+        }
         final resolution = _registry.resolve(object);
         if (resolution is! SupportedObjectResolution ||
             !resolution.definition.capabilities.selectable ||
@@ -466,7 +495,37 @@ final class SelectionController {
             return null;
           }
         }
-        result = _Resolved(layer, object, resolution);
+        Rect2? targetBounds;
+        if (target.isWholeObject) {
+          targetBounds = _bounds(object);
+        } else if (target.subTargetKind ==
+                handwritingStrokeSelectionSubTargetKind &&
+            object.typeKey == handwritingObjectTypeKey &&
+            object.typeSchemaVersion == handwritingSchemaVersion &&
+            handwritingLimits != null &&
+            strokeGeometryResolver != null) {
+          final payload =
+              HandwritingPayload.decode(
+                object.payload,
+                limits: handwritingLimits!,
+              ).fold<HandwritingPayload?>(
+                onOk: (value) => value,
+                onErr: (_) => null,
+              );
+          final stroke = payload?.strokes
+              .where((value) => value.id.uuid == target.subTargetId!.uuid)
+              .firstOrNull;
+          targetBounds = stroke == null
+              ? null
+              : strokeGeometryResolver!
+                    .resolve(stroke: stroke, localToPage: object.transform)
+                    .fold<Rect2?>(
+                      onOk: (value) => value.bounds,
+                      onErr: (_) => null,
+                    );
+        }
+        if (targetBounds == null) return null;
+        result = _Resolved(layer, object, resolution, targetBounds);
       }
     }
     return result;
@@ -554,13 +613,50 @@ final class SelectionController {
     }
     return result;
   }
+
+  Rect2? _aggregateRectBounds(Iterable<Rect2> values) {
+    Rect2? result;
+    for (final bounds in values) {
+      result = result == null
+          ? bounds
+          : Rect2.fromEdges(
+              left: result.left < bounds.left ? result.left : bounds.left,
+              top: result.top < bounds.top ? result.top : bounds.top,
+              right: result.right > bounds.right ? result.right : bounds.right,
+              bottom: result.bottom > bounds.bottom
+                  ? result.bottom
+                  : bounds.bottom,
+            ).fold<Rect2?>(onOk: (value) => value, onErr: (_) => null);
+      if (result == null) return null;
+    }
+    return result;
+  }
+
+  List<SelectionTarget>? _captureTargets(Iterable<SelectionTarget> source) {
+    if (maximumTargets < 0 || maximumTargets > Revision.maximumValue)
+      return null;
+    final values = <SelectionTarget>[];
+    try {
+      final iterator = source.iterator;
+      while (true) {
+        final hasNext = iterator.moveNext();
+        if (!hasNext) break;
+        if (values.length >= maximumTargets) return null;
+        values.add(iterator.current);
+      }
+    } on Object {
+      return null;
+    }
+    return values;
+  }
 }
 
 final class _Resolved {
-  const _Resolved(this.layer, this.object, this.resolution);
+  const _Resolved(this.layer, this.object, this.resolution, this.bounds);
   final DocumentLayer layer;
   final ObjectEnvelope object;
   final SupportedObjectResolution resolution;
+  final Rect2 bounds;
 }
 
 final Revision _zeroRevision = Revision.create(0).fold(
