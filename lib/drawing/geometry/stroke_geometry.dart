@@ -54,7 +54,6 @@ final class StrokeGeometryLimits {
   /// Deterministic vertex count used for transformed circular joins and caps.
   final int ellipseVertexCount;
 
-  /// Maximum edge and interval checks for one containment query.
   /// Maximum edge and interval checks permitted for one containment query.
   final int maximumContainmentChecks;
 }

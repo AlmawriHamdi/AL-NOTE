@@ -12,19 +12,65 @@ import '../../documents/objects/handwriting.dart';
 import '../geometry.dart';
 import 'selection_contracts.dart';
 
+/// Redaction-safe rejection of an invalid Selection controller configuration.
+final class SelectionControllerConfigurationException implements Exception {
+  const SelectionControllerConfigurationException._(this.failure);
+
+  /// Fixed structured reason that construction was rejected.
+  final SelectionFailure failure;
+
+  @override
+  String toString() => failure.toString();
+}
+
 /// Owns one view's temporary page-scoped editable Selection.
 final class SelectionController {
   /// Creates an empty controller using injected Registry and boundary sink.
-  SelectionController({
+  ///
+  /// Throws a [SelectionControllerConfigurationException] containing a fixed
+  /// [SelectionFailure] when [maximumTargets] is not a positive, Web-safe,
+  /// practical ceiling.
+  factory SelectionController({
     required ObjectRegistry objectRegistry,
     required CoalescingBoundarySink coalescingBoundarySink,
-    this.maximumTargets = Revision.maximumValue,
-    this.handwritingLimits,
-    this.strokeGeometryResolver,
+    required int maximumTargets,
+    HandwritingLimits? handwritingLimits,
+    StrokeGeometryResolver? strokeGeometryResolver,
     Revision? initialRevision,
+  }) {
+    if (maximumTargets <= 0 ||
+        maximumTargets > Revision.maximumValue ||
+        maximumTargets > maximumSupportedTargets) {
+      throw SelectionControllerConfigurationException._(
+        _selectionFailure('invalid_target_limit'),
+      );
+    }
+    return SelectionController._(
+      objectRegistry: objectRegistry,
+      coalescingBoundarySink: coalescingBoundarySink,
+      maximumTargets: maximumTargets,
+      handwritingLimits: handwritingLimits,
+      strokeGeometryResolver: strokeGeometryResolver,
+      initialRevision: initialRevision,
+    );
+  }
+
+  SelectionController._({
+    required ObjectRegistry objectRegistry,
+    required CoalescingBoundarySink coalescingBoundarySink,
+    required this.maximumTargets,
+    required this.handwritingLimits,
+    required this.strokeGeometryResolver,
+    required Revision? initialRevision,
   }) : _registry = objectRegistry,
        _boundarySink = coalescingBoundarySink,
        _state = SelectionState.empty(initialRevision ?? _zeroRevision);
+
+  /// Largest explicit target ceiling accepted by this controller.
+  ///
+  /// This implementation ceiling prevents a caller from configuring a
+  /// Web-safe but operationally unbounded collection allocation.
+  static const int maximumSupportedTargets = 1000000;
 
   final ObjectRegistry _registry;
   final CoalescingBoundarySink _boundarySink;
@@ -70,12 +116,17 @@ final class SelectionController {
     if (additions.toSet().length != additions.length) {
       return Err(_selectionFailure('duplicate_target'));
     }
+    final proposed = List<SelectionTarget>.of(_state.targets);
+    for (final target in additions) {
+      if (proposed.contains(target)) continue;
+      if (proposed.length >= maximumTargets) {
+        return Err(_selectionFailure('target_limit'));
+      }
+      proposed.add(target);
+    }
     return _setTargets(
       root: root,
-      proposed: [
-        ..._state.targets,
-        ...additions.where((t) => !_state.targets.contains(t)),
-      ],
+      proposed: proposed,
       primary: primaryTarget ?? _state.primaryTarget,
       rejectIneligible: true,
     );
@@ -116,9 +167,14 @@ final class SelectionController {
     }
     final proposed = List<SelectionTarget>.of(_state.targets);
     for (final target in toggles) {
-      proposed.contains(target)
-          ? proposed.remove(target)
-          : proposed.add(target);
+      if (proposed.contains(target)) {
+        proposed.remove(target);
+      } else {
+        if (proposed.length >= maximumTargets) {
+          return Err(_selectionFailure('target_limit'));
+        }
+        proposed.add(target);
+      }
     }
     return _setTargets(
       root: root,
@@ -347,10 +403,10 @@ final class SelectionController {
     required SelectionTarget? primary,
     required bool rejectIneligible,
   }) {
-    if (maximumTargets < 0 ||
-        maximumTargets > Revision.maximumValue ||
-        proposed.length > maximumTargets ||
-        proposed.toSet().length != proposed.length) {
+    if (proposed.length > maximumTargets) {
+      return Err(_selectionFailure('target_limit'));
+    }
+    if (proposed.toSet().length != proposed.length) {
       return Err(_selectionFailure('duplicate_target'));
     }
     final pageIds = proposed.map((target) => target.pageId).toSet();
@@ -638,8 +694,6 @@ final class SelectionController {
   }
 
   List<SelectionTarget>? _captureTargets(Iterable<SelectionTarget> source) {
-    if (maximumTargets < 0 || maximumTargets > Revision.maximumValue)
-      return null;
     final values = <SelectionTarget>[];
     try {
       final iterator = source.iterator;
