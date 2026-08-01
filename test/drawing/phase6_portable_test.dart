@@ -26,6 +26,7 @@ final _limits = _ok(
     maximumSamplesPerStroke: 16,
     maximumUnknownFields: 8,
     maximumNestingDepth: 8,
+    maximumUnknownNodes: 1024,
     maximumCoordinateMagnitude: 10000,
     maximumStrokeWidth: 100,
     maximumAbsoluteTilt: 2,
@@ -1063,6 +1064,116 @@ void main() {
     );
     expect(collision.calls, 1);
   });
+
+  test('viewport rejects finite but unrepresentable visible rectangles', () {
+    expect(
+      ViewportSnapshot.create(
+        extent: _ok(
+          ViewExtent.create(width: double.maxFinite, height: double.maxFinite),
+        ),
+        pageOrigin: _point(0, 0),
+        zoom: double.minPositive,
+        minimumZoom: double.minPositive,
+        maximumZoom: 1,
+        revision: _revision(0),
+      ),
+      isA<Err<Object?, Object?>>(),
+    );
+    expect(
+      ViewportSnapshot.create(
+        extent: _ok(ViewExtent.create(width: 10, height: 10)),
+        pageOrigin: _point(double.maxFinite, double.maxFinite),
+        zoom: 1,
+        minimumZoom: 1,
+        maximumZoom: 1,
+        revision: _revision(0),
+      ),
+      isA<Err<Object?, Object?>>(),
+    );
+  });
+
+  test('concave containment checks stroke edges and has a ceiling', () {
+    final polygon = [
+      _point(-2, -3),
+      _point(12, -3),
+      _point(12, 3),
+      _point(7, 3),
+      _point(7, -.5),
+      _point(3, -.5),
+      _point(3, 3),
+      _point(-2, 3),
+    ];
+    final geometry = _ok(
+      StrokeGeometryResolver(_geometryLimits()).resolve(
+        stroke: _stroke(201, [_sample(0, 0, 0), _sample(10, 0, 1)]),
+        localToPage: _identity(),
+      ),
+    );
+    expect(_ok(geometry.containedByPolygon(polygon)), isFalse);
+    final bounded = _ok(
+      StrokeGeometryLimits.create(
+        maximumElements: 128,
+        maximumVertices: 2048,
+        ellipseVertexCount: 16,
+        maximumContainmentChecks: 1,
+      ),
+    );
+    final limited = _ok(
+      StrokeGeometryResolver(bounded).resolve(
+        stroke: _stroke(202, [_sample(0, 0, 0)]),
+        localToPage: _identity(),
+      ),
+    );
+    expect(limited.containedByPolygon(polygon), isA<Err<Object?, Object?>>());
+  });
+
+  test('point tolerance remains correct when bounds expansion overflows', () {
+    final hugeLimits = _ok(
+      HandwritingLimits.create(
+        maximumStrokes: 1,
+        maximumSamplesPerStroke: 1,
+        maximumUnknownFields: 1,
+        maximumNestingDepth: 1,
+        maximumUnknownNodes: 4,
+        maximumCoordinateMagnitude: 1e308,
+        maximumStrokeWidth: 2,
+        maximumAbsoluteTilt: 1,
+        maximumAbsoluteOrientation: 1,
+      ),
+    );
+    final stroke = _ok(
+      HandwritingStroke.create(
+        id: StrokeId.fromUuid(testUuid(999)),
+        samples: [
+          _ok(
+            StrokeSample.create(
+              position: _point(1e308, 0),
+              timeMicros: 0,
+              limits: hugeLimits,
+            ),
+          ),
+        ],
+        style: _ok(
+          StrokeStyle.create(
+            argb: 0,
+            opacity: 1,
+            baseWidth: 2,
+            pressureInfluence: 0,
+            minimumPressureFactor: 0,
+            limits: hugeLimits,
+          ),
+        ),
+        limits: hugeLimits,
+      ),
+    );
+    final geometry = _ok(
+      StrokeGeometryResolver(
+        _geometryLimits(),
+      ).resolve(stroke: stroke, localToPage: _identity()),
+    );
+    expect(geometry.hitsPoint(_point(0, 0), 1.1e308), isTrue);
+    expect(geometry.hitsPoint(_point(-1e308, 0), 1.1e308), isFalse);
+  });
 }
 
 NormalizedPointerEvent _event(
@@ -1205,6 +1316,7 @@ StrokeGeometryLimits _geometryLimits() => _ok(
     maximumElements: 128,
     maximumVertices: 2048,
     ellipseVertexCount: 16,
+    maximumContainmentChecks: 100000,
   ),
 );
 RenderingLimits _renderingLimits() => _ok(

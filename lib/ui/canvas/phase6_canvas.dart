@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -41,7 +43,6 @@ final class Phase6Canvas extends StatefulWidget {
 
 final class _Phase6CanvasState extends State<Phase6Canvas>
     with WidgetsBindingObserver {
-  final ValueNotifier<int> _previewRevision = ValueNotifier<int>(0);
   late final ObjectRegistry _registry;
   late final StrokeGeometryResolver _geometry;
   late final PageHitTester _hitTester;
@@ -55,6 +56,12 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   PenGestureSession? _pen;
   _CanvasTool _tool = _CanvasTool.pen;
   final List<Point2> _partialEraserPath = [];
+  final List<Point2> _wholeEraserPath = [];
+  ScenePrimitive? _eraserPreviewPrimitive;
+  final Map<ObjectId, Set<StrokeId>> _wholeEraserTargets = {};
+  int _wholeEraserTargetCount = 0;
+  DocumentCoordinatorSnapshot? _wholeEraserBase;
+  DocumentCoordinatorSnapshot? _partialEraserBase;
   List<int>? _savedBytes;
   DocumentRoot? _savedRoot;
   String _status = 'Ready';
@@ -66,7 +73,6 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _router.cancel();
-    _previewRevision.dispose();
     super.dispose();
   }
 
@@ -136,6 +142,12 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     setState(() {
       _pen = null;
       _partialEraserPath.clear();
+      _wholeEraserPath.clear();
+      _wholeEraserTargets.clear();
+      _wholeEraserTargetCount = 0;
+      _wholeEraserBase = null;
+      _partialEraserBase = null;
+      _eraserPreviewPrimitive = null;
       _tool = value;
       _status = '${value.name} active';
     });
@@ -160,8 +172,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   void _pointer(PointerEvent raw) {
     final normalized = widget.runtime.pointerAdapter.normalize(raw);
     if (normalized is! Ok<NormalizedPointerEvent, StructuredFailure>) {
-      final terminal = raw is PointerUpEvent || raw is PointerCancelEvent;
-      if (terminal && _router.ownership.owner == raw.pointer) {
+      if (_router.ownership.owner == raw.pointer) {
         _cancelGesture('Gesture rejected');
       }
       return;
@@ -231,10 +242,9 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
           _cancelGesture('Gesture rejected');
         }
       } else if (routedTool == _CanvasTool.partialEraser) {
-        _partialEraserPath
-          ..clear()
-          ..add(pagePoint);
-        setState(() => _status = 'Partial erasing');
+        _beginPartialErase(pagePoint);
+      } else if (routedTool == _CanvasTool.wholeEraser) {
+        _beginWholeErase(pagePoint);
       } else {
         _pointAction(pagePoint, routedTool);
       }
@@ -246,10 +256,13 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
         _cancelGesture('Stroke rejected');
         return;
       }
-      _previewRevision.value += 1;
+      setState(() {});
     } else if (routedTool == _CanvasTool.partialEraser &&
         event.phase == PointerPhase.move) {
       if (!_appendPartialEraserPoint(pagePoint)) return;
+    } else if (routedTool == _CanvasTool.wholeEraser &&
+        event.phase == PointerPhase.move) {
+      if (!_appendWholeEraserPoint(pagePoint)) return;
     } else if (_pen != null &&
         routedTool == _CanvasTool.pen &&
         event.phase == PointerPhase.up) {
@@ -275,8 +288,13 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       _selection.reconcile(_coordinator.snapshot.root);
     } else if (routedTool == _CanvasTool.partialEraser &&
         event.phase == PointerPhase.up) {
-      if (!_appendPartialEraserPoint(pagePoint)) return;
+      if (!_appendPartialEraserPoint(pagePoint, publish: false)) return;
       _finishPartialErase();
+      _router.completeTerminal(event.pointerId);
+    } else if (routedTool == _CanvasTool.wholeEraser &&
+        event.phase == PointerPhase.up) {
+      if (!_appendWholeEraserPoint(pagePoint, publish: false)) return;
+      _finishWholeErase();
       _router.completeTerminal(event.pointerId);
     } else if (event.phase == PointerPhase.up) {
       _router.completeTerminal(event.pointerId);
@@ -285,12 +303,129 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     }
   }
 
-  bool _appendPartialEraserPoint(Point2 point) {
-    if (_partialEraserPath.length >= widget.runtime.maximumEraserPoints) {
+  void _beginPartialErase(Point2 point) {
+    _partialEraserPath.clear();
+    _eraserPreviewPrimitive = null;
+    _partialEraserBase = _coordinator.snapshot;
+    if (!_appendPartialEraserPoint(point, publish: false)) return;
+    setState(() => _status = 'Partial erasing');
+  }
+
+  bool _appendPartialEraserPoint(Point2 point, {bool publish = true}) {
+    if (_partialEraserBase?.currentContentIdentity !=
+            _coordinator.snapshot.currentContentIdentity ||
+        _partialEraserPath.length >= widget.runtime.maximumEraserPoints) {
+      _cancelGesture('Partial erase rejected');
+      return false;
+    }
+    final previous = _partialEraserPath.lastOrNull;
+    if (!_appendEraserPreview(previous ?? point, point)) {
       _cancelGesture('Partial erase rejected');
       return false;
     }
     _partialEraserPath.add(point);
+    if (publish && mounted) setState(() {});
+    return true;
+  }
+
+  void _beginWholeErase(Point2 point) {
+    _wholeEraserPath.clear();
+    _wholeEraserTargets.clear();
+    _wholeEraserTargetCount = 0;
+    _eraserPreviewPrimitive = null;
+    _wholeEraserBase = _coordinator.snapshot;
+    if (!_appendWholeEraserPoint(point, publish: false)) return;
+    setState(() => _status = 'Whole erasing');
+  }
+
+  bool _appendWholeEraserPoint(Point2 point, {bool publish = true}) {
+    final base = _wholeEraserBase;
+    if (base == null ||
+        base.currentContentIdentity !=
+            _coordinator.snapshot.currentContentIdentity ||
+        _wholeEraserPath.length >= widget.runtime.maximumEraserPoints) {
+      _cancelGesture('Erase rejected');
+      return false;
+    }
+    final previous = _wholeEraserPath.lastOrNull;
+    if (!_appendEraserPreview(previous ?? point, point) ||
+        !_collectWholeEraseHits(previous, point)) {
+      _cancelGesture('Erase rejected');
+      return false;
+    }
+    _wholeEraserPath.add(point);
+    if (publish && mounted) setState(() {});
+    return true;
+  }
+
+  bool _appendEraserPreview(Point2 first, Point2 second) {
+    final a = _viewport
+        .pageToView(first)
+        .fold<ViewPoint?>(onOk: (value) => value, onErr: (_) => null);
+    final b = _viewport
+        .pageToView(second)
+        .fold<ViewPoint?>(onOk: (value) => value, onErr: (_) => null);
+    if (a == null || b == null) return false;
+    final bounds = Rect2.fromEdges(
+      left: math.min(a.x, b.x) - 8,
+      top: math.min(a.y, b.y) - 8,
+      right: math.max(a.x, b.x) + 8,
+      bottom: math.max(a.y, b.y) + 8,
+    ).fold<Rect2?>(onOk: (value) => value, onErr: (_) => null);
+    if (bounds == null) return false;
+    final primitive = PlaceholderPrimitive.create(
+      plane: RenderPlane.toolPreview,
+      bounds: bounds,
+      opacity: .8,
+    );
+    if (primitive is! Ok<PlaceholderPrimitive, StructuredFailure>) {
+      return false;
+    }
+    _eraserPreviewPrimitive = primitive.value;
+    return true;
+  }
+
+  bool _collectWholeEraseHits(Point2? previous, Point2 point) {
+    final hits = <HitTestResult>[];
+    final pointHits = _hitTester.point(
+      page: _page,
+      pagePosition: point,
+      pageTolerance: 8 / _viewport.zoom,
+    );
+    if (pointHits is Err<HitTestResult?, StructuredFailure>) return false;
+    final pointHit = (pointHits as Ok<HitTestResult?, StructuredFailure>).value;
+    if (pointHit != null) hits.add(pointHit);
+    if (previous != null && previous != point) {
+      final dx = point.x - previous.x, dy = point.y - previous.y;
+      final length = math.sqrt(dx * dx + dy * dy);
+      if (!length.isFinite || length == 0) return false;
+      final radius = 8 / _viewport.zoom;
+      final nx = -dy / length * radius, ny = dx / length * radius;
+      final polygon = <Point2>[
+        _point(previous.x + nx, previous.y + ny),
+        _point(point.x + nx, point.y + ny),
+        _point(point.x - nx, point.y - ny),
+        _point(previous.x - nx, previous.y - ny),
+      ];
+      final swept = _hitTester.lasso(
+        page: _page,
+        polygon: polygon,
+        mode: AreaHitMode.intersection,
+      );
+      if (swept is Err<List<HitTestResult>, StructuredFailure>) return false;
+      hits.addAll((swept as Ok<List<HitTestResult>, StructuredFailure>).value);
+    }
+    for (final hit in hits) {
+      final stroke = hit.strokeId;
+      if (stroke == null) continue;
+      final targets = _wholeEraserTargets.putIfAbsent(hit.objectId, () => {});
+      if (targets.contains(stroke)) continue;
+      if (_wholeEraserTargetCount >= widget.runtime.maximumHitResults) {
+        return false;
+      }
+      targets.add(stroke);
+      _wholeEraserTargetCount += 1;
+    }
     return true;
   }
 
@@ -316,105 +451,175 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       });
       return;
     }
-    if (routedTool != _CanvasTool.wholeEraser || hit == null) return;
-    final layer = _page.layers.singleWhere((l) => l.id == hit.layerId);
-    final object = layer.objects.singleWhere((o) => o.id == hit.objectId);
-    final payload = HandwritingPayload.decode(
-      object.payload,
-      limits: _limits,
-    ).fold<HandwritingPayload?>(onOk: (v) => v, onErr: (_) => null);
-    if (payload == null) return;
-    final survivors = payload.strokes
-        .where((s) => s.id != hit.strokeId)
-        .toList();
-    final snapshot = _coordinator.snapshot;
-    final pre = RevisionPreconditions(
-      pages: {_page.id: snapshot.revisions.pages[_page.id]!},
-      objects: {object.id: snapshot.revisions.objects[object.id]!},
-      layerMembership: {
-        layer.id: snapshot.revisions.layerMembership[layer.id]!,
-      },
-    );
-    final correlation = _uuid.generateV4();
-    if (correlation is! Ok<UuidIdentifier, StructuredFailure>) {
-      setState(() => _status = 'Erase rejected');
-      return;
-    }
-    final metadata = CommandMetadata(
-      family: CommandFamily.objectCollectionEdit,
-      correlationId: CommandCorrelationId.fromUuid(correlation.value),
-      description: 'Erase stroke',
-    );
-    Result<AtomicObjectCollectionEditRequest, StructuredFailure> request;
-    if (survivors.isEmpty) {
-      request = AtomicObjectCollectionEditRequest.create(
-        documentId: snapshot.root.id,
-        metadata: metadata,
-        preconditions: pre,
-        pageId: _page.id,
-        removals: [object.id],
-        maximumOperations: widget.runtime.maximumCommandOperations,
-      );
-    } else {
-      final nextPayload = _ok(
-        HandwritingPayload.create(
-          strokes: survivors,
-          limits: _limits,
-          unknownFields: payload.unknownFields,
-        ),
-      );
-      final replacement = _ok(
-        ObjectEnvelope.create(
-          id: object.id,
-          typeKey: object.typeKey,
-          envelopeVersion: object.envelopeVersion,
-          typeSchemaVersion: object.typeSchemaVersion,
-          transform: object.transform,
-          visible: object.visible,
-          locked: object.locked,
-          payload: nextPayload.encode(),
-          extensionData: object.extensionData,
-        ),
-      );
-      request = AtomicObjectCollectionEditRequest.create(
-        documentId: snapshot.root.id,
-        metadata: metadata,
-        preconditions: pre,
-        pageId: _page.id,
-        replacements: [replacement],
-        maximumOperations: widget.runtime.maximumCommandOperations,
-      );
+  }
+
+  void _finishWholeErase() {
+    final base = _wholeEraserBase;
+    final noHits =
+        base != null &&
+        base.currentContentIdentity ==
+            _coordinator.snapshot.currentContentIdentity &&
+        _wholeEraserTargets.isEmpty;
+    Result<AtomicObjectCollectionEditRequest, StructuredFailure>? request;
+    if (base != null &&
+        base.currentContentIdentity ==
+            _coordinator.snapshot.currentContentIdentity &&
+        _wholeEraserTargets.isNotEmpty &&
+        _wholeEraserTargets.length <= widget.runtime.maximumCommandOperations) {
+      final page = base.root.pages
+          .where((value) => value.id == _page.id)
+          .firstOrNull;
+      final replacements = <ObjectEnvelope>[];
+      final removals = <ObjectId>[];
+      final objectRevisions = <ObjectId, Revision>{};
+      final membershipRevisions = <LayerId, Revision>{};
+      var valid = page != null;
+      if (page != null) {
+        for (final layer in page.layers.whereType<ContentLayer>()) {
+          for (final object in layer.objects) {
+            final erased = _wholeEraserTargets[object.id];
+            if (erased == null) continue;
+            final payload =
+                HandwritingPayload.decode(
+                  object.payload,
+                  limits: _limits,
+                ).fold<HandwritingPayload?>(
+                  onOk: (value) => value,
+                  onErr: (_) => null,
+                );
+            final objectRevision = base.revisions.objects[object.id];
+            final membershipRevision = base.revisions.layerMembership[layer.id];
+            if (payload == null ||
+                objectRevision == null ||
+                membershipRevision == null ||
+                !payload.strokes
+                    .map((value) => value.id)
+                    .toSet()
+                    .containsAll(erased)) {
+              valid = false;
+              break;
+            }
+            final survivors = payload.strokes
+                .where((stroke) => !erased.contains(stroke.id))
+                .toList(growable: false);
+            objectRevisions[object.id] = objectRevision;
+            membershipRevisions[layer.id] = membershipRevision;
+            if (survivors.isEmpty) {
+              removals.add(object.id);
+              continue;
+            }
+            final nextPayload = HandwritingPayload.create(
+              strokes: survivors,
+              limits: _limits,
+              unknownFields: payload.unknownFields,
+            );
+            if (nextPayload is! Ok<HandwritingPayload, StructuredFailure>) {
+              valid = false;
+              break;
+            }
+            final replacement = ObjectEnvelope.create(
+              id: object.id,
+              typeKey: object.typeKey,
+              envelopeVersion: object.envelopeVersion,
+              typeSchemaVersion: object.typeSchemaVersion,
+              transform: object.transform,
+              visible: object.visible,
+              locked: object.locked,
+              payload: nextPayload.value.encode(),
+              extensionData: object.extensionData,
+            );
+            if (replacement is! Ok<ObjectEnvelope, StructuredFailure>) {
+              valid = false;
+              break;
+            }
+            replacements.add(replacement.value);
+          }
+          if (!valid) break;
+        }
+      }
+      if (valid &&
+          replacements.length + removals.length == _wholeEraserTargets.length) {
+        Result<UuidIdentifier, StructuredFailure>? correlation;
+        try {
+          correlation = _uuid.generateV4();
+        } on Object {
+          correlation = null;
+        }
+        if (correlation is Ok<UuidIdentifier, StructuredFailure>) {
+          request = AtomicObjectCollectionEditRequest.create(
+            documentId: base.root.id,
+            metadata: CommandMetadata(
+              family: CommandFamily.objectCollectionEdit,
+              correlationId: CommandCorrelationId.fromUuid(correlation.value),
+              description: 'Erase strokes',
+            ),
+            preconditions: RevisionPreconditions(
+              pages: {_page.id: base.revisions.pages[_page.id]!},
+              objects: objectRevisions,
+              layerMembership: membershipRevisions,
+            ),
+            pageId: _page.id,
+            removals: removals,
+            replacements: replacements,
+            replacementChangeCategories: ObjectReplacementChangeCategories(
+              geometry: replacements.isNotEmpty,
+              appearance: false,
+              text: false,
+              metadata: replacements.isNotEmpty,
+            ),
+            maximumOperations: widget.runtime.maximumCommandOperations,
+          );
+        }
+      }
     }
     final commit =
         request is Ok<AtomicObjectCollectionEditRequest, StructuredFailure>
         ? _coordinator.execute(request.value)
         : null;
-    setState(() {
-      _selection.reconcile(_coordinator.snapshot.root);
-      _status = commit is Ok ? 'Stroke erased' : 'Erase rejected';
-    });
+    _clearEraserTransient();
+    _selection.reconcile(_coordinator.snapshot.root);
+    setState(
+      () => _status = commit is Ok
+          ? 'Stroke erased'
+          : noHits
+          ? 'Nothing erased'
+          : 'Erase rejected',
+    );
   }
 
   void _finishPartialErase() {
-    final request = createPartialEraseRequest(
-      document: _coordinator.snapshot,
-      pageId: _page.id,
-      pagePath: List<Point2>.of(_partialEraserPath),
-      pageRadius: 8 / _viewport.zoom,
-      uuidGenerator: _uuid,
-      handwritingLimits: _limits,
-      geometryResolver: _geometry,
-      maximumEraserPoints: widget.runtime.maximumEraserPoints,
-      maximumIntersections: widget.runtime.maximumEraserIntersections,
-      maximumFragments: widget.runtime.maximumEraserFragments,
-      maximumOutputSamples: widget.runtime.maximumEraserOutputSamples,
-      maximumCommandOperations: widget.runtime.maximumCommandOperations,
-    );
+    final base = _partialEraserBase;
+    final request =
+        base == null ||
+            base.currentContentIdentity !=
+                _coordinator.snapshot.currentContentIdentity
+        ? Err<AtomicObjectCollectionEditRequest, StructuredFailure>(
+            StructuredFailure(
+              code: 'ui.canvas.partial_erase_stale',
+              category: FailureCategory.state,
+              retryDisposition: RetryDisposition.never,
+              message: 'Partial erase input is no longer current.',
+            ),
+          )
+        : createPartialEraseRequest(
+            document: base,
+            pageId: _page.id,
+            pagePath: List<Point2>.of(_partialEraserPath),
+            pageRadius: 8 / _viewport.zoom,
+            uuidGenerator: _uuid,
+            handwritingLimits: _limits,
+            geometryResolver: _geometry,
+            maximumEraserPoints: widget.runtime.maximumEraserPoints,
+            maximumIntersections: widget.runtime.maximumEraserIntersections,
+            maximumFragments: widget.runtime.maximumEraserFragments,
+            maximumOutputSamples: widget.runtime.maximumEraserOutputSamples,
+            maximumCommandOperations: widget.runtime.maximumCommandOperations,
+          );
     final commit =
         request is Ok<AtomicObjectCollectionEditRequest, StructuredFailure>
         ? _coordinator.execute(request.value)
         : null;
-    _partialEraserPath.clear();
+    _clearEraserTransient();
     _selection.reconcile(_coordinator.snapshot.root);
     setState(
       () => _status = commit is Ok
@@ -426,11 +631,21 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   void _cancelGesture(String status) {
     _pen?.cancel();
     _router.cancel();
-    _partialEraserPath.clear();
+    _clearEraserTransient();
     setState(() {
       _pen = null;
       _status = status;
     });
+  }
+
+  void _clearEraserTransient() {
+    _partialEraserPath.clear();
+    _wholeEraserPath.clear();
+    _wholeEraserTargets.clear();
+    _wholeEraserTargetCount = 0;
+    _eraserPreviewPrimitive = null;
+    _wholeEraserBase = null;
+    _partialEraserBase = null;
   }
 
   void _zoom(double factor) {
@@ -568,12 +783,13 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
         icon: const Icon(Icons.zoom_in),
       ),
     ];
+    final previews = _previewPrimitives();
     final scene = _sceneBuilder
         .build(
           page: _page,
           viewport: _viewport,
           documentRevision: _coordinator.snapshot.revisions.document,
-          previews: _previewPrimitives(),
+          previews: previews,
           selections: _selectionPrimitives(),
         )
         .fold<RenderSnapshot?>(onOk: (value) => value, onErr: (_) => null);
@@ -581,14 +797,23 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       label: 'Handwriting canvas',
       container: true,
       child: Listener(
+        key: const Key('phase6-canvas-listener'),
         onPointerDown: _pointer,
         onPointerMove: _pointer,
         onPointerUp: _pointer,
         onPointerCancel: _pointer,
         child: RepaintBoundary(
+          key: const Key('phase6-canvas-paint'),
           child: CustomPaint(
             size: const Size(640, 800),
-            painter: _CanvasPainter(snapshot: scene, repaint: _previewRevision),
+            painter: _CanvasPainter(
+              snapshot: scene,
+              previewPrimitiveCount: previews.length,
+              eraserPathLength: math.max(
+                _partialEraserPath.length,
+                _wholeEraserPath.length,
+              ),
+            ),
           ),
         ),
       ),
@@ -675,12 +900,20 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   }
 
   List<ScenePrimitive> _previewPrimitives() {
+    final eraser = _eraserPreviewPrimitive;
+    final eraserPreview = eraser == null
+        ? const <ScenePrimitive>[]
+        : <ScenePrimitive>[eraser];
     final preview = _pen?.preview;
-    if (preview == null || preview.samples.isEmpty) return const [];
+    if (preview == null || preview.samples.isEmpty) {
+      return eraserPreview;
+    }
     final identity = AffineTransform2D.fromOperation(
       const IdentityTransformOperation2D(),
     ).fold<AffineTransform2D?>(onOk: (value) => value, onErr: (_) => null);
-    if (identity == null) return const [];
+    if (identity == null) {
+      return eraserPreview;
+    }
     final geometry = _geometry
         .resolvePreview(
           samples: preview.samples,
@@ -695,15 +928,17 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     final color = RenderColor.create(
       preview.style.argb,
     ).fold<RenderColor?>(onOk: (value) => value, onErr: (_) => null);
-    if (geometry == null || color == null) return const [];
-    final result = <ScenePrimitive>[];
+    if (geometry == null || color == null) {
+      return eraserPreview;
+    }
+    final result = <ScenePrimitive>[...eraserPreview];
     for (final element in geometry.elements) {
       final points = <Point2>[];
       for (final pagePoint in element.vertices) {
         final view = _viewport
             .pageToView(pagePoint)
             .fold<ViewPoint?>(onOk: (value) => value, onErr: (_) => null);
-        if (view == null) return const [];
+        if (view == null) return List<ScenePrimitive>.unmodifiable(result);
         points.add(_point(view.x, view.y));
       }
       final primitive = FilledPolygonPrimitive.create(
@@ -713,8 +948,9 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
         points: points,
         maximumPoints: _sceneBuilder.limits.maximumPointsPerPrimitive,
       );
-      if (primitive is! Ok<FilledPolygonPrimitive, StructuredFailure>)
-        return const [];
+      if (primitive is! Ok<FilledPolygonPrimitive, StructuredFailure>) {
+        return List<ScenePrimitive>.unmodifiable(result);
+      }
       result.add(primitive.value);
     }
     return result;
@@ -749,9 +985,14 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
 }
 
 final class _CanvasPainter extends CustomPainter {
-  _CanvasPainter({required this.snapshot, required Listenable repaint})
-    : super(repaint: repaint);
+  _CanvasPainter({
+    required this.snapshot,
+    required this.previewPrimitiveCount,
+    required this.eraserPathLength,
+  });
   final RenderSnapshot? snapshot;
+  final int previewPrimitiveCount;
+  final int eraserPathLength;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -803,6 +1044,11 @@ final class _CanvasPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _CanvasPainter old) => old.snapshot != snapshot;
+
+  @override
+  String toString() =>
+      'CanvasPainter(previews: $previewPrimitiveCount, '
+      'eraserPath: $eraserPathLength)';
 }
 
 Point2 _point(double x, double y) => _ok(Point2.create(x: x, y: y));

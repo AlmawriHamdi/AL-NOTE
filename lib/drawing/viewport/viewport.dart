@@ -44,6 +44,7 @@ final class ViewportSnapshot {
     required this.minimumZoom,
     required this.maximumZoom,
     required this.revision,
+    required this.visiblePageRect,
   });
 
   /// Creates a finite invertible viewport with injected zoom range.
@@ -64,6 +65,27 @@ final class ViewportSnapshot {
         zoom > maximumZoom) {
       return Err(_failure('invalid_zoom'));
     }
+    final pageWidth = extent.width / zoom;
+    final pageHeight = extent.height / zoom;
+    final right = pageOrigin.x + pageWidth;
+    final bottom = pageOrigin.y + pageHeight;
+    if (!pageWidth.isFinite ||
+        !pageHeight.isFinite ||
+        !right.isFinite ||
+        !bottom.isFinite ||
+        right <= pageOrigin.x ||
+        bottom <= pageOrigin.y) {
+      return Err(_failure('unrepresentable_viewport'));
+    }
+    final visible = Rect2.fromEdges(
+      left: pageOrigin.x,
+      top: pageOrigin.y,
+      right: right,
+      bottom: bottom,
+    );
+    if (visible is! Ok<Rect2, StructuredFailure>) {
+      return Err(_failure('unrepresentable_viewport'));
+    }
     return Ok(
       ViewportSnapshot._(
         extent: extent,
@@ -72,6 +94,7 @@ final class ViewportSnapshot {
         minimumZoom: minimumZoom,
         maximumZoom: maximumZoom,
         revision: revision,
+        visiblePageRect: visible.value,
       ),
     );
   }
@@ -114,13 +137,8 @@ final class ViewportSnapshot {
     return Ok(pixels / zoom);
   }
 
-  /// Visible Page-space rectangle.
-  Rect2 get visiblePageRect => _rect(
-    pageOrigin.x,
-    pageOrigin.y,
-    pageOrigin.x + extent.width / zoom,
-    pageOrigin.y + extent.height / zoom,
-  );
+  /// Prevalidated visible Page-space rectangle.
+  final Rect2 visiblePageRect;
 
   /// Returns a translated snapshot if [expectedRevision] is current.
   Result<ViewportSnapshot, StructuredFailure> translated({
@@ -279,11 +297,6 @@ extension on Point2 {
   Result<Point2, StructuredFailure> added(Vector2 delta) =>
       Point2.create(x: x + delta.x, y: y + delta.y);
 }
-
-Rect2 _rect(double left, double top, double right, double bottom) =>
-    (Rect2.fromEdges(left: left, top: top, right: right, bottom: bottom)
-            as Ok<Rect2, StructuredFailure>)
-        .value;
 
 StructuredFailure _failure(String leaf) => StructuredFailure(
   code: 'drawing.viewport.$leaf',

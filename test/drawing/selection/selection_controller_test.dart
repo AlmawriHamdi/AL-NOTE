@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import 'dart:collection';
+
 import 'package:al_note/core/primitives.dart';
 import 'package:al_note/documents/commands.dart';
 import 'package:al_note/documents/document_model.dart';
@@ -252,6 +254,7 @@ void main() {
           layerMembership: {selected.objectId: layer},
           aggregateBounds: bounds,
           transformPreview: null,
+          maximumTargets: 8,
         ),
         SelectionState.create(
           activePageId: null,
@@ -262,6 +265,7 @@ void main() {
           layerMembership: {selected.objectId: layer},
           aggregateBounds: bounds,
           transformPreview: null,
+          maximumTargets: 8,
         ),
         SelectionState.create(
           activePageId: page,
@@ -272,6 +276,7 @@ void main() {
           layerMembership: {selected.objectId: layer},
           aggregateBounds: bounds,
           transformPreview: null,
+          maximumTargets: 8,
         ),
         SelectionState.create(
           activePageId: page,
@@ -282,6 +287,7 @@ void main() {
           layerMembership: const {},
           aggregateBounds: bounds,
           transformPreview: null,
+          maximumTargets: 8,
         ),
       ];
       expect(
@@ -300,6 +306,7 @@ void main() {
                 layerMembership: memberships,
                 aggregateBounds: bounds,
                 transformPreview: null,
+                maximumTargets: 8,
               )
               as Ok<SelectionState, SelectionFailure>;
       targets.clear();
@@ -1093,6 +1100,7 @@ void main() {
           preconditions: valid.preconditions,
           oldBounds: valid.oldBounds,
           newBounds: valid.newBounds,
+          maximumTargets: 8,
         ),
         isA<Err<WholeObjectTransformPreview, SelectionFailure>>(),
       );
@@ -1108,6 +1116,7 @@ void main() {
           preconditions: RevisionPreconditions(),
           oldBounds: valid.oldBounds,
           newBounds: valid.newBounds,
+          maximumTargets: 8,
         ),
         isA<Err<WholeObjectTransformPreview, SelectionFailure>>(),
       );
@@ -1124,6 +1133,7 @@ void main() {
           },
           aggregateBounds: valid.oldBounds,
           transformPreview: valid,
+          maximumTargets: 8,
         ),
         isA<Err<SelectionState, SelectionFailure>>(),
       );
@@ -1148,6 +1158,7 @@ void main() {
           layerMembership: const {},
           aggregateBounds: valid.oldBounds,
           transformPreview: valid,
+          maximumTargets: 8,
         ),
         isA<Err<SelectionState, SelectionFailure>>(),
       );
@@ -1164,6 +1175,7 @@ void main() {
           preconditions: valid.preconditions,
           oldBounds: valid.oldBounds,
           newBounds: valid.newBounds,
+          maximumTargets: 8,
         ),
         isA<Err<WholeObjectTransformPreview, SelectionFailure>>(),
       );
@@ -1206,6 +1218,7 @@ void main() {
         preconditions: preconditions,
         oldBounds: valid.oldBounds,
         newBounds: valid.newBounds,
+        maximumTargets: 8,
       );
 
       final extraObject = ObjectId.fromUuid(testUuid(997));
@@ -1260,6 +1273,7 @@ void main() {
           layerMembership: wrongMembership,
           aggregateBounds: valid.oldBounds,
           transformPreview: valid,
+          maximumTargets: 8,
         ),
         isA<Err<SelectionState, SelectionFailure>>(),
       );
@@ -1277,6 +1291,78 @@ void main() {
       expect(copied.value.targetLayerMembership, valid.targetLayerMembership);
       expect(copied.value.targetLayerMembership.clear, throwsUnsupportedError);
     });
+
+    test(
+      'public Selection factories bound hostile collections incrementally',
+      () {
+        final coordinator = phase3Coordinator();
+        final controller = SelectionController(
+          objectRegistry: editableTestRegistry(),
+          coalescingBoundarySink: coordinator,
+        );
+        final snapshot = coordinator.snapshot;
+        final page = snapshot.root.pages.single;
+        controller.replace(root: snapshot.root, targets: [target(page.id, 1)]);
+        controller.beginTransform(
+          document: snapshot,
+          operation: TranslationTransformOperation2D(
+            modelValue(Vector2.create(x: 1, y: 0)),
+          ),
+        );
+        final valid = controller.state.transformPreview!;
+        final tail = _SelectionTailIterable<ObjectId>(valid.targetIds);
+        expect(
+          WholeObjectTransformPreview.create(
+            documentId: valid.documentId,
+            pageId: valid.pageId,
+            targetIds: tail,
+            operation: valid.operation,
+            baseObjects: valid.baseObjects,
+            candidateObjects: valid.candidateObjects,
+            targetLayerMembership: valid.targetLayerMembership,
+            preconditions: valid.preconditions,
+            oldBounds: valid.oldBounds,
+            newBounds: valid.newBounds,
+            maximumTargets: 1,
+          ),
+          isA<Err<WholeObjectTransformPreview, SelectionFailure>>(),
+        );
+        expect(tail.rejectedCurrentRead, isFalse);
+        expect(
+          WholeObjectTransformPreview.create(
+            documentId: valid.documentId,
+            pageId: valid.pageId,
+            targetIds: valid.targetIds,
+            operation: valid.operation,
+            baseObjects: _ThrowingEntriesMap<ObjectId, ObjectEnvelope>(),
+            candidateObjects: valid.candidateObjects,
+            targetLayerMembership: valid.targetLayerMembership,
+            preconditions: valid.preconditions,
+            oldBounds: valid.oldBounds,
+            newBounds: valid.newBounds,
+            maximumTargets: 1,
+          ),
+          isA<Err<WholeObjectTransformPreview, SelectionFailure>>(),
+        );
+        final accepted = SelectionState.create(
+          activePageId: page.id,
+          targets: controller.state.targets,
+          primaryTarget: controller.state.primaryTarget,
+          revision: controller.state.revision,
+          operationMode: controller.state.operationMode,
+          layerMembership: controller.state.layerMembership,
+          aggregateBounds: controller.state.aggregateBounds,
+          transformPreview: controller.state.transformPreview,
+          maximumTargets: 1,
+        );
+        expect(accepted, isA<Ok<SelectionState, SelectionFailure>>());
+        expect(
+          () => (accepted as Ok<SelectionState, SelectionFailure>).value.targets
+              .clear(),
+          throwsUnsupportedError,
+        );
+      },
+    );
   });
 }
 
@@ -1303,6 +1389,51 @@ AtomicWholeObjectTransformRequest transformRequestForSelectionTest(
       operation: operation,
     ),
   );
+}
+
+final class _SelectionTailIterable<T> extends Iterable<T> {
+  _SelectionTailIterable(this.values);
+  final List<T> values;
+  bool rejectedCurrentRead = false;
+
+  @override
+  int get length => throw StateError('untrusted length');
+
+  @override
+  Iterator<T> get iterator => _SelectionTailIterator<T>(this);
+}
+
+final class _SelectionTailIterator<T> implements Iterator<T> {
+  _SelectionTailIterator(this.owner);
+  final _SelectionTailIterable<T> owner;
+  var index = -1;
+
+  @override
+  bool moveNext() => ++index <= owner.values.length;
+
+  @override
+  T get current {
+    if (index >= owner.values.length) {
+      owner.rejectedCurrentRead = true;
+      throw StateError('secret rejected current');
+    }
+    return owner.values[index];
+  }
+}
+
+final class _ThrowingEntriesMap<K, V> extends MapBase<K, V> {
+  @override
+  Iterable<MapEntry<K, V>> get entries => throw StateError('secret entries');
+  @override
+  V? operator [](Object? key) => null;
+  @override
+  void operator []=(K key, V value) => throw UnsupportedError('immutable');
+  @override
+  void clear() => throw UnsupportedError('immutable');
+  @override
+  Iterable<K> get keys => const Iterable.empty();
+  @override
+  V? remove(Object? key) => null;
 }
 
 const _appearanceChange = ObjectReplacementChangeCategories(

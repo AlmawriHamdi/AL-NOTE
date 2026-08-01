@@ -18,6 +18,7 @@ final _limits = _ok(
     maximumSamplesPerStroke: 16,
     maximumUnknownFields: 8,
     maximumNestingDepth: 8,
+    maximumUnknownNodes: 1024,
     maximumCoordinateMagnitude: 10000,
     maximumStrokeWidth: 100,
     maximumAbsoluteTilt: 2,
@@ -212,6 +213,163 @@ void main() {
       expect(coordinator.execute(retiredReuse), isA<Err<Object?, Object?>>());
     },
   );
+
+  test(
+    'collection replacements publish only authoritative change evidence',
+    () {
+      final coordinator = _coordinator();
+      final initial = coordinator.snapshot;
+      final page = initial.root.pages.single, layer = page.layers.single;
+      final object = _object();
+      final add = _ok(
+        AtomicObjectCollectionEditRequest.create(
+          documentId: initial.root.id,
+          metadata: _metadata(910),
+          preconditions: RevisionPreconditions(
+            pages: {page.id: initial.revisions.pages[page.id]!},
+            layerMembership: {
+              layer.id: initial.revisions.layerMembership[layer.id]!,
+            },
+          ),
+          pageId: page.id,
+          additions: [
+            ObjectCollectionAddition(layerId: layer.id, object: object),
+          ],
+          maximumOperations: 1,
+        ),
+      );
+      expect(coordinator.execute(add), isA<Ok<Object?, Object?>>());
+
+      final beforeAppearance = coordinator.snapshot;
+      final appearance = _replacement(object, argb: 0xffabcdef);
+      final appearanceRequest = _ok(
+        AtomicObjectCollectionEditRequest.create(
+          documentId: beforeAppearance.root.id,
+          metadata: _metadata(911),
+          preconditions: RevisionPreconditions(
+            pages: {page.id: beforeAppearance.revisions.pages[page.id]!},
+            objects: {
+              object.id: beforeAppearance.revisions.objects[object.id]!,
+            },
+            layerMembership: {
+              layer.id: beforeAppearance.revisions.layerMembership[layer.id]!,
+            },
+          ),
+          pageId: page.id,
+          replacements: [appearance],
+          replacementChangeCategories: const ObjectReplacementChangeCategories(
+            appearance: true,
+            text: false,
+            metadata: false,
+          ),
+          maximumOperations: 1,
+        ),
+      );
+      final committed = _ok(coordinator.execute(appearanceRequest));
+      expect(committed.change.flags.geometry, isFalse);
+      expect(committed.change.flags.appearance, isTrue);
+      expect(committed.change.flags.metadata, isFalse);
+      expect(coordinator.undo(), isA<Ok<Object?, Object?>>());
+      expect(coordinator.redo(), isA<Ok<Object?, Object?>>());
+
+      final beforeGeometry = coordinator.snapshot;
+      final geometry = _replacement(appearance, x: 8);
+      final falseClaim = _ok(
+        AtomicObjectCollectionEditRequest.create(
+          documentId: beforeGeometry.root.id,
+          metadata: _metadata(912),
+          preconditions: RevisionPreconditions(
+            pages: {page.id: beforeGeometry.revisions.pages[page.id]!},
+            objects: {object.id: beforeGeometry.revisions.objects[object.id]!},
+            layerMembership: {
+              layer.id: beforeGeometry.revisions.layerMembership[layer.id]!,
+            },
+          ),
+          pageId: page.id,
+          replacements: [geometry],
+          maximumOperations: 1,
+        ),
+      );
+      expect(coordinator.execute(falseClaim), isA<Err<Object?, Object?>>());
+      expect(coordinator.snapshot.root, beforeGeometry.root);
+    },
+  );
+
+  test('classifier errors and exceptions are redacted before side effects', () {
+    for (final mode in _HostileClassifierMode.values) {
+      final generator = _CountingUuidGenerator();
+      final estimator = _CountingHistoryEstimator();
+      final object = _object();
+      final root = testNotebook(
+        sections: [
+          testSection(
+            pages: [
+              testPage(
+                layers: [
+                  testContentLayer(objects: [object]),
+                ],
+              ),
+            ],
+          ),
+        ],
+      );
+      final registry = _ok(
+        ObjectRegistry.create([_HostileClassifierDefinition(mode)]),
+      );
+      final coordinator = _ok(
+        DocumentMutationCoordinator.create(
+          initialRoot: root,
+          validator: DocumentValidator(registry),
+          uuidGenerator: generator,
+          historyLimits: _ok(
+            HistoryLimits.create(
+              maximumRetainedCommandCount: 10,
+              maximumEstimatedRetainedBytes: 100000,
+            ),
+          ),
+          retainedCostEstimator: estimator,
+          maximumListeners: 2,
+        ),
+      );
+      var notifications = 0;
+      _ok(coordinator.addListener((_) => notifications += 1));
+      final before = coordinator.snapshot;
+      final page = root.pages.single, layer = page.layers.single;
+      final request = _ok(
+        AtomicObjectCollectionEditRequest.create(
+          documentId: root.id,
+          metadata: _metadata(920 + mode.index),
+          preconditions: RevisionPreconditions(
+            pages: {page.id: before.revisions.pages[page.id]!},
+            objects: {object.id: before.revisions.objects[object.id]!},
+            layerMembership: {
+              layer.id: before.revisions.layerMembership[layer.id]!,
+            },
+          ),
+          pageId: page.id,
+          replacements: [_replacement(object, argb: 0xffabcdef)],
+          replacementChangeCategories: const ObjectReplacementChangeCategories(
+            appearance: true,
+            text: false,
+            metadata: false,
+          ),
+          maximumOperations: 1,
+        ),
+      );
+      final callsBefore = generator.calls;
+      final result = coordinator.execute(request);
+      expect(result, isA<Err<CommandCommit, CommandFailure>>());
+      final failure = (result as Err<CommandCommit, CommandFailure>).error;
+      expect(failure.code, 'documents.commands.change_evidence_unavailable');
+      expect(failure.toString(), isNot(contains('classifier-secret')));
+      expect(identical(coordinator.snapshot.root, before.root), isTrue);
+      expect(coordinator.snapshot.revisions, before.revisions);
+      expect(coordinator.retainedHistoryCount, 0);
+      expect(generator.calls, callsBefore);
+      expect(estimator.calls, 0);
+      expect(notifications, 0);
+    }
+  });
 }
 
 DocumentMutationCoordinator _coordinator() {
@@ -293,7 +451,150 @@ ObjectEnvelope _object() {
   );
 }
 
+ObjectEnvelope _replacement(ObjectEnvelope source, {int? argb, double? x}) {
+  final payload = _ok(
+    HandwritingPayload.decode(source.payload, limits: _limits),
+  );
+  final oldStroke = payload.strokes.single;
+  final style = _ok(
+    StrokeStyle.create(
+      argb: argb ?? oldStroke.style.argb,
+      opacity: oldStroke.style.opacity,
+      baseWidth: oldStroke.style.baseWidth,
+      pressureInfluence: oldStroke.style.pressureInfluence,
+      minimumPressureFactor: oldStroke.style.minimumPressureFactor,
+      limits: _limits,
+      unknownFields: oldStroke.style.unknownFields,
+    ),
+  );
+  final samples = oldStroke.samples
+      .map(
+        (sample) => _ok(
+          StrokeSample.create(
+            position: _ok(
+              Point2.create(x: x ?? sample.position.x, y: sample.position.y),
+            ),
+            timeMicros: sample.timeMicros,
+            limits: _limits,
+            pressure: sample.pressure,
+            tilt: sample.tilt,
+            orientation: sample.orientation,
+            unknownFields: sample.unknownFields,
+          ),
+        ),
+      )
+      .toList();
+  final stroke = _ok(
+    HandwritingStroke.create(
+      id: oldStroke.id,
+      samples: samples,
+      style: style,
+      limits: _limits,
+      unknownFields: oldStroke.unknownFields,
+    ),
+  );
+  final replacementPayload = _ok(
+    HandwritingPayload.create(
+      strokes: [stroke],
+      limits: _limits,
+      unknownFields: payload.unknownFields,
+    ),
+  );
+  return _ok(
+    ObjectEnvelope.create(
+      id: source.id,
+      typeKey: source.typeKey,
+      envelopeVersion: source.envelopeVersion,
+      typeSchemaVersion: source.typeSchemaVersion,
+      transform: source.transform,
+      visible: source.visible,
+      locked: source.locked,
+      payload: replacementPayload.encode(),
+      extensionData: source.extensionData,
+    ),
+  );
+}
+
 T _ok<T, E>(Result<T, E> result) => (result as Ok<T, E>).value;
+
+enum _HostileClassifierMode { returnedError, thrownException }
+
+final class _HostileClassifierDefinition
+    implements ObjectTypeDefinition, ObjectPayloadChangeClassifier {
+  _HostileClassifierDefinition(this.mode);
+  final _HostileClassifierMode mode;
+  final HandwritingObjectTypeDefinition _delegate =
+      HandwritingObjectTypeDefinition(_limits);
+
+  @override
+  ObjectTypeKey get typeKey => _delegate.typeKey;
+  @override
+  List<SchemaVersion> get supportedSchemaVersions =>
+      _delegate.supportedSchemaVersions;
+  @override
+  ObjectTypeCapabilities get capabilities => _delegate.capabilities;
+  @override
+  List<ObjectPayloadMigrationContract> get migrations => _delegate.migrations;
+  @override
+  ValidationReport validatePayload(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => _delegate.validatePayload(payload, schemaVersion);
+  @override
+  Result<Rect2, StructuredFailure> intrinsicGeometry(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => _delegate.intrinsicGeometry(payload, schemaVersion);
+  @override
+  Result<List<ResourceReference>, StructuredFailure> resourceReferences(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => _delegate.resourceReferences(payload, schemaVersion);
+  @override
+  Result<PreservedData, StructuredFailure> duplicatePayload(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+    IdentityRemapping remapping,
+  ) => _delegate.duplicatePayload(payload, schemaVersion, remapping);
+  @override
+  Result<ObjectPayloadChangeSemantics, StructuredFailure> classifyPayloadChange(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  ) => switch (mode) {
+    _HostileClassifierMode.returnedError => Err(
+      StructuredFailure(
+        code: 'hostile.classifier_failure',
+        category: FailureCategory.dependency,
+        retryDisposition: RetryDisposition.never,
+        message: 'classifier-secret-returned',
+      ),
+    ),
+    _HostileClassifierMode.thrownException => throw StateError(
+      'classifier-secret-thrown',
+    ),
+  };
+}
+
+final class _CountingUuidGenerator implements UuidGenerator {
+  int calls = 0;
+  @override
+  Result<UuidIdentifier, StructuredFailure> generateV4() {
+    calls += 1;
+    return Ok(testUuid(6000 + calls));
+  }
+}
+
+final class _CountingHistoryEstimator implements HistoryRetainedCostEstimator {
+  int calls = 0;
+  @override
+  Result<HistoryRetainedCost, StructuredFailure> estimate(
+    HistoryCostEstimateInput input,
+  ) {
+    calls += 1;
+    return HistoryRetainedCost.create(100);
+  }
+}
 
 final class _TailIterable<T> extends Iterable<T> {
   _TailIterable(this.values);

@@ -19,6 +19,7 @@ void main() {
     maximumSamplesPerStroke: 10000,
     maximumUnknownFields: 256,
     maximumNestingDepth: 32,
+    maximumUnknownNodes: 100000,
     maximumCoordinateMagnitude: 1000000,
     maximumStrokeWidth: 1000,
     maximumAbsoluteTilt: 1.5707963267948966,
@@ -28,6 +29,7 @@ void main() {
     maximumElements: 20000,
     maximumVertices: 400000,
     ellipseVertexCount: 16,
+    maximumContainmentChecks: 1000000,
   ).fold<StrokeGeometryLimits?>(onOk: (value) => value, onErr: (_) => null);
   final rendering = RenderingLimits.create(
     maximumPrimitives: 400000,

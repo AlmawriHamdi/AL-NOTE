@@ -144,6 +144,39 @@ abstract interface class ObjectTypeDefinition {
   );
 }
 
+/// Authoritative semantic categories for a supported payload replacement.
+final class ObjectPayloadChangeSemantics {
+  /// Creates closed, immutable change evidence.
+  const ObjectPayloadChangeSemantics({
+    required this.geometry,
+    required this.appearance,
+    required this.text,
+    required this.metadata,
+  });
+
+  /// Whether intrinsic payload geometry changed.
+  final bool geometry;
+
+  /// Whether visual styling changed independently of geometry.
+  final bool appearance;
+
+  /// Whether user-visible text semantics changed.
+  final bool text;
+
+  /// Whether nonvisual payload metadata changed.
+  final bool metadata;
+}
+
+/// Optional Object-type behavior that classifies a before/after payload pair.
+abstract interface class ObjectPayloadChangeClassifier {
+  /// Classifies one valid same-schema payload replacement without mutation.
+  Result<ObjectPayloadChangeSemantics, StructuredFailure> classifyPayloadChange(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  );
+}
+
 /// The closed result family for Object Registry resolution.
 sealed class ObjectResolution {
   const ObjectResolution({required this.envelope});
@@ -280,7 +313,8 @@ final class ObjectRegistry {
   String toString() => 'ObjectRegistry(length: ${definitions.length})';
 }
 
-final class _RegisteredObjectTypeDefinition implements ObjectTypeDefinition {
+final class _RegisteredObjectTypeDefinition
+    implements ObjectTypeDefinition, ObjectPayloadChangeClassifier {
   _RegisteredObjectTypeDefinition._({
     required ObjectTypeDefinition delegate,
     required this.typeKey,
@@ -369,6 +403,33 @@ final class _RegisteredObjectTypeDefinition implements ObjectTypeDefinition {
     SchemaVersion schemaVersion,
     IdentityRemapping remapping,
   ) => _delegate.duplicatePayload(payload, schemaVersion, remapping);
+
+  @override
+  Result<ObjectPayloadChangeSemantics, StructuredFailure> classifyPayloadChange(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  ) {
+    final delegate = _delegate;
+    final classifier = delegate is ObjectPayloadChangeClassifier
+        ? delegate as ObjectPayloadChangeClassifier
+        : null;
+    if (classifier == null) {
+      return Err(_definitionMetadataFailure());
+    }
+    try {
+      final result = classifier.classifyPayloadChange(
+        before,
+        after,
+        schemaVersion,
+      );
+      return result is Ok<ObjectPayloadChangeSemantics, StructuredFailure>
+          ? result
+          : Err(_definitionMetadataFailure());
+    } on Object {
+      return Err(_definitionMetadataFailure());
+    }
+  }
 }
 
 StructuredFailure _definitionMetadataFailure() => StructuredFailure(

@@ -10,6 +10,7 @@ import 'package:al_note/drawing/renderer.dart';
 import 'package:al_note/ui/canvas/phase6_canvas_runtime.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -100,7 +101,8 @@ void main() {
   testWidgets('partial Eraser is reachable through a real gesture', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(AlNoteApp(runtime: _runtime()));
+    final runtime = _runtime();
+    await tester.pumpWidget(AlNoteApp(runtime: runtime));
     final canvas = find.bySemanticsLabel('Handwriting canvas');
     final center = tester.getCenter(canvas);
     final draw = await tester.startGesture(
@@ -116,10 +118,23 @@ void main() {
       center + const Offset(40, -20),
       kind: PointerDeviceKind.mouse,
     );
-    await erase.moveBy(const Offset(0, 40));
+    await erase.moveBy(const Offset(0, 20));
+    await erase.moveBy(const Offset(20, 0));
+    await erase.moveBy(const Offset(0, 20));
+    await tester.pump();
+    expect(
+      _canvasPainterDescription(tester),
+      contains('previews: 1, eraserPath: 4'),
+    );
+    final beforeCommit = runtime.initialCoordinator.snapshot.revisions.document;
     await erase.up();
     await tester.pump();
     expect(find.text('Stroke partially erased'), findsOneWidget);
+    expect(_handwritingStrokeCount(runtime), 2);
+    expect(
+      runtime.initialCoordinator.snapshot.revisions.document.value,
+      beforeCommit.value + 1,
+    );
   });
 
   testWidgets('Escape cancels partial erase and releases pointer ownership', (
@@ -173,6 +188,159 @@ void main() {
     await next.up();
     await tester.pump();
     expect(find.text('Stroke committed'), findsOneWidget);
+  });
+
+  testWidgets('Pen and partial Eraser publish live transient feedback', (
+    WidgetTester tester,
+  ) async {
+    final runtime = _runtime();
+    await tester.pumpWidget(AlNoteApp(runtime: runtime));
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+    final blank = await _canvasBytes(tester);
+    final pen = await tester.startGesture(
+      tester.getCenter(canvas),
+      kind: PointerDeviceKind.mouse,
+    );
+    await pen.moveBy(const Offset(30, 0));
+    await tester.pump();
+    expect(await _canvasBytes(tester), isNot(equals(blank)));
+    expect(_canvasPainterDescription(tester), contains('eraserPath: 0'));
+    await pen.cancel();
+    await tester.pump();
+    expect(await _canvasBytes(tester), equals(blank));
+
+    await tester.tap(find.text('partialEraser'));
+    await tester.pump();
+    final revision = runtime.initialCoordinator.snapshot.revisions.document;
+    final erase = await tester.startGesture(
+      tester.getCenter(canvas),
+      kind: PointerDeviceKind.mouse,
+    );
+    for (var index = 0; index < 20; index += 1) {
+      await erase.moveBy(const Offset(1, 0));
+    }
+    await tester.pump();
+    expect(await _canvasBytes(tester), isNot(equals(blank)));
+    expect(
+      _canvasPainterDescription(tester),
+      contains('previews: 1, eraserPath: 21'),
+    );
+    expect(runtime.initialCoordinator.snapshot.revisions.document, revision);
+    await erase.cancel();
+    await tester.pump();
+    expect(runtime.initialCoordinator.snapshot.revisions.document, revision);
+  });
+
+  testWidgets('whole Eraser drag is one atomic sparse sweep with undo redo', (
+    WidgetTester tester,
+  ) async {
+    final runtime = _runtime();
+    await tester.pumpWidget(AlNoteApp(runtime: runtime));
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+    final center = tester.getCenter(canvas);
+    for (final y in [-25.0, 25.0]) {
+      final draw = await tester.startGesture(
+        center + Offset(-60, y),
+        kind: PointerDeviceKind.mouse,
+      );
+      await draw.moveBy(const Offset(120, 0));
+      await draw.up();
+      await tester.pump();
+    }
+    expect(_objectCount(runtime), 2);
+    await tester.tap(find.text('wholeEraser'));
+    await tester.pump();
+    final erase = await tester.startGesture(
+      center + const Offset(0, -60),
+      kind: PointerDeviceKind.mouse,
+    );
+    for (var index = 0; index < 12; index += 1) {
+      await erase.moveBy(const Offset(0, 10));
+    }
+    await tester.pump();
+    expect(_objectCount(runtime), 2);
+    expect(
+      _canvasPainterDescription(tester),
+      contains('previews: 1, eraserPath: 13'),
+    );
+    final beforeCommit = runtime.initialCoordinator.snapshot.revisions.document;
+    await erase.up();
+    await tester.pump();
+    expect(_objectCount(runtime), 0);
+    expect(
+      runtime.initialCoordinator.snapshot.revisions.document.value,
+      beforeCommit.value + 1,
+    );
+    await tester.tap(find.byTooltip('Undo'));
+    await tester.pump();
+    expect(_objectCount(runtime), 2);
+    await tester.tap(find.byTooltip('Redo'));
+    await tester.pump();
+    expect(_objectCount(runtime), 0);
+  });
+
+  testWidgets('malformed owned pointer events release routing fail-closed', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(AlNoteApp(runtime: _runtime()));
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+    final listener = tester.widget<Listener>(
+      find.byKey(const Key('phase6-canvas-listener')),
+    );
+    listener.onPointerDown!(
+      const PointerDownEvent(pointer: 40, position: Offset(double.nan, 0)),
+    );
+    final active = await tester.startGesture(
+      tester.getCenter(canvas),
+      pointer: 41,
+      kind: PointerDeviceKind.mouse,
+    );
+    listener.onPointerMove!(
+      const PointerMoveEvent(pointer: 42, position: Offset(double.nan, 0)),
+    );
+    await active.moveBy(const Offset(10, 0));
+    listener.onPointerUp!(
+      const PointerUpEvent(pointer: 41, position: Offset(double.nan, 0)),
+    );
+    await tester.pump();
+    expect(find.text('Gesture rejected'), findsOneWidget);
+    await active.cancel();
+    final next = await tester.startGesture(
+      tester.getCenter(canvas),
+      pointer: 43,
+      kind: PointerDeviceKind.mouse,
+    );
+    await next.moveBy(const Offset(20, 0));
+    await next.up();
+    await tester.pump();
+    expect(find.text('Stroke committed'), findsOneWidget);
+
+    for (final phase in ['move', 'cancel']) {
+      final pointer = phase == 'move' ? 44 : 45;
+      final owned = await tester.startGesture(
+        tester.getCenter(canvas),
+        pointer: pointer,
+        kind: PointerDeviceKind.mouse,
+      );
+      if (phase == 'move') {
+        listener.onPointerMove!(
+          PointerMoveEvent(
+            pointer: pointer,
+            position: const Offset(double.nan, 0),
+          ),
+        );
+      } else {
+        listener.onPointerCancel!(
+          PointerCancelEvent(
+            pointer: pointer,
+            position: const Offset(double.nan, 0),
+          ),
+        );
+      }
+      await tester.pump();
+      expect(find.text('Gesture rejected'), findsOneWidget);
+      await owned.cancel();
+    }
   });
 
   testWidgets('pen and partial input ceilings cancel without wedging routing', (
@@ -398,6 +566,7 @@ Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
         maximumSamplesPerStroke: maximumHandwritingSamples,
         maximumUnknownFields: 256,
         maximumNestingDepth: 32,
+        maximumUnknownNodes: 100000,
         maximumCoordinateMagnitude: 1000000,
         maximumStrokeWidth: 1000,
         maximumAbsoluteTilt: 1.5707963267948966,
@@ -409,6 +578,7 @@ Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
         maximumElements: maximumGeometryElements,
         maximumVertices: maximumGeometryVertices,
         ellipseVertexCount: ellipseVertexCount,
+        maximumContainmentChecks: 100000,
       ),
     ),
     renderingLimits: _ok(
@@ -444,6 +614,51 @@ Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
     maximumEraserFragments: 10000,
     maximumEraserOutputSamples: 200000,
   );
+}
+
+Future<Uint8List> _canvasBytes(WidgetTester tester) async {
+  late Uint8List result;
+  await tester.runAsync(() async {
+    final boundary = tester.renderObject<RenderRepaintBoundary>(
+      find.byKey(const Key('phase6-canvas-paint')),
+    );
+    final image = await boundary.toImage();
+    final data = await image.toByteData();
+    result = data!.buffer.asUint8List();
+    image.dispose();
+  });
+  return result;
+}
+
+String _canvasPainterDescription(WidgetTester tester) => tester
+    .widget<CustomPaint>(
+      find.descendant(
+        of: find.byKey(const Key('phase6-canvas-paint')),
+        matching: find.byType(CustomPaint),
+      ),
+    )
+    .painter
+    .toString();
+
+int _objectCount(Phase6CanvasRuntime runtime) => runtime
+    .initialCoordinator
+    .snapshot
+    .root
+    .pages
+    .expand((page) => page.layers)
+    .expand((layer) => layer.objects)
+    .length;
+
+int _handwritingStrokeCount(Phase6CanvasRuntime runtime) {
+  final object = runtime.initialCoordinator.snapshot.root.pages.single.layers
+      .expand((layer) => layer.objects)
+      .single;
+  return _ok(
+    HandwritingPayload.decode(
+      object.payload,
+      limits: runtime.handwritingLimits,
+    ),
+  ).strokes.length;
 }
 
 final class _RuntimeCountingUuidGenerator implements UuidGenerator {

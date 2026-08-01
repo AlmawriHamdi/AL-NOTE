@@ -285,9 +285,11 @@ final class HandwritingHitTestingDefinition
   }) => _area(
     object,
     mode,
-    (geometry) => mode == AreaHitMode.containment
-        ? geometry.containedByRectangle(area)
-        : geometry.intersectsRectangle(area),
+    (geometry) => Ok(
+      mode == AreaHitMode.containment
+          ? geometry.containedByRectangle(area)
+          : geometry.intersectsRectangle(area),
+    ),
   );
 
   @override
@@ -300,13 +302,14 @@ final class HandwritingHitTestingDefinition
     mode,
     (geometry) => mode == AreaHitMode.containment
         ? geometry.containedByPolygon(polygon)
-        : geometry.intersectsPolygon(polygon),
+        : Ok(geometry.intersectsPolygon(polygon)),
   );
 
   Result<List<StrokeId>, StructuredFailure> _area(
     ObjectEnvelope object,
     AreaHitMode mode,
-    bool Function(TransformedStrokeGeometry geometry) matches,
+    Result<bool, StructuredFailure> Function(TransformedStrokeGeometry geometry)
+    matches,
   ) {
     final payload = _payload(object);
     if (payload == null)
@@ -322,9 +325,11 @@ final class HandwritingHitTestingDefinition
           _failure('geometry_unavailable', FailureCategory.dependency),
         );
       }
-      if (matches(
+      final matched = matches(
         (geometry as Ok<TransformedStrokeGeometry, StructuredFailure>).value,
-      )) {
+      );
+      if (matched is Err<bool, StructuredFailure>) return Err(matched.error);
+      if ((matched as Ok<bool, StructuredFailure>).value) {
         result.add(stroke.id);
       }
     }

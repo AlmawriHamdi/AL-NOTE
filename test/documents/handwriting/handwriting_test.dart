@@ -13,6 +13,7 @@ final _limits = _ok(
     maximumSamplesPerStroke: 16,
     maximumUnknownFields: 8,
     maximumNestingDepth: 8,
+    maximumUnknownNodes: 1024,
     maximumCoordinateMagnitude: 10000,
     maximumStrokeWidth: 100,
     maximumAbsoluteTilt: 2,
@@ -122,6 +123,7 @@ void main() {
         maximumSamplesPerStroke: 1,
         maximumUnknownFields: 1,
         maximumNestingDepth: 1,
+        maximumUnknownNodes: 1,
         maximumCoordinateMagnitude: double.infinity,
         maximumStrokeWidth: 1,
         maximumAbsoluteTilt: 1,
@@ -221,6 +223,7 @@ void main() {
         maximumSamplesPerStroke: 1,
         maximumUnknownFields: 1,
         maximumNestingDepth: 2,
+        maximumUnknownNodes: 8,
         maximumCoordinateMagnitude: 10,
         maximumStrokeWidth: 10,
         maximumAbsoluteTilt: 2,
@@ -262,6 +265,91 @@ void main() {
       ),
       isA<Err<Object?, Object?>>(),
     );
+  });
+
+  test('unknown validation is iterative, node-bounded, and redaction-safe', () {
+    HandwritingLimits limits(int nodes, int depth) => _ok(
+      HandwritingLimits.create(
+        maximumStrokes: 1,
+        maximumSamplesPerStroke: 2,
+        maximumUnknownFields: 1,
+        maximumNestingDepth: depth,
+        maximumUnknownNodes: nodes,
+        maximumCoordinateMagnitude: 100,
+        maximumStrokeWidth: 10,
+        maximumAbsoluteTilt: 2,
+        maximumAbsoluteOrientation: 7,
+      ),
+    );
+
+    final exact = PreservedMap({
+      'a': PreservedMap({'b': const PreservedString('accepted-secret')}),
+    });
+    final accepted = HandwritingPayload.create(
+      strokes: [_stroke()],
+      limits: limits(3, 3),
+      unknownFields: exact,
+    );
+    expect(accepted, isA<Ok<Object?, Object?>>());
+    expect(_ok(accepted).unknownFields, exact);
+    expect(
+      HandwritingPayload.create(
+        strokes: [_stroke()],
+        limits: limits(2, 3),
+        unknownFields: exact,
+      ),
+      isA<Err<Object?, Object?>>(),
+    );
+
+    var deep = const PreservedString('never-expose-this') as PreservedData;
+    for (var index = 0; index < 20000; index += 1) {
+      deep = PreservedMap({'n': deep});
+    }
+    final rejected = HandwritingPayload.create(
+      strokes: [_stroke()],
+      limits: limits(100, 8),
+      unknownFields: PreservedMap({'future': deep}),
+    );
+    expect(rejected, isA<Err<Object?, Object?>>());
+    expect(rejected.toString(), isNot(contains('never-expose-this')));
+  });
+
+  test('wide unknown data reserves total nodes before accepting a child', () {
+    HandwritingLimits limits(int nodes) => _ok(
+      HandwritingLimits.create(
+        maximumStrokes: 1,
+        maximumSamplesPerStroke: 2,
+        maximumUnknownFields: 1000,
+        maximumNestingDepth: 4,
+        maximumUnknownNodes: nodes,
+        maximumCoordinateMagnitude: 100,
+        maximumStrokeWidth: 10,
+        maximumAbsoluteTilt: 2,
+        maximumAbsoluteOrientation: 7,
+      ),
+    );
+    final wide = PreservedMap({
+      'wide': PreservedList([
+        const PreservedString('one'),
+        const PreservedString('two'),
+        const PreservedString('rejected-tail-secret'),
+      ]),
+    });
+    expect(
+      HandwritingPayload.create(
+        strokes: [_stroke()],
+        limits: limits(5),
+        unknownFields: wide,
+      ),
+      isA<Ok<Object?, Object?>>(),
+    );
+    final rejected = HandwritingPayload.create(
+      strokes: [_stroke()],
+      limits: limits(4),
+      unknownFields: wide,
+    );
+    expect(rejected, isA<Err<Object?, Object?>>());
+    expect(rejected.toString(), isNot(contains('rejected-tail-secret')));
   });
 }
 

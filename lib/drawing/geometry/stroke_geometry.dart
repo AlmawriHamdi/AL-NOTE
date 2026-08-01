@@ -15,6 +15,7 @@ final class StrokeGeometryLimits {
     required this.maximumElements,
     required this.maximumVertices,
     required this.ellipseVertexCount,
+    required this.maximumContainmentChecks,
   });
 
   /// Creates Web-safe geometry ceilings and an ellipse resolution of at least 8.
@@ -22,13 +23,16 @@ final class StrokeGeometryLimits {
     required int maximumElements,
     required int maximumVertices,
     required int ellipseVertexCount,
+    required int maximumContainmentChecks,
   }) {
     if (maximumElements <= 0 ||
         maximumElements > Revision.maximumValue ||
         maximumVertices <= 0 ||
         maximumVertices > Revision.maximumValue ||
         ellipseVertexCount < 8 ||
-        ellipseVertexCount > maximumVertices) {
+        ellipseVertexCount > maximumVertices ||
+        maximumContainmentChecks <= 0 ||
+        maximumContainmentChecks > Revision.maximumValue) {
       return Err(_failure('invalid_limits'));
     }
     return Ok(
@@ -36,6 +40,7 @@ final class StrokeGeometryLimits {
         maximumElements: maximumElements,
         maximumVertices: maximumVertices,
         ellipseVertexCount: ellipseVertexCount,
+        maximumContainmentChecks: maximumContainmentChecks,
       ),
     );
   }
@@ -48,6 +53,10 @@ final class StrokeGeometryLimits {
 
   /// Deterministic vertex count used for transformed circular joins and caps.
   final int ellipseVertexCount;
+
+  /// Maximum edge and interval checks for one containment query.
+  /// Maximum edge and interval checks permitted for one containment query.
+  final int maximumContainmentChecks;
 }
 
 /// One immutable finite convex Page-space polygon forming visible stroke area.
@@ -64,8 +73,11 @@ final class StrokeGeometryElement {
 
 /// Immutable shared Page-space visible geometry for one transformed stroke.
 final class TransformedStrokeGeometry {
-  TransformedStrokeGeometry._(List<StrokeGeometryElement> elements, this.bounds)
-    : elements = List<StrokeGeometryElement>.unmodifiable(elements);
+  TransformedStrokeGeometry._(
+    List<StrokeGeometryElement> elements,
+    this.bounds,
+    this.maximumContainmentChecks,
+  ) : elements = List<StrokeGeometryElement>.unmodifiable(elements);
 
   /// Convex elements whose union is the visible transformed raw stroke.
   final List<StrokeGeometryElement> elements;
@@ -73,10 +85,15 @@ final class TransformedStrokeGeometry {
   /// Bounds of the complete visible geometry.
   final Rect2 bounds;
 
+  final int maximumContainmentChecks;
+
   /// Whether a Page-space point lies within geometry plus [tolerance].
   bool hitsPoint(Point2 point, double tolerance) {
     if (!tolerance.isFinite || tolerance < 0) return false;
-    if (!_expanded(bounds, tolerance).contains(point)) return false;
+    final expanded = _expanded(bounds, tolerance);
+    // If finite inputs overflow during the conservative bounds expansion, do
+    // not use the original bounds as a rejecting prefilter.
+    if (expanded != null && !expanded.contains(point)) return false;
     for (final element in elements) {
       if (_pointInConvex(point, element.vertices) ||
           _distanceToPolygon(point, element.vertices) <= tolerance) {
@@ -100,10 +117,42 @@ final class TransformedStrokeGeometry {
       elements.any((element) => _polygonsIntersect(element.vertices, polygon));
 
   /// Whether all visible geometry is contained by a validated simple polygon.
-  bool containedByPolygon(List<Point2> polygon) => elements.every(
-    (element) =>
-        element.vertices.every((point) => _pointInPolygon(point, polygon)),
-  );
+  Result<bool, StructuredFailure> containedByPolygon(List<Point2> polygon) {
+    var checks = 0;
+    bool consume() => ++checks <= maximumContainmentChecks;
+    for (final element in elements) {
+      for (final point in element.vertices) {
+        if (!consume()) return Err(_failure('containment_limit'));
+        if (!_pointInPolygon(point, polygon)) return const Ok(false);
+      }
+      for (var edge = 0; edge < element.vertices.length; edge += 1) {
+        final first = element.vertices[edge];
+        final second = element.vertices[(edge + 1) % element.vertices.length];
+        final parameters = <double>[0, 1];
+        for (var boundary = 0; boundary < polygon.length; boundary += 1) {
+          if (!consume()) return Err(_failure('containment_limit'));
+          final value = _segmentIntersectionParameter(
+            first,
+            second,
+            polygon[boundary],
+            polygon[(boundary + 1) % polygon.length],
+          );
+          if (value != null && value > 0 && value < 1) parameters.add(value);
+        }
+        parameters.sort();
+        for (var index = 1; index < parameters.length; index += 1) {
+          if (!consume()) return Err(_failure('containment_limit'));
+          final t = (parameters[index - 1] + parameters[index]) / 2;
+          final midpoint = _point(
+            first.x + (second.x - first.x) * t,
+            first.y + (second.y - first.y) * t,
+          );
+          if (!_pointInPolygon(midpoint, polygon)) return const Ok(false);
+        }
+      }
+    }
+    return const Ok(true);
+  }
 
   /// Whether visible geometry intersects a Page-space polyline swept by radius.
   bool intersectsSweptPath(List<Point2> path, double radius) {
@@ -276,7 +325,13 @@ final class StrokeGeometryResolver {
       }
       bounds = (merged as Ok<Rect2, StructuredFailure>).value;
     }
-    return Ok(TransformedStrokeGeometry._(elements, bounds));
+    return Ok(
+      TransformedStrokeGeometry._(
+        elements,
+        bounds,
+        limits.maximumContainmentChecks,
+      ),
+    );
   }
 }
 
@@ -311,12 +366,12 @@ Rect2? _boundsOf(List<Point2> points) {
   ).fold<Rect2?>(onOk: (value) => value, onErr: (_) => null);
 }
 
-Rect2 _expanded(Rect2 value, double amount) => Rect2.fromEdges(
+Rect2? _expanded(Rect2 value, double amount) => Rect2.fromEdges(
   left: value.left - amount,
   top: value.top - amount,
   right: value.right + amount,
   bottom: value.bottom + amount,
-).fold(onOk: (result) => result, onErr: (_) => value);
+).fold<Rect2?>(onOk: (result) => result, onErr: (_) => null);
 
 bool _pointInConvex(Point2 point, List<Point2> polygon) {
   double? sign;
@@ -348,20 +403,32 @@ double _distanceToPolygon(Point2 point, List<Point2> polygon) {
 
 double _segmentDistance(Point2 point, Point2 first, Point2 second) {
   final dx = second.x - first.x, dy = second.y - first.y;
-  final squared = dx * dx + dy * dy;
-  if (squared == 0)
-    return math.sqrt(
-      math.pow(point.x - first.x, 2) + math.pow(point.y - first.y, 2),
+  final scale = math.max(dx.abs(), dy.abs());
+  if (scale == 0) return _hypot(point.x - first.x, point.y - first.y);
+  if (!scale.isFinite) {
+    return math.min(
+      _hypot(point.x - first.x, point.y - first.y),
+      _hypot(point.x - second.x, point.y - second.y),
     );
-  final t = math.max(
-    0.0,
-    math.min(
-      1.0,
-      ((point.x - first.x) * dx + (point.y - first.y) * dy) / squared,
-    ),
-  );
+  }
+  final normalizedX = dx / scale, normalizedY = dy / scale;
+  final squared = normalizedX * normalizedX + normalizedY * normalizedY;
+  final projectedX = normalizedX == 0
+      ? 0.0
+      : (point.x - first.x) / scale * normalizedX;
+  final projectedY = normalizedY == 0
+      ? 0.0
+      : (point.y - first.y) / scale * normalizedY;
+  final t = math.max(0.0, math.min(1.0, (projectedX + projectedY) / squared));
   final x = first.x + t * dx, y = first.y + t * dy;
-  return math.sqrt(math.pow(point.x - x, 2) + math.pow(point.y - y, 2));
+  return _hypot(point.x - x, point.y - y);
+}
+
+double _hypot(double x, double y) {
+  final scale = math.max(x.abs(), y.abs());
+  if (scale == 0 || !scale.isFinite) return scale;
+  final a = x / scale, b = y / scale;
+  return scale * math.sqrt(a * a + b * b);
 }
 
 double _segmentToSegmentDistance(Point2 a, Point2 b, Point2 c, Point2 d) {
@@ -419,6 +486,20 @@ bool _segmentsIntersect(Point2 a, Point2 b, Point2 c, Point2 d) {
   if (third == 0 && onSegment(c, a, d)) return true;
   if (fourth == 0 && onSegment(c, b, d)) return true;
   return first.sign != second.sign && third.sign != fourth.sign;
+}
+
+double? _segmentIntersectionParameter(Point2 a, Point2 b, Point2 c, Point2 d) {
+  final rx = b.x - a.x, ry = b.y - a.y;
+  final sx = d.x - c.x, sy = d.y - c.y;
+  final denominator = rx * sy - ry * sx;
+  if (!denominator.isFinite || denominator == 0) return null;
+  final qx = c.x - a.x, qy = c.y - a.y;
+  final t = (qx * sy - qy * sx) / denominator;
+  final u = (qx * ry - qy * rx) / denominator;
+  if (!t.isFinite || !u.isFinite || t < 0 || t > 1 || u < 0 || u > 1) {
+    return null;
+  }
+  return t;
 }
 
 bool _pointInPolygon(Point2 point, List<Point2> polygon) {

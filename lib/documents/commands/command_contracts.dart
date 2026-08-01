@@ -162,10 +162,14 @@ abstract interface class CoalescingBoundarySink {
 final class ObjectReplacementChangeCategories {
   /// Creates declared payload-change categories.
   const ObjectReplacementChangeCategories({
+    this.geometry = false,
     required this.appearance,
     required this.text,
     required this.metadata,
   });
+
+  /// Whether intrinsic payload geometry changed.
+  final bool geometry;
 
   /// Whether appearance semantics changed.
   final bool appearance;
@@ -179,11 +183,12 @@ final class ObjectReplacementChangeCategories {
   @override
   bool operator ==(Object other) =>
       other is ObjectReplacementChangeCategories &&
+      other.geometry == geometry &&
       other.appearance == appearance &&
       other.text == text &&
       other.metadata == metadata;
   @override
-  int get hashCode => Object.hash(appearance, text, metadata);
+  int get hashCode => Object.hash(geometry, appearance, text, metadata);
 }
 
 /// Complete explicit coalescing metadata for an eligible command.
@@ -294,6 +299,7 @@ final class AtomicObjectCollectionEditRequest extends CommandRequest {
     required List<ObjectCollectionAddition> additions,
     required List<ObjectId> removals,
     required List<ObjectEnvelope> replacements,
+    required this.replacementChangeCategories,
   }) : additions = List.unmodifiable(additions),
        removals = List.unmodifiable(removals),
        replacements = List.unmodifiable(replacements);
@@ -307,6 +313,12 @@ final class AtomicObjectCollectionEditRequest extends CommandRequest {
     Iterable<ObjectCollectionAddition> additions = const [],
     Iterable<ObjectId> removals = const [],
     Iterable<ObjectEnvelope> replacements = const [],
+    ObjectReplacementChangeCategories replacementChangeCategories =
+        const ObjectReplacementChangeCategories(
+          appearance: false,
+          text: false,
+          metadata: false,
+        ),
     required int maximumOperations,
   }) {
     if (maximumOperations < 0 || maximumOperations > Revision.maximumValue) {
@@ -347,6 +359,7 @@ final class AtomicObjectCollectionEditRequest extends CommandRequest {
         additions: added,
         removals: removed,
         replacements: replaced,
+        replacementChangeCategories: replacementChangeCategories,
       ),
     );
   }
@@ -362,6 +375,9 @@ final class AtomicObjectCollectionEditRequest extends CommandRequest {
 
   /// Same-ID replacements.
   final List<ObjectEnvelope> replacements;
+
+  /// Caller claim checked against authoritative Object-type semantics.
+  final ObjectReplacementChangeCategories replacementChangeCategories;
 }
 
 /// An atomic ordered set of whole-Object replacements.

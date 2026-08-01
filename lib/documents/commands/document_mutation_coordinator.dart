@@ -358,6 +358,52 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         return Err(_failure('invalid_replacement', FailureCategory.validation));
       }
     }
+    var replacementGeometryChanged = false;
+    var replacementAppearanceChanged = false;
+    var replacementTextChanged = false;
+    var replacementMetadataChanged = false;
+    final geometryReplacementIds = <ObjectId>{};
+    for (final entry in replacementMap.entries) {
+      final before = current[entry.key]!.object;
+      ObjectPayloadChangeSemantics? evidence;
+      try {
+        final resolution = _validator.objectRegistry.resolve(before);
+        final classifier =
+            resolution is SupportedObjectResolution &&
+                resolution.definition is ObjectPayloadChangeClassifier
+            ? resolution.definition as ObjectPayloadChangeClassifier
+            : null;
+        final classified = classifier?.classifyPayloadChange(
+          before.payload,
+          entry.value.payload,
+          before.typeSchemaVersion,
+        );
+        if (classified is Ok<ObjectPayloadChangeSemantics, StructuredFailure>) {
+          evidence = classified.value;
+        }
+      } on Object {
+        evidence = null;
+      }
+      if (evidence == null) {
+        return Err(
+          _failure('change_evidence_unavailable', FailureCategory.dependency),
+        );
+      }
+      replacementGeometryChanged |= evidence.geometry;
+      replacementAppearanceChanged |= evidence.appearance;
+      replacementTextChanged |= evidence.text;
+      replacementMetadataChanged |= evidence.metadata;
+      if (evidence.geometry) geometryReplacementIds.add(entry.key);
+    }
+    final claims = request.replacementChangeCategories;
+    if (claims.geometry != replacementGeometryChanged ||
+        claims.appearance != replacementAppearanceChanged ||
+        claims.text != replacementTextChanged ||
+        claims.metadata != replacementMetadataChanged) {
+      return Err(
+        _failure('inaccurate_change_evidence', FailureCategory.validation),
+      );
+    }
     final additionsByLayer = <LayerId, List<ObjectEnvelope>>{};
     for (final item in request.additions)
       (additionsByLayer[item.layerId] ??= []).add(item.object);
@@ -420,10 +466,14 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         },
         oldObjectBounds: oldBounds,
         newObjectBounds: newBounds,
-        geometryChangedObjectIds: {...oldBounds.keys, ...newBounds.keys},
-        appearanceChanged: replacementMap.isNotEmpty,
-        textChanged: false,
-        metadataChanged: false,
+        geometryChangedObjectIds: {
+          ...request.removals,
+          ...request.additions.map((value) => value.object.id),
+          ...geometryReplacementIds,
+        },
+        appearanceChanged: replacementAppearanceChanged,
+        textChanged: replacementTextChanged,
+        metadataChanged: replacementMetadataChanged,
         addedResourceReferences: referencesAfter.difference(referencesBefore),
         removedResourceReferences: referencesBefore.difference(referencesAfter),
         addedObjectIds: request.additions.map((v) => v.object.id).toSet(),

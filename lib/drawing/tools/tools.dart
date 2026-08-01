@@ -1071,6 +1071,12 @@ createPartialEraseRequest({
     ),
     removals: removals,
     replacements: replacements,
+    replacementChangeCategories: ObjectReplacementChangeCategories(
+      geometry: replacements.isNotEmpty,
+      appearance: false,
+      text: false,
+      metadata: replacements.isNotEmpty,
+    ),
     maximumOperations: maximumCommandOperations,
   );
 }

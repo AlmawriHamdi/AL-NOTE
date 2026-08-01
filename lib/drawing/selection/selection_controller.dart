@@ -175,6 +175,7 @@ final class SelectionController {
           layerMembership: _state.layerMembership,
           aggregateBounds: _state.aggregateBounds,
           transformPreview: value,
+          maximumTargets: maximumTargets,
         );
         final failure = next.fold<SelectionFailure?>(
           onOk: (_) => null,
@@ -211,6 +212,7 @@ final class SelectionController {
           layerMembership: _state.layerMembership,
           aggregateBounds: _state.aggregateBounds,
           transformPreview: value,
+          maximumTargets: maximumTargets,
         );
         final failure = next.fold<SelectionFailure?>(
           onOk: (_) => null,
@@ -237,6 +239,7 @@ final class SelectionController {
       layerMembership: _state.layerMembership,
       aggregateBounds: _state.aggregateBounds,
       transformPreview: null,
+      maximumTargets: maximumTargets,
     );
     return _state;
   }
@@ -334,6 +337,7 @@ final class SelectionController {
       ),
       oldBounds: oldBounds,
       newBounds: newBounds,
+      maximumTargets: maximumTargets,
     );
   }
 
@@ -427,6 +431,7 @@ final class SelectionController {
       layerMembership: memberships,
       aggregateBounds: bounds,
       transformPreview: preview,
+      maximumTargets: maximumTargets,
     );
     final stateFailure = candidate.fold<SelectionFailure?>(
       onOk: (_) => null,
@@ -682,6 +687,7 @@ SelectionState _trustedSelectionState({
   required Map<ObjectId, LayerId> layerMembership,
   required Rect2? aggregateBounds,
   required WholeObjectTransformPreview? transformPreview,
+  required int maximumTargets,
 }) =>
     SelectionState.create(
       activePageId: activePageId,
@@ -692,6 +698,7 @@ SelectionState _trustedSelectionState({
       layerMembership: layerMembership,
       aggregateBounds: aggregateBounds,
       transformPreview: transformPreview,
+      maximumTargets: maximumTargets,
     ).fold(
       onOk: (value) => value,
       onErr: (failure) => throw StateError(

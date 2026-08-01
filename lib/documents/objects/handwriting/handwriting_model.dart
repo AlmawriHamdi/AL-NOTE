@@ -33,6 +33,7 @@ final class HandwritingLimits {
     required this.maximumSamplesPerStroke,
     required this.maximumUnknownFields,
     required this.maximumNestingDepth,
+    required this.maximumUnknownNodes,
     required this.maximumCoordinateMagnitude,
     required this.maximumStrokeWidth,
     required this.maximumAbsoluteTilt,
@@ -45,6 +46,7 @@ final class HandwritingLimits {
     required int maximumSamplesPerStroke,
     required int maximumUnknownFields,
     required int maximumNestingDepth,
+    required int maximumUnknownNodes,
     required double maximumCoordinateMagnitude,
     required double maximumStrokeWidth,
     required double maximumAbsoluteTilt,
@@ -58,6 +60,8 @@ final class HandwritingLimits {
         maximumUnknownFields > maximumWebSafeInteger ||
         maximumNestingDepth <= 0 ||
         maximumNestingDepth > maximumWebSafeInteger ||
+        maximumUnknownNodes <= 0 ||
+        maximumUnknownNodes > maximumWebSafeInteger ||
         !maximumCoordinateMagnitude.isFinite ||
         maximumCoordinateMagnitude <= 0 ||
         !maximumStrokeWidth.isFinite ||
@@ -74,6 +78,7 @@ final class HandwritingLimits {
         maximumSamplesPerStroke: maximumSamplesPerStroke,
         maximumUnknownFields: maximumUnknownFields,
         maximumNestingDepth: maximumNestingDepth,
+        maximumUnknownNodes: maximumUnknownNodes,
         maximumCoordinateMagnitude: maximumCoordinateMagnitude,
         maximumStrokeWidth: maximumStrokeWidth,
         maximumAbsoluteTilt: maximumAbsoluteTilt,
@@ -93,6 +98,9 @@ final class HandwritingLimits {
 
   /// Maximum preserved unknown-data nesting depth.
   final int maximumNestingDepth;
+
+  /// Maximum scalar and container nodes in one preserved unknown-data graph.
+  final int maximumUnknownNodes;
 
   /// Maximum absolute local coordinate magnitude.
   final double maximumCoordinateMagnitude;
@@ -116,6 +124,8 @@ final class HandwritingLimits {
       maximumUnknownFields <= maximumWebSafeInteger &&
       maximumNestingDepth > 0 &&
       maximumNestingDepth <= maximumWebSafeInteger &&
+      maximumUnknownNodes > 0 &&
+      maximumUnknownNodes <= maximumWebSafeInteger &&
       maximumCoordinateMagnitude.isFinite &&
       maximumCoordinateMagnitude > 0 &&
       maximumStrokeWidth.isFinite &&
@@ -529,7 +539,8 @@ final class HandwritingPayload {
 }
 
 /// Built-in Object Registry definition for handwriting schema 1.
-final class HandwritingObjectTypeDefinition implements ObjectTypeDefinition {
+final class HandwritingObjectTypeDefinition
+    implements ObjectTypeDefinition, ObjectPayloadChangeClassifier {
   /// Creates a definition whose validation uses explicit caller ceilings.
   const HandwritingObjectTypeDefinition(this.limits);
 
@@ -611,6 +622,107 @@ final class HandwritingObjectTypeDefinition implements ObjectTypeDefinition {
       limits: limits,
     ).map((value) => value.encode());
   }
+
+  @override
+  Result<ObjectPayloadChangeSemantics, StructuredFailure> classifyPayloadChange(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  ) {
+    if (schemaVersion != handwritingSchemaVersion) {
+      return Err(_failure('unsupported_schema'));
+    }
+    final first = HandwritingPayload.decode(before, limits: limits);
+    final second = HandwritingPayload.decode(after, limits: limits);
+    if (first is! Ok<HandwritingPayload, StructuredFailure> ||
+        second is! Ok<HandwritingPayload, StructuredFailure>) {
+      return Err(_failure('invalid_payload'));
+    }
+    final oldValue = first.value, newValue = second.value;
+    return Ok(
+      ObjectPayloadChangeSemantics(
+        geometry: !_sameGeometry(oldValue, newValue),
+        appearance: !_sameAppearance(oldValue, newValue),
+        text: false,
+        metadata: !_sameMetadata(oldValue, newValue),
+      ),
+    );
+  }
+}
+
+bool _sameStrokeStructure(HandwritingPayload a, HandwritingPayload b) {
+  if (a.strokes.length != b.strokes.length) return false;
+  for (var index = 0; index < a.strokes.length; index += 1) {
+    if (a.strokes[index].id != b.strokes[index].id) return false;
+  }
+  return true;
+}
+
+bool _sameGeometry(HandwritingPayload a, HandwritingPayload b) {
+  if (!_sameStrokeStructure(a, b)) return false;
+  for (var strokeIndex = 0; strokeIndex < a.strokes.length; strokeIndex += 1) {
+    final first = a.strokes[strokeIndex], second = b.strokes[strokeIndex];
+    if (first.samples.length != second.samples.length ||
+        first.style.baseWidth != second.style.baseWidth ||
+        first.style.pressureInfluence != second.style.pressureInfluence ||
+        first.style.minimumPressureFactor !=
+            second.style.minimumPressureFactor) {
+      return false;
+    }
+    for (
+      var sampleIndex = 0;
+      sampleIndex < first.samples.length;
+      sampleIndex += 1
+    ) {
+      final oldSample = first.samples[sampleIndex];
+      final newSample = second.samples[sampleIndex];
+      if (oldSample.position != newSample.position ||
+          oldSample.pressure != newSample.pressure) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool _sameAppearance(HandwritingPayload a, HandwritingPayload b) {
+  if (!_sameStrokeStructure(a, b)) return true;
+  for (var index = 0; index < a.strokes.length; index += 1) {
+    final first = a.strokes[index].style, second = b.strokes[index].style;
+    if (first.argb != second.argb || first.opacity != second.opacity) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _sameMetadata(HandwritingPayload a, HandwritingPayload b) {
+  if (!_sameStrokeStructure(a, b) || a.unknownFields != b.unknownFields) {
+    return false;
+  }
+  for (var strokeIndex = 0; strokeIndex < a.strokes.length; strokeIndex += 1) {
+    final first = a.strokes[strokeIndex], second = b.strokes[strokeIndex];
+    if (first.unknownFields != second.unknownFields ||
+        first.style.unknownFields != second.style.unknownFields ||
+        first.samples.length != second.samples.length) {
+      return false;
+    }
+    for (
+      var sampleIndex = 0;
+      sampleIndex < first.samples.length;
+      sampleIndex += 1
+    ) {
+      final oldSample = first.samples[sampleIndex];
+      final newSample = second.samples[sampleIndex];
+      if (oldSample.timeMicros != newSample.timeMicros ||
+          oldSample.tilt != newSample.tilt ||
+          oldSample.orientation != newSample.orientation ||
+          oldSample.unknownFields != newSample.unknownFields) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 PreservedMap _encodeStroke(HandwritingStroke value) =>
@@ -854,18 +966,44 @@ bool _unknownDataAllowed(
   HandwritingLimits limits,
   int depth,
 ) {
-  if (depth > limits.maximumNestingDepth) return false;
-  return switch (value) {
-    PreservedMap(:final values) =>
-      values.length <= limits.maximumUnknownFields &&
-          values.values.every(
-            (item) => _unknownDataAllowed(item, limits, depth + 1),
-          ),
-    PreservedList(:final values) =>
-      values.length <= limits.maximumUnknownFields &&
-          values.every((item) => _unknownDataAllowed(item, limits, depth + 1)),
-    _ => true,
-  };
+  final pending = <({PreservedData value, int depth})>[
+    (value: value, depth: depth),
+  ];
+  var acceptedNodes = 1;
+  try {
+    while (pending.isNotEmpty) {
+      final current = pending.removeLast();
+      if (current.depth > limits.maximumNestingDepth) {
+        return false;
+      }
+      Iterator<PreservedData>? children;
+      switch (current.value) {
+        case PreservedMap(:final values):
+          children = values.entries.map((entry) => entry.value).iterator;
+        case PreservedList(:final values):
+          children = values.iterator;
+        default:
+          continue;
+      }
+      var childCount = 0;
+      while (true) {
+        final hasNext = children.moveNext();
+        if (!hasNext) break;
+        if (childCount >= limits.maximumUnknownFields ||
+            acceptedNodes >= limits.maximumUnknownNodes ||
+            current.depth >= limits.maximumNestingDepth) {
+          return false;
+        }
+        final child = children.current;
+        childCount += 1;
+        acceptedNodes += 1;
+        pending.add((value: child, depth: current.depth + 1));
+      }
+    }
+  } on Object {
+    return false;
+  }
+  return true;
 }
 
 ValidationIssue _invalidIssue() =>
