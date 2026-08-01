@@ -192,6 +192,7 @@ final class SupportedObjectResolution extends ObjectResolution {
     required super.envelope,
     required this.definition,
     required this.report,
+    required this.supportsPayloadChangeClassification,
   });
 
   /// The resolved immutable definition.
@@ -199,6 +200,9 @@ final class SupportedObjectResolution extends ObjectResolution {
 
   /// Deterministic payload warnings, if any.
   final ValidationReport report;
+
+  /// Whether the captured definition can classify same-schema payload edits.
+  final bool supportsPayloadChangeClassification;
 }
 
 /// An Object whose type key is not registered.
@@ -303,6 +307,9 @@ final class ObjectRegistry {
         envelope: envelope,
         definition: definition,
         report: report,
+        supportsPayloadChangeClassification:
+            (definition as _RegisteredObjectTypeDefinition)
+                .supportsPayloadChangeClassification,
       );
     } on Object {
       return UnavailableObjectBehaviorResolution(envelope);
@@ -321,6 +328,7 @@ final class _RegisteredObjectTypeDefinition
     required this.supportedSchemaVersions,
     required this.capabilities,
     required this.migrations,
+    required this.supportsPayloadChangeClassification,
   }) : _delegate = delegate;
 
   factory _RegisteredObjectTypeDefinition.capture(
@@ -362,6 +370,8 @@ final class _RegisteredObjectTypeDefinition
         rotatable: capabilities.rotatable,
       ),
       migrations: migrations,
+      supportsPayloadChangeClassification:
+          definition is ObjectPayloadChangeClassifier,
     );
   }
 
@@ -378,6 +388,8 @@ final class _RegisteredObjectTypeDefinition
 
   @override
   final List<ObjectPayloadMigrationContract> migrations;
+
+  final bool supportsPayloadChangeClassification;
 
   @override
   ValidationReport validatePayload(

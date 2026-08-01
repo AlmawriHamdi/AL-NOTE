@@ -202,6 +202,30 @@ void main() {
       expect(barriers.boundaries, hasLength(1));
     });
 
+    test('clearing temporary Selection never changes document history', () {
+      final coordinator = phase3Coordinator();
+      final before = coordinator.snapshot;
+      final controller = SelectionController(
+        objectRegistry: editableTestRegistry(),
+        coalescingBoundarySink: coordinator,
+        maximumTargets: _maximumTestSelectionTargets,
+      );
+      expect(
+        controller.replace(
+          root: before.root,
+          targets: [target(before.root.pages.single.id, 1)],
+        ),
+        isA<Ok<SelectionState, SelectionFailure>>(),
+      );
+      expect(controller.discard(), isA<Ok<SelectionState, SelectionFailure>>());
+      final after = coordinator.snapshot;
+      expect(controller.state.isEmpty, isTrue);
+      expect(after.root, same(before.root));
+      expect(after.revisions, before.revisions);
+      expect(after.canUndo, before.canUndo);
+      expect(after.canRedo, before.canRedo);
+    });
+
     test('rejects duplicate, cross-Page, and invalid primary inputs', () {
       final root = phase3Notebook();
       final page = root.pages.single.id;

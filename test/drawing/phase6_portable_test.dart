@@ -143,6 +143,7 @@ void main() {
               maximumBehaviorResults: 16,
             ),
           ),
+          maximumCandidates: 16,
           maximumResults: 16,
           maximumLassoPoints: 64,
         ).point(page: page, pagePosition: _point(15, 10), pageTolerance: 1),
@@ -267,6 +268,7 @@ void main() {
           maximumBehaviorResults: 8,
         ),
       ),
+      maximumCandidates: 8,
       maximumResults: 8,
       maximumLassoPoints: 16,
     );
@@ -497,6 +499,7 @@ void main() {
             maximumBehaviorResults: 4,
           ),
         ),
+        maximumCandidates: 4,
         maximumResults: 4,
         maximumLassoPoints: 4,
       );
@@ -727,6 +730,7 @@ void main() {
           maximumBehaviorResults: 2,
         ),
       ),
+      maximumCandidates: 2,
       maximumResults: 1,
       maximumLassoPoints: 8,
     );
@@ -965,6 +969,592 @@ void main() {
     );
   });
 
+  test('whole Eraser plan reuses prepared geometry and target evidence', () {
+    final first = _object(110, [_sample(0, 0, 0), _sample(10, 0, 10)]);
+    final second = _object(111, [_sample(0, 10, 0), _sample(10, 10, 10)]);
+    final root = testNotebook(
+      sections: [
+        testSection(
+          pages: [
+            testPage(
+              layers: [
+                testContentLayer(objects: [first, second]),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+    final snapshot = _coordinator(root).snapshot;
+    final plan = _ok(
+      WholeEraseGesturePlan.prepare(
+        document: snapshot,
+        pageId: root.pages.single.id,
+        radius: .2,
+        handwritingLimits: _limits,
+        objectRegistry: _objectRegistry(),
+        geometryResolver: StrokeGeometryResolver(_geometryLimits()),
+        maximumObjects: 8,
+        maximumStrokes: 8,
+        maximumPoints: 8,
+        maximumTargets: 8,
+        maximumOperations: 4,
+      ),
+    );
+    expect(_ok(plan.acceptPoint(_point(5, -5))).newlyAffectedStrokeCount, 0);
+    expect(_ok(plan.acceptPoint(_point(5, 1))).newlyAffectedStrokeCount, 1);
+    expect(_ok(plan.acceptPoint(_point(5, 11))).newlyAffectedStrokeCount, 1);
+    expect(plan.processedSegmentCount, 3);
+    expect(plan.affectedStrokeCount, 2);
+    expect(plan.previews, hasLength(2));
+    final checksBeforeTerminal = plan.geometryCheckCount;
+    final generator = _CountingUuidGenerator();
+    final request = _ok(plan.createRequest(uuidGenerator: generator));
+    expect(request.removals, [first.id, second.id]);
+    expect(generator.calls, 1);
+    expect(plan.processedSegmentCount, 3);
+    expect(plan.geometryCheckCount, checksBeforeTerminal);
+  });
+
+  test(
+    'cached committed scene avoids rendering callbacks across Eraser moves',
+    () {
+      final object = _object(114, [_sample(0, 0, 0), _sample(10, 0, 10)]);
+      final root = testNotebook(
+        sections: [
+          testSection(
+            pages: [
+              testPage(
+                layers: [
+                  testContentLayer(objects: [object]),
+                ],
+              ),
+            ],
+          ),
+        ],
+      );
+      final registry = _objectRegistry();
+      final geometry = StrokeGeometryResolver(_geometryLimits());
+      final rendering = _CountingRenderingDefinition(
+        HandwritingRenderingDefinition(
+          handwritingLimits: _limits,
+          geometryResolver: geometry,
+        ),
+      );
+      final builder = PageSceneBuilder(
+        objectRegistry: registry,
+        renderingRegistry: _ok(
+          RenderingRegistry.create([rendering], maximumDefinitions: 1),
+        ),
+        limits: _renderingLimits(),
+      );
+      final snapshot = _coordinator(root).snapshot;
+      final viewport = _viewport(origin: _point(0, 0), zoom: 1);
+      final committed = _ok(
+        builder.buildCommitted(
+          page: root.pages.single,
+          viewport: viewport,
+          documentRevision: snapshot.revisions.document,
+        ),
+      );
+      expect(rendering.calls, 1);
+      final plan = _ok(
+        WholeEraseGesturePlan.prepare(
+          document: snapshot,
+          pageId: root.pages.single.id,
+          radius: .2,
+          handwritingLimits: _limits,
+          objectRegistry: registry,
+          geometryResolver: geometry,
+          maximumObjects: 8,
+          maximumStrokes: 8,
+          maximumPoints: 64,
+          maximumTargets: 8,
+          maximumOperations: 4,
+        ),
+      );
+      expect(plan.geometryResolutionCount, 1);
+      var committedCompositions = 1;
+      _ok(builder.compose(committed: committed));
+      for (var index = 0; index < 40; index += 1) {
+        final update = _ok(plan.acceptPoint(_point(5, index.isEven ? -2 : 2)));
+        if (update.changedObjectIds.isNotEmpty) {
+          committedCompositions += 1;
+          _ok(
+            builder.compose(
+              committed: committed,
+              excludedObjectIds: update.changedObjectIds
+                  .map(plan.previewFor)
+                  .whereType<EraserPreviewObject>()
+                  .map((preview) => preview.objectId),
+            ),
+          );
+        }
+        _ok(builder.composeOverlays(committed: committed));
+      }
+      expect(plan.processedSegmentCount, 40);
+      expect(plan.geometryResolutionCount, 1);
+      expect(committedCompositions, 2);
+      expect(rendering.calls, 1);
+    },
+  );
+
+  test(
+    'partial Eraser plan applies each segment once and commits its preview',
+    () {
+      final object = _object(112, [_sample(0, 0, 0), _sample(10, 0, 10)]);
+      final root = testNotebook(
+        sections: [
+          testSection(
+            pages: [
+              testPage(
+                layers: [
+                  testContentLayer(objects: [object]),
+                ],
+              ),
+            ],
+          ),
+        ],
+      );
+      final snapshot = _coordinator(root).snapshot;
+      final plan = _ok(
+        PartialEraseGesturePlan.prepare(
+          document: snapshot,
+          pageId: root.pages.single.id,
+          radius: .2,
+          handwritingLimits: _limits,
+          objectRegistry: _objectRegistry(),
+          geometryResolver: StrokeGeometryResolver(_geometryLimits()),
+          maximumObjects: 8,
+          maximumStrokes: 8,
+          maximumPoints: 64,
+          maximumIntersections: 16,
+          maximumFragments: 16,
+          maximumOutputSamples: 64,
+          maximumOperations: 4,
+        ),
+      );
+      expect(plan.preparedObjectCount, 1);
+      expect(plan.geometryResolutionCount, 1);
+      _ok(plan.acceptPoint(_point(5, -1)));
+      _ok(plan.acceptPoint(_point(5, 1)));
+      expect(plan.processedSegmentCount, 2);
+      expect(plan.hasChanges, isTrue);
+      final preview = plan.previews.single.strokes;
+      expect(preview.single.stroke, _payload(object).strokes.single);
+      expect(plan.geometryResolutionCount, 1);
+      final resolutionsAfterSplit = plan.geometryResolutionCount;
+      for (var index = 0; index < 20; index += 1) {
+        _ok(plan.acceptPoint(_point(50 + index.toDouble(), 50)));
+      }
+      expect(plan.geometryResolutionCount, resolutionsAfterSplit);
+      final splitCallsBeforeTerminal = plan.splitInvocationCount;
+      final generator = _CountingUuidGenerator();
+      final request = _ok(plan.createRequest(uuidGenerator: generator));
+      final committed = _payload(request.replacements.single).strokes;
+      expect(committed, hasLength(2));
+      expect(generator.calls, committed.length + 1);
+      expect(plan.processedSegmentCount, 22);
+      expect(plan.splitInvocationCount, splitCallsBeforeTerminal);
+      expect(plan.geometryResolutionCount, resolutionsAfterSplit);
+      expect(plan.fragmentGeometryResolutionCount, committed.length);
+    },
+  );
+
+  test('partial Eraser preview is exact transparent survivor geometry', () {
+    final erased = _stroke(301, [_sample(0, 0, 0), _sample(10, 0, 10)]);
+    final unaffected = _stroke(302, [_sample(0, 10, 0), _sample(10, 10, 10)]);
+    final object = testObject(
+      id: 301,
+      typeKey: handwritingObjectTypeKey,
+      schemaVersion: handwritingSchemaVersion,
+      payload: _ok(
+        HandwritingPayload.create(
+          strokes: [erased, unaffected],
+          limits: _limits,
+        ),
+      ).encode(),
+    );
+    final crossing = _copyObject(
+      _object(303, [_sample(5, -5, 0), _sample(5, 5, 10)]),
+      locked: true,
+    );
+    final root = testNotebook(
+      sections: [
+        testSection(
+          pages: [
+            testPage(
+              layers: [
+                testContentLayer(objects: [crossing, object]),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+    final resolver = StrokeGeometryResolver(_geometryLimits());
+    final plan = _ok(
+      PartialEraseGesturePlan.prepare(
+        document: _coordinator(root).snapshot,
+        pageId: root.pages.single.id,
+        radius: .25,
+        handwritingLimits: _limits,
+        objectRegistry: _objectRegistry(),
+        geometryResolver: resolver,
+        maximumObjects: 2,
+        maximumStrokes: 4,
+        maximumPoints: 16,
+        maximumIntersections: 16,
+        maximumFragments: 16,
+        maximumOutputSamples: 64,
+        maximumOperations: 2,
+      ),
+    );
+    final initial = _ok(plan.acceptPoint(_point(5, -1)));
+    final update = _ok(plan.acceptPoint(_point(5, 1)));
+    expect(update.changedObjectIds, {object.id});
+    expect(update.changedObjectIds, isNot(contains(crossing.id)));
+    final previewBySegment = <(StrokeId, int), EraserPreviewSegmentUpdate>{};
+    for (final evidence in [
+      ...initial.previewSegmentUpdates,
+      ...update.previewSegmentUpdates,
+    ]) {
+      previewBySegment[(evidence.strokeId, evidence.sourceSegment)] = evidence;
+    }
+    expect(previewBySegment.values.map((value) => value.strokeId).toSet(), {
+      erased.id,
+      unaffected.id,
+    });
+    final previewElements = previewBySegment.values
+        .expand((value) => value.elements)
+        .toList(growable: false);
+    expect(previewElements, isNotEmpty);
+    expect(
+      previewElements.any((element) => element.bounds.contains(_point(5, 0))),
+      isFalse,
+      reason: 'the predicted gap is absent geometry, not an opaque mask',
+    );
+    final renderingLimits = _renderingLimits();
+    final builder = PageSceneBuilder(
+      objectRegistry: _objectRegistry(),
+      renderingRegistry: _ok(
+        RenderingRegistry.create([
+          HandwritingRenderingDefinition(
+            handwritingLimits: _limits,
+            geometryResolver: resolver,
+          ),
+        ], maximumDefinitions: 1),
+      ),
+      limits: renderingLimits,
+    );
+    final committedScene = _ok(
+      builder.buildCommitted(
+        page: root.pages.single,
+        viewport: _viewport(origin: _point(0, 0), zoom: 1),
+        documentRevision: _revision(0),
+      ),
+    );
+    final visibleCommitted = _ok(
+      builder.compose(
+        committed: committedScene,
+        excludedObjectIds: {object.id},
+      ),
+    );
+    expect(
+      visibleCommitted.primitives,
+      committedScene.objects
+          .where((value) => value.objectId == crossing.id)
+          .single
+          .primitives,
+      reason: 'the unrelated crossing Object remains visible through the gap',
+    );
+    expect(
+      previewElements.any((element) => element.bounds.contains(_point(5, 10))),
+      isTrue,
+      reason: 'an unaffected Stroke in the same Object remains visible',
+    );
+
+    final request = _ok(
+      plan.createRequest(uuidGenerator: _CountingUuidGenerator()),
+    );
+    final terminal = _payload(request.replacements.single);
+    final terminalElements = terminal.strokes
+        .expand(
+          (stroke) => _ok(
+            resolver.resolve(stroke: stroke, localToPage: object.transform),
+          ).elements,
+        )
+        .toList(growable: false);
+    expect(
+      _geometryVertices(previewElements),
+      _geometryVertices(terminalElements),
+      reason: 'the last preview and terminal publication have equal geometry',
+    );
+    expect(plan.terminalMaterializationCount, 1);
+    expect(
+      plan.previewRangeMaterializationCount,
+      lessThanOrEqualTo(plan.splitInvocationCount * 2),
+    );
+  });
+
+  test(
+    'many-Object selection reuses bounded candidates and publishes once',
+    () {
+      final objects = [
+        for (var index = 0; index < 80; index += 1)
+          _object(400 + index, [
+            _sample(10, index * 2.0 + 10, 0),
+            _sample(90, index * 2.0 + 10, 1),
+          ]),
+      ];
+      NotebookDocument makeRoot(List<ObjectEnvelope> values) => testNotebook(
+        sections: [
+          testSection(
+            pages: [
+              testPage(layers: [testContentLayer(objects: values)]),
+            ],
+          ),
+        ],
+      );
+      final root = makeRoot(objects);
+      final resolver = StrokeGeometryResolver(_geometryLimits());
+      final cache = HandwritingGeometryCache(
+        maximumObjects: 100,
+        maximumStrokes: 100,
+      );
+      final definition = HandwritingHitTestingDefinition(
+        handwritingLimits: _limits,
+        geometryResolver: resolver,
+        geometryCache: cache,
+      );
+      final tester = PageHitTester(
+        objectRegistry: _objectRegistry(),
+        hitTestingRegistry: _ok(
+          HitTestingRegistry.create(
+            [definition],
+            maximumDefinitions: 1,
+            maximumBehaviorResults: 100,
+          ),
+        ),
+        maximumCandidates: 100,
+        maximumResults: 100,
+        maximumLassoPoints: 16,
+      );
+      final area = _rect(0, 0, 100, 200);
+      final first = _ok(
+        tester.rectangle(
+          page: root.pages.single,
+          area: area,
+          mode: AreaHitMode.containment,
+        ),
+      );
+      expect(first, hasLength(objects.length));
+      expect(tester.candidateIndexBuildCount, 1);
+      expect(tester.registryResolutionCount, objects.length);
+      expect(cache.resolutionCount, objects.length);
+      expect(definition.detailedHitCount, 0);
+
+      final coordinator = _coordinator(root);
+      final selection = SelectionController(
+        objectRegistry: _objectRegistry(),
+        coalescingBoundarySink: coordinator,
+        maximumTargets: 100,
+        handwritingLimits: _limits,
+        strokeGeometryResolver: resolver,
+        handwritingGeometryCache: cache,
+      );
+      final orderedTargets = first.reversed
+          .map((value) => value.toSelectionTarget())
+          .toList(growable: false);
+      _ok(selection.replace(root: root, targets: orderedTargets));
+      expect(selection.state.targets, orderedTargets);
+      expect(selection.publicationCount, 1);
+      expect(selection.targetResolutionCount, objects.length);
+      expect(cache.resolutionCount, objects.length);
+      _ok(selection.replace(root: root, targets: orderedTargets));
+      expect(selection.publicationCount, 1);
+      expect(selection.targetResolutionCount, objects.length);
+
+      final changedObjects = [
+        ...objects.take(objects.length - 1),
+        _copyObject(objects.last, visible: false),
+      ];
+      final changedRoot = makeRoot(changedObjects);
+      final changed = _ok(
+        tester.rectangle(
+          page: changedRoot.pages.single,
+          area: area,
+          mode: AreaHitMode.containment,
+        ),
+      );
+      expect(changed, hasLength(objects.length - 1));
+      expect(tester.candidateIndexBuildCount, 2);
+      expect(tester.registryResolutionCount, objects.length * 2 - 1);
+      expect(cache.resolutionCount, objects.length);
+      expect(definition.detailedHitCount, 0);
+    },
+  );
+
+  test(
+    'Eraser eligibility is Registry-owned, inert, bounded, and redacted',
+    () {
+      final valid = _object(115, [_sample(0, 0, 0), _sample(10, 0, 10)]);
+      final baseRoot = _rootWithObject(valid);
+      final base = _coordinator(baseRoot).snapshot;
+      final unavailableRegistry = _ok(
+        ObjectRegistry.create([
+          TestObjectTypeDefinition(
+            typeKey: handwritingObjectTypeKey,
+            supportedSchemaVersions: [handwritingSchemaVersion],
+            capabilities: const ObjectTypeCapabilities(
+              hasIntrinsicGeometry: true,
+              discoversResourceReferences: false,
+              supportsScopedDuplication: true,
+              selectable: true,
+            ),
+            validationExceptionMessage: 'secret-registry-payload',
+          ),
+        ]),
+      );
+      final incapableRegistry = _ok(
+        ObjectRegistry.create([
+          TestObjectTypeDefinition(
+            typeKey: handwritingObjectTypeKey,
+            supportedSchemaVersions: [handwritingSchemaVersion],
+            capabilities: const ObjectTypeCapabilities(
+              hasIntrinsicGeometry: true,
+              discoversResourceReferences: false,
+              supportsScopedDuplication: true,
+              selectable: true,
+            ),
+          ),
+        ]),
+      );
+      final unknown = _copyObject(valid, typeKey: testObjectTypeKey());
+      final invalid = _copyObject(
+        valid,
+        payload: const PreservedString('invalid-secret-payload'),
+      );
+      final hidden = _copyObject(valid, visible: false);
+      final locked = _copyObject(valid, locked: true);
+      for (final entry in <(ObjectEnvelope, ObjectRegistry)>[
+        (unknown, _objectRegistry()),
+        (_unsupportedSchemaObject(valid), _objectRegistry()),
+        (invalid, _objectRegistry()),
+        (hidden, _objectRegistry()),
+        (locked, _objectRegistry()),
+        (valid, unavailableRegistry),
+        (valid, incapableRegistry),
+      ]) {
+        final snapshot = DocumentCoordinatorSnapshot(
+          root: _rootWithObject(entry.$1),
+          revisions: base.revisions,
+          currentContentIdentity: base.currentContentIdentity,
+          savedContentIdentity: base.savedContentIdentity,
+          canUndo: base.canUndo,
+          canRedo: base.canRedo,
+          historyTraversalEnabled: base.historyTraversalEnabled,
+        );
+        final whole = WholeEraseGesturePlan.prepare(
+          document: snapshot,
+          pageId: snapshot.root.pages.single.id,
+          radius: 1,
+          handwritingLimits: _limits,
+          objectRegistry: entry.$2,
+          geometryResolver: StrokeGeometryResolver(_geometryLimits()),
+          maximumObjects: 1,
+          maximumStrokes: 1,
+          maximumPoints: 1,
+          maximumTargets: 1,
+          maximumOperations: 1,
+        );
+        final partial = PartialEraseGesturePlan.prepare(
+          document: snapshot,
+          pageId: snapshot.root.pages.single.id,
+          radius: 1,
+          handwritingLimits: _limits,
+          objectRegistry: entry.$2,
+          geometryResolver: StrokeGeometryResolver(_geometryLimits()),
+          maximumObjects: 1,
+          maximumStrokes: 1,
+          maximumPoints: 1,
+          maximumIntersections: 2,
+          maximumFragments: 2,
+          maximumOutputSamples: 4,
+          maximumOperations: 1,
+        );
+        final wholePlan = _ok(whole);
+        final partialPlan = _ok(partial);
+        expect(
+          _ok(wholePlan.acceptPoint(_point(5, 0))).newlyAffectedStrokeCount,
+          0,
+        );
+        expect(
+          _ok(partialPlan.acceptPoint(_point(5, 0))).newlyAffectedStrokeCount,
+          0,
+        );
+        expect('$whole$partial', isNot(contains('secret')));
+      }
+    },
+  );
+
+  test('Eraser preparation accepts exact Object and Stroke ceilings', () {
+    final first = _object(116, [_sample(0, 0, 0)]);
+    final second = _object(117, [_sample(10, 0, 0)]);
+    final root = testNotebook(
+      sections: [
+        testSection(
+          pages: [
+            testPage(
+              layers: [
+                testContentLayer(objects: [first, second]),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+    final snapshot = _coordinator(root).snapshot;
+    Result<WholeEraseGesturePlan, StructuredFailure> whole(int ceiling) =>
+        WholeEraseGesturePlan.prepare(
+          document: snapshot,
+          pageId: root.pages.single.id,
+          radius: 1,
+          handwritingLimits: _limits,
+          objectRegistry: _objectRegistry(),
+          geometryResolver: StrokeGeometryResolver(_geometryLimits()),
+          maximumObjects: ceiling,
+          maximumStrokes: ceiling,
+          maximumPoints: 1,
+          maximumTargets: 2,
+          maximumOperations: 2,
+        );
+    Result<PartialEraseGesturePlan, StructuredFailure> partial(int ceiling) =>
+        PartialEraseGesturePlan.prepare(
+          document: snapshot,
+          pageId: root.pages.single.id,
+          radius: 1,
+          handwritingLimits: _limits,
+          objectRegistry: _objectRegistry(),
+          geometryResolver: StrokeGeometryResolver(_geometryLimits()),
+          maximumObjects: ceiling,
+          maximumStrokes: ceiling,
+          maximumPoints: 1,
+          maximumIntersections: 2,
+          maximumFragments: 2,
+          maximumOutputSamples: 4,
+          maximumOperations: 2,
+        );
+    expect(whole(2), isA<Ok<WholeEraseGesturePlan, StructuredFailure>>());
+    expect(partial(2), isA<Ok<PartialEraseGesturePlan, StructuredFailure>>());
+    for (final rejected in [whole(1), partial(1)]) {
+      expect(rejected, isA<Err<Object?, StructuredFailure>>());
+      final failure = (rejected as Err<Object?, StructuredFailure>).error;
+      expect(failure.code, startsWith('drawing.tools.'));
+      expect('$failure', isNot(contains('secret')));
+    }
+  });
+
   test('partial erase rejects incomplete revision evidence before UUIDs', () {
     final object = _object(103, [_sample(0, 0, 0), _sample(10, 0, 10)]);
     final root = testNotebook(
@@ -1174,18 +1764,332 @@ void main() {
     expect(geometry.hitsPoint(_point(0, 0), 1.1e308), isTrue);
     expect(geometry.hitsPoint(_point(-1e308, 0), 1.1e308), isFalse);
   });
+
+  test(
+    'long Pen preview copies constant-bounded tails and commits exactly',
+    () {
+      final limits = _ok(
+        HandwritingLimits.create(
+          maximumStrokes: 1,
+          maximumSamplesPerStroke: 1000,
+          maximumUnknownFields: 1,
+          maximumNestingDepth: 1,
+          maximumUnknownNodes: 4,
+          maximumCoordinateMagnitude: 10000,
+          maximumStrokeWidth: 100,
+          maximumAbsoluteTilt: 2,
+          maximumAbsoluteOrientation: 7,
+        ),
+      );
+      final root = testNotebook(
+        sections: [
+          testSection(
+            pages: [
+              testPage(layers: [testContentLayer()]),
+            ],
+          ),
+        ],
+      );
+      final coordinator = _coordinator(root);
+      final session = _ok(
+        PenGestureSession.start(
+          down: _event(PointerPhase.down),
+          document: coordinator.snapshot,
+          pageId: root.pages.single.id,
+          layerId: root.pages.single.layers.single.id,
+          viewport: _viewport(origin: _point(0, 0), zoom: 1),
+          preset: PenPreset.fromStyle(
+            _ok(
+              StrokeStyle.create(
+                argb: 0xff000000,
+                opacity: 1,
+                baseWidth: 2,
+                pressureInfluence: 0,
+                minimumPressureFactor: 0,
+                limits: limits,
+              ),
+            ),
+          ),
+          maximumSamples: 1000,
+          handwritingLimits: limits,
+          uuidGenerator: _CountingUuidGenerator(),
+          maximumCommandOperations: 1,
+        ),
+      );
+      expect(session.previewTail!.samples, hasLength(1));
+      for (var index = 1; index < 999; index += 1) {
+        _ok(
+          session.update(
+            _event(PointerPhase.move, time: index, x: index.toDouble()),
+            viewportRevision: _revision(0),
+          ),
+        );
+        expect(session.previewTail!.samples, hasLength(2));
+      }
+      expect(session.sampleCount, 999);
+      expect(session.previewSampleCopyCount, 1997);
+      final request = _ok(
+        session.finish(
+          _event(PointerPhase.up, time: 999, x: 999),
+          latestDocument: coordinator.snapshot,
+          viewportRevision: _revision(0),
+          pointerOwnerAtTerminal: 1,
+        ),
+      );
+      final stroke = _ok(
+        HandwritingPayload.decode(
+          request.additions.single.object.payload,
+          limits: limits,
+        ),
+      ).strokes.single;
+      expect(stroke.samples, hasLength(1000));
+      expect(stroke.samples.first.position, _point(0, 0));
+      expect(stroke.samples.last.position, _point(999, 0));
+      expect(stroke.samples.last.timeMicros, 999);
+    },
+  );
+
+  test('shared long-stroke geometry is resolved once for render and hits', () {
+    final limits = _ok(
+      HandwritingLimits.create(
+        maximumStrokes: 256,
+        maximumSamplesPerStroke: 120,
+        maximumUnknownFields: 1,
+        maximumNestingDepth: 1,
+        maximumUnknownNodes: 4,
+        maximumCoordinateMagnitude: 10000,
+        maximumStrokeWidth: 10,
+        maximumAbsoluteTilt: 2,
+        maximumAbsoluteOrientation: 7,
+      ),
+    );
+    final samples = [
+      for (var index = 0; index < 120; index += 1)
+        _ok(
+          StrokeSample.create(
+            position: _point(index.toDouble(), 0),
+            timeMicros: index,
+            limits: limits,
+          ),
+        ),
+    ];
+    final stroke = _ok(
+      HandwritingStroke.create(
+        id: StrokeId.fromUuid(testUuid(998)),
+        samples: samples,
+        style: _ok(
+          StrokeStyle.create(
+            argb: 0xff000000,
+            opacity: 1,
+            baseWidth: 2,
+            pressureInfluence: 0,
+            minimumPressureFactor: 0,
+            limits: limits,
+          ),
+        ),
+        limits: limits,
+      ),
+    );
+    final object = testObject(
+      id: 998,
+      typeKey: handwritingObjectTypeKey,
+      schemaVersion: handwritingSchemaVersion,
+      payload: _ok(
+        HandwritingPayload.create(strokes: [stroke], limits: limits),
+      ).encode(),
+    );
+    final geometryLimits = _ok(
+      StrokeGeometryLimits.create(
+        maximumElements: 256,
+        maximumVertices: 4096,
+        ellipseVertexCount: 16,
+        maximumContainmentChecks: 100000,
+      ),
+    );
+    final resolver = StrokeGeometryResolver(geometryLimits);
+    final cache = HandwritingGeometryCache(
+      maximumObjects: 4,
+      maximumStrokes: 4,
+    );
+    final rendering = HandwritingRenderingDefinition(
+      handwritingLimits: limits,
+      geometryResolver: resolver,
+      geometryCache: cache,
+    );
+    final hits = HandwritingHitTestingDefinition(
+      handwritingLimits: limits,
+      geometryResolver: resolver,
+      geometryCache: cache,
+    );
+    _ok(
+      rendering.render(
+        object: object,
+        viewport: _viewport(origin: _point(0, 0), zoom: 1),
+        layerOpacity: 1,
+        plane: RenderPlane.committed,
+        limits: _ok(
+          RenderingLimits.create(
+            maximumPrimitives: 256,
+            maximumPointsPerPrimitive: 16,
+            maximumDamageRegions: 1,
+            maximumPreviewOverlays: 1,
+            maximumSelectionOverlays: 1,
+          ),
+        ),
+      ),
+    );
+    expect(cache.resolutionCount, 1);
+    for (var index = 0; index < 40; index += 1) {
+      expect(
+        _ok(
+          hits.point(
+            object: object,
+            pagePosition: _point(60, 0),
+            pageTolerance: 1,
+          ),
+        ),
+        stroke.id,
+      );
+      expect(
+        _ok(
+          hits.rectangle(
+            object: object,
+            area: _rect(59, -2, 61, 2),
+            mode: AreaHitMode.intersection,
+          ),
+        ),
+        [stroke.id],
+      );
+    }
+    expect(cache.resolutionCount, 1);
+    final prepared = _ok(
+      cache.prepare(
+        object: object,
+        handwritingLimits: limits,
+        geometryResolver: resolver,
+      ),
+    );
+    final query = prepared.geometries.single.querySweptPath([
+      _point(60, -1),
+      _point(60, 1),
+    ], .5);
+    expect(query.intersects, isTrue);
+    expect(
+      query.examinedElements,
+      lessThan(prepared.geometries.single.elements.length),
+    );
+
+    final root = testNotebook(
+      sections: [
+        testSection(
+          pages: [
+            testPage(
+              layers: [
+                testContentLayer(objects: [object]),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+    final registry = _ok(
+      ObjectRegistry.create([HandwritingObjectTypeDefinition(limits)]),
+    );
+    final coordinator = _ok(
+      DocumentMutationCoordinator.create(
+        initialRoot: root,
+        validator: DocumentValidator(registry),
+        uuidGenerator: _CountingUuidGenerator(),
+        historyLimits: _ok(
+          HistoryLimits.create(
+            maximumRetainedCommandCount: 4,
+            maximumEstimatedRetainedBytes: 100000,
+          ),
+        ),
+        retainedCostEstimator: FixedHistoryCostEstimator(1),
+        maximumListeners: 1,
+      ),
+    );
+    final whole = _ok(
+      WholeEraseGesturePlan.prepare(
+        document: coordinator.snapshot,
+        pageId: root.pages.single.id,
+        radius: .5,
+        handwritingLimits: limits,
+        objectRegistry: registry,
+        geometryResolver: resolver,
+        geometryCache: cache,
+        maximumObjects: 2,
+        maximumStrokes: 2,
+        maximumPoints: 80,
+        maximumTargets: 2,
+        maximumOperations: 2,
+      ),
+    );
+    final partial = _ok(
+      PartialEraseGesturePlan.prepare(
+        document: coordinator.snapshot,
+        pageId: root.pages.single.id,
+        radius: .5,
+        handwritingLimits: limits,
+        objectRegistry: registry,
+        geometryResolver: resolver,
+        geometryCache: cache,
+        maximumObjects: 2,
+        maximumStrokes: 2,
+        maximumPoints: 80,
+        maximumIntersections: 256,
+        maximumFragments: 256,
+        maximumOutputSamples: 1000,
+        maximumOperations: 2,
+      ),
+    );
+    for (var index = 0; index < 80; index += 1) {
+      final point = _point(60, index.isEven ? -1 : 1);
+      _ok(whole.acceptPoint(point));
+      _ok(partial.acceptPoint(point));
+    }
+    expect(whole.affectedStrokeCount, 1);
+    expect(whole.geometryElementExaminationCount, lessThan(256));
+    expect(partial.splitInvocationCount, lessThanOrEqualTo(320));
+    expect(partial.geometryResolutionCount, 1);
+    expect(partial.processedSegmentCount, 80);
+    expect(cache.resolutionCount, 1);
+    final classifications = partial.splitInvocationCount;
+    final ids = _CountingUuidGenerator();
+    final created = partial.createRequest(uuidGenerator: ids);
+    expect(
+      created,
+      isA<Ok<AtomicObjectCollectionEditRequest, StructuredFailure>>(),
+      reason: '$created',
+    );
+    final request = _ok(created);
+    expect(partial.splitInvocationCount, classifications);
+    expect(partial.terminalMaterializationCount, 1);
+    expect(partial.terminalSourceSegmentPassCount, 119);
+    final beforeErase = coordinator.snapshot.root;
+    _ok(coordinator.execute(request));
+    final afterErase = coordinator.snapshot.root;
+    expect(afterErase, isNot(beforeErase));
+    _ok(coordinator.undo());
+    expect(coordinator.snapshot.root, beforeErase);
+    _ok(coordinator.redo());
+    expect(coordinator.snapshot.root, afterErase);
+  });
 }
 
 NormalizedPointerEvent _event(
   PointerPhase phase, {
   PointerSource source = PointerSource.mouse,
   int time = 0,
+  double x = 0,
+  double y = 0,
 }) => _ok(
   NormalizedPointerEvent.create(
     pointerId: 1,
     source: source,
     phase: phase,
-    viewPosition: _viewPoint(0, 0),
+    viewPosition: _viewPoint(x, y),
     buttons: const PointerButtons(1),
     timeMicros: time,
     cancellationReason: phase == PointerPhase.cancel
@@ -1230,6 +2134,40 @@ ObjectEnvelope _unsupportedSchemaObject(ObjectEnvelope source) => _ok(
     visible: source.visible,
     locked: source.locked,
     payload: source.payload,
+    extensionData: source.extensionData,
+  ),
+);
+
+NotebookDocument _rootWithObject(ObjectEnvelope object) => testNotebook(
+  sections: [
+    testSection(
+      pages: [
+        testPage(
+          layers: [
+            testContentLayer(objects: [object]),
+          ],
+        ),
+      ],
+    ),
+  ],
+);
+
+ObjectEnvelope _copyObject(
+  ObjectEnvelope source, {
+  ObjectTypeKey? typeKey,
+  PreservedData? payload,
+  bool? visible,
+  bool? locked,
+}) => _ok(
+  ObjectEnvelope.create(
+    id: source.id,
+    typeKey: typeKey ?? source.typeKey,
+    envelopeVersion: source.envelopeVersion,
+    typeSchemaVersion: source.typeSchemaVersion,
+    transform: source.transform,
+    visible: visible ?? source.visible,
+    locked: locked ?? source.locked,
+    payload: payload ?? source.payload,
     extensionData: source.extensionData,
   ),
 );
@@ -1285,6 +2223,22 @@ NotebookDocument _historyRoot(
 
 HandwritingPayload _payload(ObjectEnvelope object) =>
     _ok(HandwritingPayload.decode(object.payload, limits: _limits));
+
+List<String> _geometryVertices(Iterable<StrokeGeometryElement> elements) {
+  final values = elements
+      .map(
+        (element) => element.vertices
+            .map(
+              (point) =>
+                  '${point.x.toStringAsFixed(9)},${point.y.toStringAsFixed(9)}',
+            )
+            .join(';'),
+      )
+      .toList();
+  values.sort();
+  return values;
+}
+
 HandwritingStroke _stroke(int id, List<StrokeSample> samples) => _ok(
   HandwritingStroke.create(
     id: StrokeId.fromUuid(testUuid(100 + id)),
@@ -1370,6 +2324,33 @@ final class _ThrowingRenderingDefinition implements ObjectRenderingDefinition {
     required RenderPlane plane,
     required RenderingLimits limits,
   }) => throw StateError('secret renderer failure');
+}
+
+final class _CountingRenderingDefinition implements ObjectRenderingDefinition {
+  _CountingRenderingDefinition(this.delegate);
+  final ObjectRenderingDefinition delegate;
+  int calls = 0;
+
+  @override
+  ObjectTypeKey get typeKey => delegate.typeKey;
+
+  @override
+  Result<List<ScenePrimitive>, StructuredFailure> render({
+    required ObjectEnvelope object,
+    required ViewportSnapshot viewport,
+    required double layerOpacity,
+    required RenderPlane plane,
+    required RenderingLimits limits,
+  }) {
+    calls += 1;
+    return delegate.render(
+      object: object,
+      viewport: viewport,
+      layerOpacity: layerOpacity,
+      plane: plane,
+      limits: limits,
+    );
+  }
 }
 
 final class _ForbiddenBehaviorCounter {

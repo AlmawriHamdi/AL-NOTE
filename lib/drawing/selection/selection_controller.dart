@@ -36,6 +36,7 @@ final class SelectionController {
     required int maximumTargets,
     HandwritingLimits? handwritingLimits,
     StrokeGeometryResolver? strokeGeometryResolver,
+    HandwritingGeometryCache? handwritingGeometryCache,
     Revision? initialRevision,
   }) {
     if (maximumTargets <= 0 ||
@@ -51,6 +52,7 @@ final class SelectionController {
       maximumTargets: maximumTargets,
       handwritingLimits: handwritingLimits,
       strokeGeometryResolver: strokeGeometryResolver,
+      handwritingGeometryCache: handwritingGeometryCache,
       initialRevision: initialRevision,
     );
   }
@@ -61,6 +63,7 @@ final class SelectionController {
     required this.maximumTargets,
     required this.handwritingLimits,
     required this.strokeGeometryResolver,
+    required this.handwritingGeometryCache,
     required Revision? initialRevision,
   }) : _registry = objectRegistry,
        _boundarySink = coalescingBoundarySink,
@@ -83,8 +86,22 @@ final class SelectionController {
 
   /// Shared geometry required for exact Stroke bounds.
   final StrokeGeometryResolver? strokeGeometryResolver;
+
+  /// Optional bounded prepared geometry shared with rendering and hit testing.
+  final HandwritingGeometryCache? handwritingGeometryCache;
   SelectionState _state;
   DocumentCoordinatorSnapshot? _previewBase;
+  DocumentPage? _resolvedCachePage;
+  ResourceCatalog? _resolvedCacheResources;
+  final Map<SelectionTarget, _Resolved> _resolvedCache = {};
+  int _targetResolutionCount = 0;
+  int _publicationCount = 0;
+
+  /// Target resolutions performed across cache misses.
+  int get targetResolutionCount => _targetResolutionCount;
+
+  /// Atomic Selection state publications performed by this controller.
+  int get publicationCount => _publicationCount;
 
   /// Current immutable temporary state.
   SelectionState get state => _state;
@@ -198,6 +215,22 @@ final class SelectionController {
       bounds: null,
       preview: null,
       createBoundary: true,
+    );
+  }
+
+  /// Discards temporary Selection while leaving command coalescing untouched.
+  Result<SelectionState, SelectionFailure> discard() {
+    if (_state.targets.isEmpty && _state.transformPreview == null) {
+      return Ok(_state);
+    }
+    return _publishState(
+      activePageId: null,
+      targets: const [],
+      primary: null,
+      memberships: const {},
+      bounds: null,
+      preview: null,
+      createBoundary: false,
     );
   }
 
@@ -422,6 +455,7 @@ final class SelectionController {
       return Err(_selectionFailure('page_unavailable'));
     }
     final accepted = <SelectionTarget>[];
+    final acceptedResolutions = <_Resolved>[];
     final memberships = <ObjectId, LayerId>{};
     for (final target in proposed) {
       final resolved = page == null
@@ -433,19 +467,15 @@ final class SelectionController {
         continue;
       }
       accepted.add(target);
+      acceptedResolutions.add(resolved);
       memberships[target.objectId] = resolved.layer.id;
     }
     final resolvedPrimary = accepted.contains(primary)
         ? primary
         : (accepted.isEmpty ? null : accepted.first);
-    final resolvedBounds = <Rect2>[];
-    for (final target in accepted) {
-      final resolved = _resolve(page!, root.resources, target);
-      if (resolved == null)
-        return Err(_selectionFailure('target_not_selectable'));
-      resolvedBounds.add(resolved.bounds);
-    }
-    final bounds = _aggregateRectBounds(resolvedBounds);
+    final bounds = _aggregateRectBounds(
+      acceptedResolutions.map((value) => value.bounds),
+    );
     final unchanged =
         _listEquals(accepted, _state.targets) &&
         resolvedPrimary == _state.primaryTarget &&
@@ -511,6 +541,7 @@ final class SelectionController {
       }
     }
     _state = (candidate as Ok<SelectionState, SelectionFailure>).value;
+    _publicationCount += 1;
     if (createBoundary) _previewBase = null;
     return Ok(_state);
   }
@@ -521,6 +552,15 @@ final class SelectionController {
     SelectionTarget target,
   ) {
     if (target.pageId != page.id) return null;
+    if (!identical(page, _resolvedCachePage) ||
+        !identical(resources, _resolvedCacheResources)) {
+      _resolvedCachePage = page;
+      _resolvedCacheResources = resources;
+      _resolvedCache.clear();
+    }
+    final cached = _resolvedCache[target];
+    if (cached != null) return cached;
+    _targetResolutionCount += 1;
     _Resolved? result;
     for (final layer in page.layers) {
       if (layer is! ContentLayer) continue;
@@ -537,8 +577,7 @@ final class SelectionController {
         final resolution = _registry.resolve(object);
         if (resolution is! SupportedObjectResolution ||
             !resolution.definition.capabilities.selectable ||
-            !resolution.definition.capabilities.hasIntrinsicGeometry ||
-            !_reachable(page, object)) {
+            !resolution.definition.capabilities.hasIntrinsicGeometry) {
           return null;
         }
         if (resolution.definition.capabilities.discoversResourceReferences) {
@@ -558,14 +597,25 @@ final class SelectionController {
         }
         Rect2? targetBounds;
         if (target.isWholeObject) {
-          targetBounds = _bounds(object);
+          targetBounds = _boundsFromResolution(object, resolution);
         } else if (target.subTargetKind ==
                 handwritingStrokeSelectionSubTargetKind &&
             object.typeKey == handwritingObjectTypeKey &&
             object.typeSchemaVersion == handwritingSchemaVersion &&
             handwritingLimits != null &&
             strokeGeometryResolver != null) {
+          final prepared = handwritingGeometryCache
+              ?.prepare(
+                object: object,
+                handwritingLimits: handwritingLimits!,
+                geometryResolver: strokeGeometryResolver!,
+              )
+              .fold<PreparedHandwritingGeometry?>(
+                onOk: (value) => value,
+                onErr: (_) => null,
+              );
           final payload =
+              prepared?.payload ??
               HandwritingPayload.decode(
                 object.payload,
                 limits: handwritingLimits!,
@@ -573,11 +623,16 @@ final class SelectionController {
                 onOk: (value) => value,
                 onErr: (_) => null,
               );
+          final strokeIndex = payload?.strokes.indexWhere(
+            (value) => value.id.uuid == target.subTargetId!.uuid,
+          );
           final stroke = payload?.strokes
               .where((value) => value.id.uuid == target.subTargetId!.uuid)
               .firstOrNull;
           targetBounds = stroke == null
               ? null
+              : prepared != null && strokeIndex != null && strokeIndex >= 0
+              ? prepared.geometries[strokeIndex].bounds
               : strokeGeometryResolver!
                     .resolve(stroke: stroke, localToPage: object.transform)
                     .fold<Rect2?>(
@@ -585,9 +640,14 @@ final class SelectionController {
                       onErr: (_) => null,
                     );
         }
-        if (targetBounds == null) return null;
+        if (targetBounds == null || !_reachableBounds(page, targetBounds)) {
+          return null;
+        }
         result = _Resolved(layer, object, resolution, targetBounds);
       }
+    }
+    if (result != null && _resolvedCache.length < maximumTargets) {
+      _resolvedCache[target] = result;
     }
     return result;
   }
@@ -606,18 +666,27 @@ final class SelectionController {
 
   bool _reachable(DocumentPage page, ObjectEnvelope object) {
     final bounds = _bounds(object);
-    return bounds != null &&
-        bounds.right >= 0 &&
-        bounds.bottom >= 0 &&
-        bounds.left <= page.size.width &&
-        bounds.top <= page.size.height;
+    return bounds != null && _reachableBounds(page, bounds);
   }
+
+  bool _reachableBounds(DocumentPage page, Rect2 bounds) =>
+      bounds.right >= 0 &&
+      bounds.bottom >= 0 &&
+      bounds.left <= page.size.width &&
+      bounds.top <= page.size.height;
 
   Rect2? _bounds(ObjectEnvelope object) {
     final resolution = _registry.resolve(object);
     if (resolution is! SupportedObjectResolution ||
         !resolution.definition.capabilities.hasIntrinsicGeometry)
       return null;
+    return _boundsFromResolution(object, resolution);
+  }
+
+  Rect2? _boundsFromResolution(
+    ObjectEnvelope object,
+    SupportedObjectResolution resolution,
+  ) {
     try {
       final intrinsic = resolution.definition
           .intrinsicGeometry(object.payload, object.typeSchemaVersion)

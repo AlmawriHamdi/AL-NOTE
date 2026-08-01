@@ -224,9 +224,10 @@ final class _CapturedHitTestingDefinition
 final class HandwritingHitTestingDefinition
     implements ObjectHitTestingDefinition {
   /// Creates the definition with explicit decoding and geometry boundaries.
-  const HandwritingHitTestingDefinition({
+  HandwritingHitTestingDefinition({
     required this.handwritingLimits,
     required this.geometryResolver,
+    this.geometryCache,
   });
 
   /// Handwriting decode limits.
@@ -234,6 +235,14 @@ final class HandwritingHitTestingDefinition
 
   /// Shared affine geometry resolver.
   final StrokeGeometryResolver geometryResolver;
+
+  /// Optional bounded cache shared with rendering and gesture preparation.
+  final HandwritingGeometryCache? geometryCache;
+
+  int _detailedHitCount = 0;
+
+  /// Exact geometry predicates evaluated after conservative bounds filtering.
+  int get detailedHitCount => _detailedHitCount;
 
   @override
   ObjectTypeKey get typeKey => handwritingObjectTypeKey;
@@ -248,6 +257,17 @@ final class HandwritingHitTestingDefinition
     ).fold<HandwritingPayload?>(onOk: (value) => value, onErr: (_) => null);
   }
 
+  PreparedHandwritingGeometry? _prepared(ObjectEnvelope object) => geometryCache
+      ?.prepare(
+        object: object,
+        handwritingLimits: handwritingLimits,
+        geometryResolver: geometryResolver,
+      )
+      .fold<PreparedHandwritingGeometry?>(
+        onOk: (value) => value,
+        onErr: (_) => null,
+      );
+
   @override
   Result<StrokeId?, StructuredFailure> point({
     required ObjectEnvelope object,
@@ -257,19 +277,30 @@ final class HandwritingHitTestingDefinition
     if (!pageTolerance.isFinite || pageTolerance < 0) {
       return Err(_failure('invalid_tolerance', FailureCategory.validation));
     }
-    final payload = _payload(object);
+    final prepared = _prepared(object);
+    final payload = prepared?.payload ?? _payload(object);
     if (payload == null)
       return Err(_failure('invalid_object', FailureCategory.validation));
-    for (final stroke in payload.strokes.reversed) {
-      final geometry = geometryResolver.resolve(
-        stroke: stroke,
-        localToPage: object.transform,
-      );
+    if (prepared != null &&
+        !_pointInExpandedRect(pagePosition, prepared.bounds, pageTolerance)) {
+      return const Ok(null);
+    }
+    for (var index = payload.strokes.length - 1; index >= 0; index -= 1) {
+      final stroke = payload.strokes[index];
+      final geometry = prepared == null
+          ? geometryResolver.resolve(
+              stroke: stroke,
+              localToPage: object.transform,
+            )
+          : Ok<TransformedStrokeGeometry, StructuredFailure>(
+              prepared.geometries[index],
+            );
       if (geometry is Err<TransformedStrokeGeometry, StructuredFailure>) {
         return Err(
           _failure('geometry_unavailable', FailureCategory.dependency),
         );
       }
+      _detailedHitCount += 1;
       if ((geometry as Ok<TransformedStrokeGeometry, StructuredFailure>).value
           .hitsPoint(pagePosition, pageTolerance))
         return Ok(stroke.id);
@@ -285,7 +316,11 @@ final class HandwritingHitTestingDefinition
   }) => _area(
     object,
     mode,
-    (geometry) => Ok(
+    boundsRejects: (bounds) => !_rectanglesIntersect(bounds, area),
+    boundsAccepts: mode == AreaHitMode.containment
+        ? (bounds) => _rectContainsRect(area, bounds)
+        : null,
+    matches: (geometry) => Ok(
       mode == AreaHitMode.containment
           ? geometry.containedByRectangle(area)
           : geometry.intersectsRectangle(area),
@@ -300,31 +335,55 @@ final class HandwritingHitTestingDefinition
   }) => _area(
     object,
     mode,
-    (geometry) => mode == AreaHitMode.containment
+    boundsRejects: (bounds) {
+      final polygonBounds = _polygonBounds(polygon);
+      return polygonBounds != null &&
+          !_rectanglesIntersect(bounds, polygonBounds);
+    },
+    matches: (geometry) => mode == AreaHitMode.containment
         ? geometry.containedByPolygon(polygon)
         : Ok(geometry.intersectsPolygon(polygon)),
   );
 
   Result<List<StrokeId>, StructuredFailure> _area(
     ObjectEnvelope object,
-    AreaHitMode mode,
-    Result<bool, StructuredFailure> Function(TransformedStrokeGeometry geometry)
+    AreaHitMode mode, {
+    required bool Function(Rect2 bounds) boundsRejects,
+    bool Function(Rect2 bounds)? boundsAccepts,
+    required Result<bool, StructuredFailure> Function(
+      TransformedStrokeGeometry geometry,
+    )
     matches,
-  ) {
-    final payload = _payload(object);
+  }) {
+    final prepared = _prepared(object);
+    final payload = prepared?.payload ?? _payload(object);
     if (payload == null)
       return Err(_failure('invalid_object', FailureCategory.validation));
-    final result = <StrokeId>[];
-    for (final stroke in payload.strokes.reversed) {
-      final geometry = geometryResolver.resolve(
-        stroke: stroke,
-        localToPage: object.transform,
+    if (prepared != null && boundsRejects(prepared.bounds)) {
+      return const Ok([]);
+    }
+    if (prepared != null && boundsAccepts?.call(prepared.bounds) == true) {
+      return Ok(
+        List.unmodifiable(payload.strokes.reversed.map((stroke) => stroke.id)),
       );
+    }
+    final result = <StrokeId>[];
+    for (var index = payload.strokes.length - 1; index >= 0; index -= 1) {
+      final stroke = payload.strokes[index];
+      final geometry = prepared == null
+          ? geometryResolver.resolve(
+              stroke: stroke,
+              localToPage: object.transform,
+            )
+          : Ok<TransformedStrokeGeometry, StructuredFailure>(
+              prepared.geometries[index],
+            );
       if (geometry is Err<TransformedStrokeGeometry, StructuredFailure>) {
         return Err(
           _failure('geometry_unavailable', FailureCategory.dependency),
         );
       }
+      _detailedHitCount += 1;
       final matched = matches(
         (geometry as Ok<TransformedStrokeGeometry, StructuredFailure>).value,
       );
@@ -340,9 +399,10 @@ final class HandwritingHitTestingDefinition
 /// Registry-driven Page query orchestrator that fails closed for inert Objects.
 final class PageHitTester {
   /// Creates the orchestrator with authoritative validity and hit registries.
-  const PageHitTester({
+  PageHitTester({
     required this.objectRegistry,
     required this.hitTestingRegistry,
+    required this.maximumCandidates,
     required this.maximumResults,
     required this.maximumLassoPoints,
   });
@@ -353,11 +413,25 @@ final class PageHitTester {
   /// Separate hit-testing behavior registry.
   final HitTestingRegistry hitTestingRegistry;
 
+  /// Maximum eligible Objects retained by one cached Page candidate index.
+  final int maximumCandidates;
+
   /// Result ceiling.
   final int maximumResults;
 
   /// Lasso input ceiling.
   final int maximumLassoPoints;
+
+  DocumentPage? _indexedPage;
+  List<_PageHitCandidate> _candidates = const [];
+  int _candidateIndexBuildCount = 0;
+  int _registryResolutionCount = 0;
+
+  /// Number of exact Page identities indexed for hit-test candidates.
+  int get candidateIndexBuildCount => _candidateIndexBuildCount;
+
+  /// Registry resolutions performed while building candidate indexes.
+  int get registryResolutionCount => _registryResolutionCount;
 
   /// Returns the topmost editable Page hit.
   Result<HitTestResult?, StructuredFailure> point({
@@ -365,35 +439,25 @@ final class PageHitTester {
     required Point2 pagePosition,
     required double pageTolerance,
   }) {
-    for (final layer in page.layers.reversed) {
-      if (layer is! ContentLayer) continue;
-      if (!layer.visible || layer.locked) continue;
-      for (final object in layer.objects.reversed) {
-        if (!object.visible || object.locked) continue;
-        if (object.typeKey == handwritingObjectTypeKey &&
-            object.typeSchemaVersion != handwritingSchemaVersion) {
-          continue;
-        }
-        if (objectRegistry.resolve(object) is! SupportedObjectResolution)
-          continue;
-        final definition = hitTestingRegistry.definitions[object.typeKey];
-        if (definition == null) continue;
-        final result = definition.point(
-          object: object,
-          pagePosition: pagePosition,
-          pageTolerance: pageTolerance,
+    final candidates = _index(page);
+    if (candidates == null) {
+      return Err(_failure('candidate_limit', FailureCategory.resource));
+    }
+    for (final candidate in candidates) {
+      final result = candidate.definition.point(
+        object: candidate.object,
+        pagePosition: pagePosition,
+        pageTolerance: pageTolerance,
+      );
+      if (result is Ok<StrokeId?, StructuredFailure> && result.value != null) {
+        return Ok(
+          HitTestResult(
+            pageId: page.id,
+            layerId: candidate.layerId,
+            objectId: candidate.object.id,
+            strokeId: result.value,
+          ),
         );
-        if (result is Ok<StrokeId?, StructuredFailure> &&
-            result.value != null) {
-          return Ok(
-            HitTestResult(
-              pageId: page.id,
-              layerId: layer.id,
-              objectId: object.id,
-              strokeId: result.value,
-            ),
-          );
-        }
       }
     }
     return const Ok(null);
@@ -439,38 +503,65 @@ final class PageHitTester {
       return Err(_failure('invalid_result_limit', FailureCategory.validation));
     }
     final hits = <HitTestResult>[];
-    for (final layer in page.layers.reversed) {
-      if (layer is! ContentLayer) continue;
-      if (!layer.visible || layer.locked) continue;
-      for (final object in layer.objects.reversed) {
-        if (!object.visible || object.locked) continue;
-        if (object.typeKey == handwritingObjectTypeKey &&
-            object.typeSchemaVersion != handwritingSchemaVersion) {
-          continue;
+    final candidates = _index(page);
+    if (candidates == null) {
+      return Err(_failure('candidate_limit', FailureCategory.resource));
+    }
+    for (final candidate in candidates) {
+      final result = query(candidate.definition, candidate.object);
+      if (result is! Ok<List<StrokeId>, StructuredFailure>) continue;
+      for (final stroke in result.value) {
+        if (hits.length >= maximumResults) {
+          return Err(_failure('result_limit', FailureCategory.resource));
         }
-        if (objectRegistry.resolve(object) is! SupportedObjectResolution)
-          continue;
-        final definition = hitTestingRegistry.definitions[object.typeKey];
-        if (definition == null) continue;
-        final result = query(definition, object);
-        if (result is! Ok<List<StrokeId>, StructuredFailure>) continue;
-        for (final stroke in result.value) {
-          if (hits.length >= maximumResults) {
-            return Err(_failure('result_limit', FailureCategory.resource));
-          }
-          hits.add(
-            HitTestResult(
-              pageId: page.id,
-              layerId: layer.id,
-              objectId: object.id,
-              strokeId: stroke,
-            ),
-          );
-        }
+        hits.add(
+          HitTestResult(
+            pageId: page.id,
+            layerId: candidate.layerId,
+            objectId: candidate.object.id,
+            strokeId: stroke,
+          ),
+        );
       }
     }
     return Ok(List.unmodifiable(hits));
   }
+
+  List<_PageHitCandidate>? _index(DocumentPage page) {
+    if (maximumCandidates <= 0 || maximumCandidates > Revision.maximumValue) {
+      return null;
+    }
+    if (identical(page, _indexedPage)) return _candidates;
+    final candidates = <_PageHitCandidate>[];
+    for (final layer in page.layers.reversed) {
+      if (layer is! ContentLayer || !layer.visible || layer.locked) continue;
+      for (final object in layer.objects.reversed) {
+        if (!object.visible || object.locked) continue;
+        if (object.typeKey == handwritingObjectTypeKey &&
+            object.typeSchemaVersion != handwritingSchemaVersion)
+          continue;
+        _registryResolutionCount += 1;
+        if (objectRegistry.resolve(object) is! SupportedObjectResolution) {
+          continue;
+        }
+        final definition = hitTestingRegistry.definitions[object.typeKey];
+        if (definition == null) continue;
+        if (candidates.length >= maximumCandidates) return null;
+        candidates.add(_PageHitCandidate(layer.id, object, definition));
+      }
+    }
+    _indexedPage = page;
+    _candidates = List.unmodifiable(candidates);
+    _candidateIndexBuildCount += 1;
+    return _candidates;
+  }
+}
+
+final class _PageHitCandidate {
+  const _PageHitCandidate(this.layerId, this.object, this.definition);
+  final LayerId layerId;
+  final ObjectEnvelope object;
+  final ObjectHitTestingDefinition definition;
 }
 
 Result<List<Point2>, StructuredFailure> _captureLasso(
@@ -543,6 +634,44 @@ bool _segmentsIntersect(Point2 a, Point2 b, Point2 c, Point2 d) {
   if (three == 0 && onSegment(c, a, d)) return true;
   if (four == 0 && onSegment(c, b, d)) return true;
   return one.sign != two.sign && three.sign != four.sign;
+}
+
+bool _rectanglesIntersect(Rect2 first, Rect2 second) =>
+    first.left <= second.right &&
+    first.right >= second.left &&
+    first.top <= second.bottom &&
+    first.bottom >= second.top;
+
+bool _rectContainsRect(Rect2 outer, Rect2 inner) =>
+    outer.left <= inner.left &&
+    outer.top <= inner.top &&
+    outer.right >= inner.right &&
+    outer.bottom >= inner.bottom;
+
+bool _pointInExpandedRect(Point2 point, Rect2 bounds, double amount) =>
+    point.x >= bounds.left - amount &&
+    point.x <= bounds.right + amount &&
+    point.y >= bounds.top - amount &&
+    point.y <= bounds.bottom + amount;
+
+Rect2? _polygonBounds(List<Point2> polygon) {
+  if (polygon.isEmpty) return null;
+  var left = polygon.first.x;
+  var right = left;
+  var top = polygon.first.y;
+  var bottom = top;
+  for (final point in polygon.skip(1)) {
+    left = math.min(left, point.x);
+    right = math.max(right, point.x);
+    top = math.min(top, point.y);
+    bottom = math.max(bottom, point.y);
+  }
+  return Rect2.fromEdges(
+    left: left,
+    top: top,
+    right: right,
+    bottom: bottom,
+  ).fold<Rect2?>(onOk: (value) => value, onErr: (_) => null);
 }
 
 StructuredFailure _failure(String leaf, FailureCategory category) =>

@@ -4,6 +4,8 @@ import '../../core/geometry/geometry_values.dart';
 import '../../core/identity/uuid_generator.dart';
 import '../../core/identity/uuid_identifier.dart';
 import '../../core/interaction.dart';
+import '../../core/outcomes/cancellation.dart';
+import '../../core/outcomes/operation_outcome.dart';
 import '../../core/outcomes/result.dart';
 import '../../core/outcomes/structured_failure.dart';
 import '../../core/security/resource_limits.dart';
@@ -11,6 +13,7 @@ import '../../core/versioning/revision.dart';
 import '../../core/versioning/schema_version.dart';
 import '../../documents/commands.dart';
 import '../../documents/document_model.dart';
+import '../../documents/files.dart';
 import '../../documents/objects/handwriting.dart';
 import '../../drawing/geometry.dart';
 import '../../drawing/hit_testing.dart';
@@ -18,12 +21,63 @@ import '../../drawing/renderer.dart';
 import '../../drawing/tools.dart';
 import 'flutter_pointer_adapter.dart';
 
+/// Fixed redaction-safe failure stages for an in-memory package reopen.
+enum Phase6ReopenFailureStage {
+  /// Package bytes could not be opened and verified.
+  read,
+
+  /// The opened package could not materialize a complete document.
+  materialization,
+
+  /// Materialized content differed from the exact saved root.
+  mismatch,
+
+  /// A coordinator could not be constructed for the materialized root.
+  coordinator,
+}
+
+/// Result of the staged in-memory package reopen pipeline.
+sealed class Phase6ReopenOutcome {
+  const Phase6ReopenOutcome();
+}
+
+/// Successfully materialized document and newly constructed coordinator.
+final class Phase6ReopenSuccess extends Phase6ReopenOutcome {
+  /// Creates successful trusted reopen evidence.
+  const Phase6ReopenSuccess({required this.root, required this.coordinator});
+
+  /// Decoded and materialized document instance.
+  final DocumentRoot root;
+
+  /// Fresh coordinator constructed from [root].
+  final DocumentMutationCoordinator coordinator;
+}
+
+/// Redaction-safe staged reopen failure.
+final class Phase6ReopenFailure extends Phase6ReopenOutcome {
+  /// Creates failure evidence containing only its fixed [stage].
+  const Phase6ReopenFailure(this.stage);
+
+  /// Pipeline stage that rejected the reopen.
+  final Phase6ReopenFailureStage stage;
+}
+
+/// Injected boundary for reopening verified in-memory `.alnote` bytes.
+abstract interface class Phase6ReopenGateway {
+  /// Opens, materializes, compares, and constructs without publishing state.
+  Phase6ReopenOutcome reopen({
+    required List<int> bytes,
+    required DocumentRoot savedRoot,
+  });
+}
+
 /// Fully validated immutable dependency and resource configuration for Canvas.
 final class Phase6CanvasRuntime {
   const Phase6CanvasRuntime._({
     required this.uuidGenerator,
     required this.handwritingLimits,
     required this.geometryResolver,
+    required this.geometryCache,
     required this.renderingLimits,
     required this.objectRegistry,
     required this.renderingRegistry,
@@ -37,6 +91,7 @@ final class Phase6CanvasRuntime {
     required this.storageLimits,
     required this.initialRoot,
     required this.initialCoordinator,
+    required this.reopenGateway,
     required this.maximumHitResults,
     required this.maximumLassoPoints,
     required this.maximumSelectionTargets,
@@ -73,6 +128,7 @@ final class Phase6CanvasRuntime {
     required int maximumEraserIntersections,
     required int maximumEraserFragments,
     required int maximumEraserOutputSamples,
+    Phase6ReopenGateway? reopenGateway,
   }) {
     final ceilings = <int>[
       maximumHitResults,
@@ -131,6 +187,10 @@ final class Phase6CanvasRuntime {
       return Err(_failure('invalid_limits'));
     }
     final geometry = StrokeGeometryResolver(geometryLimits);
+    final geometryCache = HandwritingGeometryCache(
+      maximumObjects: maximumHitResults,
+      maximumStrokes: maximumHitResults,
+    );
     final objectRegistry = ObjectRegistry.create([
       HandwritingObjectTypeDefinition(handwritingLimits),
     ]).fold<ObjectRegistry?>(onOk: (value) => value, onErr: (_) => null);
@@ -140,6 +200,7 @@ final class Phase6CanvasRuntime {
     final components = _createRuntimeComponents(
       handwritingLimits: handwritingLimits,
       geometry: geometry,
+      geometryCache: geometryCache,
       maximumRenderingDefinitions: maximumRenderingDefinitions,
       maximumHitTestingDefinitions: maximumHitTestingDefinitions,
       maximumHitBehaviorResults: maximumHitBehaviorResults,
@@ -247,6 +308,7 @@ final class Phase6CanvasRuntime {
         uuidGenerator: identities,
         handwritingLimits: handwritingLimits,
         geometryResolver: geometry,
+        geometryCache: geometryCache,
         renderingLimits: renderingLimits,
         objectRegistry: objectRegistry,
         renderingRegistry: renderingRegistry,
@@ -260,6 +322,21 @@ final class Phase6CanvasRuntime {
         storageLimits: storageLimits,
         initialRoot: root,
         initialCoordinator: coordinator,
+        reopenGateway:
+            reopenGateway ??
+            _DefaultPhase6ReopenGateway(
+              objectRegistry: objectRegistry,
+              storageLimits: storageLimits,
+              createCoordinator: (candidate) =>
+                  DocumentMutationCoordinator.create(
+                    initialRoot: candidate,
+                    validator: DocumentValidator(objectRegistry),
+                    uuidGenerator: identities,
+                    historyLimits: historyLimits,
+                    retainedCostEstimator: estimator,
+                    maximumListeners: maximumListeners,
+                  ),
+            ),
         maximumHitResults: maximumHitResults,
         maximumLassoPoints: maximumLassoPoints,
         maximumSelectionTargets: maximumSelectionTargets,
@@ -277,6 +354,7 @@ final class Phase6CanvasRuntime {
   final UuidGenerator uuidGenerator;
   final HandwritingLimits handwritingLimits;
   final StrokeGeometryResolver geometryResolver;
+  final HandwritingGeometryCache geometryCache;
   final RenderingLimits renderingLimits;
   final ObjectRegistry objectRegistry;
   final RenderingRegistry renderingRegistry;
@@ -290,6 +368,9 @@ final class Phase6CanvasRuntime {
   final ResourceLimitSnapshot storageLimits;
   final NotebookDocument initialRoot;
   final DocumentMutationCoordinator initialCoordinator;
+
+  /// Staged package reopen boundary used by the Canvas.
+  final Phase6ReopenGateway reopenGateway;
   final int maximumHitResults;
   final int maximumLassoPoints;
   final int maximumSelectionTargets;
@@ -314,6 +395,72 @@ final class Phase6CanvasRuntime {
   );
 }
 
+final class _DefaultPhase6ReopenGateway implements Phase6ReopenGateway {
+  const _DefaultPhase6ReopenGateway({
+    required this.objectRegistry,
+    required this.storageLimits,
+    required this.createCoordinator,
+  });
+
+  final ObjectRegistry objectRegistry;
+  final ResourceLimitSnapshot storageLimits;
+  final Result<DocumentMutationCoordinator, CommandFailure> Function(
+    DocumentRoot root,
+  )
+  createCoordinator;
+
+  @override
+  Phase6ReopenOutcome reopen({
+    required List<int> bytes,
+    required DocumentRoot savedRoot,
+  }) {
+    OperationOutcome<OpenedAlnotePackage, StructuredFailure> opened;
+    try {
+      opened = AlnotePackageReader(objectRegistry: objectRegistry).openBytes(
+        bytes,
+        limits: storageLimits,
+        cancellationToken: CancellationController().token,
+      );
+    } on Object {
+      return const Phase6ReopenFailure(Phase6ReopenFailureStage.read);
+    }
+    if (opened is! Completed<OpenedAlnotePackage, StructuredFailure>) {
+      return const Phase6ReopenFailure(Phase6ReopenFailureStage.read);
+    }
+    OperationOutcome<DocumentRoot, StructuredFailure> materialized;
+    try {
+      materialized = opened.value.materializeDocument(
+        cancellationToken: CancellationController().token,
+      );
+    } on Object {
+      return const Phase6ReopenFailure(
+        Phase6ReopenFailureStage.materialization,
+      );
+    }
+    if (materialized is! Completed<DocumentRoot, StructuredFailure>) {
+      return const Phase6ReopenFailure(
+        Phase6ReopenFailureStage.materialization,
+      );
+    }
+    if (materialized.value != savedRoot) {
+      return const Phase6ReopenFailure(Phase6ReopenFailureStage.mismatch);
+    }
+    Result<DocumentMutationCoordinator, CommandFailure> coordinator;
+    try {
+      coordinator = createCoordinator(materialized.value);
+    } on Object {
+      return const Phase6ReopenFailure(Phase6ReopenFailureStage.coordinator);
+    }
+    if (coordinator is! Ok<DocumentMutationCoordinator, CommandFailure>) {
+      return const Phase6ReopenFailure(Phase6ReopenFailureStage.coordinator);
+    }
+    return Phase6ReopenSuccess(
+      root: materialized.value,
+      coordinator: coordinator.value,
+    );
+  }
+}
+
 typedef _RuntimeComponents = ({
   RenderingRegistry renderingRegistry,
   HitTestingRegistry hitTestingRegistry,
@@ -325,6 +472,7 @@ typedef _RuntimeComponents = ({
 _RuntimeComponents? _createRuntimeComponents({
   required HandwritingLimits handwritingLimits,
   required StrokeGeometryResolver geometry,
+  required HandwritingGeometryCache geometryCache,
   required int maximumRenderingDefinitions,
   required int maximumHitTestingDefinitions,
   required int maximumHitBehaviorResults,
@@ -337,6 +485,7 @@ _RuntimeComponents? _createRuntimeComponents({
       HandwritingRenderingDefinition(
         handwritingLimits: handwritingLimits,
         geometryResolver: geometry,
+        geometryCache: geometryCache,
       ),
     ],
     maximumDefinitions: maximumRenderingDefinitions,
@@ -346,6 +495,7 @@ _RuntimeComponents? _createRuntimeComponents({
       HandwritingHitTestingDefinition(
         handwritingLimits: handwritingLimits,
         geometryResolver: geometry,
+        geometryCache: geometryCache,
       ),
     ],
     maximumDefinitions: maximumHitTestingDefinitions,

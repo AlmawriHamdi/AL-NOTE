@@ -227,6 +227,7 @@ final class PenGestureSession {
   final List<StrokeSample> _samples = [];
   PenSessionState _state = PenSessionState.active;
   int? _initialTime;
+  int _previewSampleCopyCount = 0;
 
   /// Current terminal/activity state.
   PenSessionState get state => _state;
@@ -235,6 +236,21 @@ final class PenGestureSession {
   PenPreview? get preview => _state == PenSessionState.active
       ? PenPreview(samples: _samples, style: preset.style)
       : null;
+
+  /// Latest one- or two-sample preview segment without copying prior input.
+  PenPreview? get previewTail {
+    if (_state != PenSessionState.active || _samples.isEmpty) return null;
+    final start = _samples.length > 1 ? _samples.length - 2 : 0;
+    final values = _samples.sublist(start);
+    _previewSampleCopyCount += values.length;
+    return PenPreview(samples: values, style: preset.style);
+  }
+
+  /// Accepted sample count without materializing preview evidence.
+  int get sampleCount => _samples.length;
+
+  /// Total samples copied into bounded tail-preview evidence.
+  int get previewSampleCopyCount => _previewSampleCopyCount;
 
   /// Incrementally consumes normalized assigned input.
   Result<void, StructuredFailure> update(
@@ -521,8 +537,42 @@ Result<StrokeSplitResult, StructuredFailure> splitStrokeByEraser({
   allocateIdentities: true,
 );
 
+/// Plans one stroke split without allocating persistent fragment identities.
+///
+/// Returned fragments are transient evidence only. Callers must allocate and
+/// validate fresh identities at the terminal publication boundary.
+Result<StrokeSplitResult, StructuredFailure> previewStrokeSplitByEraser({
+  required HandwritingStroke source,
+  required TransformedStrokeGeometry sourceGeometry,
+  required Iterable<Point2> eraserPath,
+  required double radius,
+  required AffineTransform2D localToPage,
+  required StrokeGeometryResolver geometryResolver,
+  required int maximumEraserPoints,
+  required int maximumIntersections,
+  required int maximumFragments,
+  required int maximumOutputSamples,
+  required HandwritingLimits handwritingLimits,
+}) => _splitStrokeByEraser(
+  source: source,
+  sourceGeometry: sourceGeometry,
+  eraserPath: eraserPath,
+  radius: radius,
+  localToPage: localToPage,
+  geometryResolver: geometryResolver,
+  strokeIdGenerator: const _ForbiddenUuidGenerator(),
+  existingIds: const {},
+  maximumEraserPoints: maximumEraserPoints,
+  maximumIntersections: maximumIntersections,
+  maximumFragments: maximumFragments,
+  maximumOutputSamples: maximumOutputSamples,
+  handwritingLimits: handwritingLimits,
+  allocateIdentities: false,
+);
+
 Result<StrokeSplitResult, StructuredFailure> _splitStrokeByEraser({
   required HandwritingStroke source,
+  TransformedStrokeGeometry? sourceGeometry,
   required Iterable<Point2> eraserPath,
   required double radius,
   required AffineTransform2D localToPage,
@@ -559,6 +609,10 @@ Result<StrokeSplitResult, StructuredFailure> _splitStrokeByEraser({
     return Err(_failure('invalid_eraser_path'));
   }
   if (path.isEmpty) return Err(_failure('empty_eraser_path'));
+  if (sourceGeometry != null &&
+      !sourceGeometry.intersectsSweptPath(path, radius)) {
+    return Ok(StrokeSplitResult([source]));
+  }
   Result<bool, StructuredFailure> erased(StrokeSample sample) {
     final dot = HandwritingStroke.create(
       id: source.id,

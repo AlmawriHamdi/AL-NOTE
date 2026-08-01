@@ -33,6 +33,22 @@ void main() {
       expect(decoded, value);
     });
 
+    test('integral doubles retain double tokens on every runtime', () {
+      final value = PreservedList(<PreservedData>[
+        _double(0),
+        _double(-0.0),
+        _double(1),
+        _double(-2),
+      ]);
+      final encoded =
+          (_json().encode(value) as Ok<List<int>, StructuredFailure>).value;
+      expect(utf8.decode(encoded), '[0.0,-0.0,1.0,-2.0]');
+      expect(
+        _json().decode(encoded),
+        Ok<PreservedData, StructuredFailure>(value),
+      );
+    });
+
     for (final source in <List<int>>[
       utf8.encode('{"a":1,"a":2}'),
       <int>[0xc3, 0x28],

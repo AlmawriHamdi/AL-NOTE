@@ -94,7 +94,7 @@ final class BoundedJsonCodec {
         output.write(value);
       case PreservedDouble(:final value):
         if (!value.isFinite) throw const _JsonRejected('json_number');
-        output.write(jsonEncode(value));
+        output.write(_doubleJsonText(value));
       case PreservedString(:final value):
         if (value.length > maximumStringCodeUnits ||
             _hasUnpairedSurrogate(value)) {
@@ -410,6 +410,14 @@ final class _Parser {
   void _expect(int code) {
     if (!_consume(code)) throw const _JsonRejected('json_syntax');
   }
+}
+
+String _doubleJsonText(double value) {
+  if (value == 0 && value.isNegative) return '-0.0';
+  final encoded = jsonEncode(value);
+  return encoded.contains('.') || encoded.contains('e') || encoded.contains('E')
+      ? encoded
+      : '$encoded.0';
 }
 
 final class _EncodingState {

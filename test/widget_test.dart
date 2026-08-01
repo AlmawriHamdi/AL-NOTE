@@ -3,10 +3,12 @@
 import 'package:al_note/app/al_note_app.dart';
 import 'package:al_note/core/primitives.dart';
 import 'package:al_note/documents/commands.dart';
+import 'package:al_note/documents/document_model.dart';
 import 'package:al_note/documents/files.dart';
 import 'package:al_note/documents/objects/handwriting.dart';
 import 'package:al_note/drawing/geometry.dart';
 import 'package:al_note/drawing/renderer.dart';
+import 'package:al_note/ui/canvas/phase6_canvas.dart';
 import 'package:al_note/ui/canvas/phase6_canvas_runtime.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -30,8 +32,13 @@ void main() {
     expect(find.text('wholeEraser'), findsOneWidget);
     expect(find.text('partialEraser'), findsOneWidget);
     expect(find.text('selection'), findsOneWidget);
-    expect(find.text('Save'), findsOneWidget);
-    expect(find.text('Reopen'), findsOneWidget);
+    expect(find.text('Save in memory'), findsOneWidget);
+    expect(find.text('Reopen saved'), findsOneWidget);
+    expect(find.text('Undo'), findsOneWidget);
+    expect(find.text('Redo'), findsOneWidget);
+    expect(find.text('Zoom In'), findsOneWidget);
+    expect(find.text('Zoom Out'), findsOneWidget);
+    expect(find.text('100%'), findsWidgets);
 
     final canvas = find.bySemanticsLabel('Handwriting canvas');
     expect(canvas, findsOneWidget);
@@ -45,7 +52,7 @@ void main() {
     expect(find.text('Stroke committed'), findsOneWidget);
     expect(
       tester
-          .widget<IconButton>(find.widgetWithIcon(IconButton, Icons.undo))
+          .widget<TextButton>(find.widgetWithText(TextButton, 'Undo'))
           .onPressed,
       isNotNull,
     );
@@ -72,7 +79,11 @@ void main() {
     );
     await selectionTap.up();
     await tester.pump();
-    expect(find.text('Stroke selected'), findsOneWidget);
+    expect(
+      find.text('Stroke selected'),
+      findsOneWidget,
+      reason: tester.widget<Text>(find.byKey(const Key('canvas-status'))).data,
+    );
 
     await tester.tap(find.text('wholeEraser'));
     await tester.pump();
@@ -90,12 +101,12 @@ void main() {
     await tester.pump();
     expect(find.text('Redone'), findsOneWidget);
 
-    await tester.tap(find.text('Save'));
+    await tester.tap(find.text('Save in memory'));
     await tester.pump();
-    expect(find.textContaining('Saved '), findsOneWidget);
-    await tester.tap(find.text('Reopen'));
+    expect(find.textContaining('Saved in memory'), findsOneWidget);
+    await tester.tap(find.text('Reopen saved'));
     await tester.pump();
-    expect(find.text('Reopened identical content'), findsOneWidget);
+    expect(find.text('Reopened in-memory save'), findsOneWidget);
   });
 
   testWidgets('partial Eraser is reachable through a real gesture', (
@@ -122,10 +133,7 @@ void main() {
     await erase.moveBy(const Offset(20, 0));
     await erase.moveBy(const Offset(0, 20));
     await tester.pump();
-    expect(
-      _canvasPainterDescription(tester),
-      contains('previews: 1, eraserPath: 4'),
-    );
+    expect(_canvasPainterDescription(tester), contains('eraserPath: 4'));
     final beforeCommit = runtime.initialCoordinator.snapshot.revisions.document;
     await erase.up();
     await tester.pump();
@@ -224,11 +232,82 @@ void main() {
     expect(
       _canvasPainterDescription(tester),
       contains('previews: 1, eraserPath: 21'),
+      reason: 'the Eraser cursor remains constant-size across the gesture',
     );
+    expect(_canvasPainterDescription(tester), contains('partialSegments: 21'));
     expect(runtime.initialCoordinator.snapshot.revisions.document, revision);
     await erase.cancel();
     await tester.pump();
     expect(runtime.initialCoordinator.snapshot.revisions.document, revision);
+  });
+
+  testWidgets('partial Eraser gap is transparent before Pointer Up', (
+    WidgetTester tester,
+  ) async {
+    final runtime = _runtime();
+    await tester.pumpWidget(AlNoteApp(runtime: runtime));
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+    final center = tester.getCenter(canvas);
+    final localCenter = center - tester.getTopLeft(canvas);
+    final blankCenter = await _canvasPixel(tester, localCenter);
+
+    final pen = await tester.startGesture(
+      center - const Offset(60, 0),
+      kind: PointerDeviceKind.mouse,
+    );
+    await pen.moveBy(const Offset(120, 0));
+    await pen.up();
+    await tester.pump();
+    final committed = await _canvasBytes(tester);
+    expect(await _canvasPixel(tester, localCenter), isNot(blankCenter));
+
+    await tester.tap(find.text('partialEraser'));
+    await tester.pump();
+    final eraser = await tester.startGesture(
+      center - const Offset(0, 30),
+      kind: PointerDeviceKind.mouse,
+    );
+    await eraser.moveBy(const Offset(0, 60));
+    await tester.pump();
+    expect(
+      await _canvasPixel(tester, localCenter),
+      blankCenter,
+      reason: 'the predicted gap exposes the real paper pixel, not a cover',
+    );
+    expect(_canvasPainterDescription(tester), contains('previews: 1'));
+    await eraser.cancel();
+    await tester.pump();
+    expect(await _canvasBytes(tester), committed);
+  });
+
+  testWidgets('one marquee selects many separate handwriting Objects', (
+    WidgetTester tester,
+  ) async {
+    final runtime = _runtime();
+    await tester.pumpWidget(AlNoteApp(runtime: runtime));
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+    final center = tester.getCenter(canvas);
+    for (var index = 0; index < 30; index += 1) {
+      final y = center.dy - 70 + index * 4.5;
+      final pen = await tester.startGesture(
+        Offset(center.dx - 80, y),
+        kind: PointerDeviceKind.mouse,
+      );
+      await pen.moveBy(const Offset(160, 0));
+      await pen.up();
+    }
+    await tester.pump();
+    expect(_objectCount(runtime), 30);
+    await tester.tap(find.text('selection'));
+    await tester.pump();
+    final marquee = await tester.startGesture(
+      Offset(center.dx - 100, center.dy - 90),
+      kind: PointerDeviceKind.mouse,
+    );
+    await marquee.moveTo(Offset(center.dx + 100, center.dy + 90));
+    await marquee.up();
+    await tester.pump();
+    expect(find.text('30 strokes selected'), findsOneWidget);
   });
 
   testWidgets('whole Eraser drag is one atomic sparse sweep with undo redo', (
@@ -248,6 +327,7 @@ void main() {
       await tester.pump();
     }
     expect(_objectCount(runtime), 2);
+    final committedPixels = await _canvasBytes(tester);
     await tester.tap(find.text('wholeEraser'));
     await tester.pump();
     final erase = await tester.startGesture(
@@ -259,10 +339,9 @@ void main() {
     }
     await tester.pump();
     expect(_objectCount(runtime), 2);
-    expect(
-      _canvasPainterDescription(tester),
-      contains('previews: 1, eraserPath: 13'),
-    );
+    expect(_canvasPainterDescription(tester), contains('eraserPath: 13'));
+    expect(_canvasPainterDescription(tester), contains('wholeSegments: 13'));
+    expect(await _canvasBytes(tester), isNot(equals(committedPixels)));
     final beforeCommit = runtime.initialCoordinator.snapshot.revisions.document;
     await erase.up();
     await tester.pump();
@@ -277,6 +356,39 @@ void main() {
     await tester.tap(find.byTooltip('Redo'));
     await tester.pump();
     expect(_objectCount(runtime), 0);
+  });
+
+  testWidgets('whole Eraser predictive hiding cancels without publication', (
+    WidgetTester tester,
+  ) async {
+    final runtime = _runtime();
+    await tester.pumpWidget(AlNoteApp(runtime: runtime));
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+    final center = tester.getCenter(canvas);
+    final pen = await tester.startGesture(
+      center + const Offset(-40, 0),
+      kind: PointerDeviceKind.mouse,
+    );
+    await pen.moveBy(const Offset(80, 0));
+    await pen.up();
+    await tester.pump();
+    final committed = await _canvasBytes(tester);
+    final revision = runtime.initialCoordinator.snapshot.revisions.document;
+    await tester.tap(find.text('wholeEraser'));
+    await tester.pump();
+    final eraser = await tester.startGesture(
+      center + const Offset(0, -10),
+      kind: PointerDeviceKind.mouse,
+    );
+    await eraser.moveBy(const Offset(0, 20));
+    await tester.pump();
+    expect(await _canvasBytes(tester), isNot(equals(committed)));
+    expect(runtime.initialCoordinator.snapshot.revisions.document, revision);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(await _canvasBytes(tester), equals(committed));
+    expect(runtime.initialCoordinator.snapshot.revisions.document, revision);
+    await eraser.cancel();
   });
 
   testWidgets('malformed owned pointer events release routing fail-closed', (
@@ -416,17 +528,491 @@ void main() {
     await tester.pump();
     expect(runtime.initialCoordinator.snapshot.isDirty, isTrue);
 
-    await tester.tap(find.text('Save'));
+    await tester.tap(find.text('Save in memory'));
     await tester.pump();
     expect(find.text('Save failed'), findsOneWidget);
     expect(runtime.initialCoordinator.snapshot.isDirty, isTrue);
 
     await tester.tap(find.byTooltip('Undo'));
     await tester.pump();
-    await tester.tap(find.text('Save'));
+    await tester.tap(find.text('Save in memory'));
     await tester.pump();
-    expect(find.textContaining('Saved '), findsOneWidget);
+    expect(find.textContaining('Saved in memory'), findsOneWidget);
     expect(runtime.initialCoordinator.snapshot.isDirty, isFalse);
+  });
+
+  testWidgets('drag Selection is live, ordered, atomic, and cancellable', (
+    WidgetTester tester,
+  ) async {
+    final runtime = _runtime();
+    await tester.pumpWidget(AlNoteApp(runtime: runtime));
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+    final center = tester.getCenter(canvas);
+    for (final y in [-24.0, 24.0]) {
+      final pen = await tester.startGesture(
+        center + Offset(-45, y),
+        kind: PointerDeviceKind.mouse,
+      );
+      await pen.moveBy(const Offset(90, 0));
+      await pen.up();
+      await tester.pump();
+    }
+    final revision = runtime.initialCoordinator.snapshot.revisions.document;
+    final history = runtime.initialCoordinator.snapshot.canUndo;
+    await tester.tap(find.text('selection'));
+    await tester.pump();
+    final beforeMarquee = await _canvasBytes(tester);
+    final marquee = await tester.startGesture(
+      center + const Offset(-70, -45),
+      kind: PointerDeviceKind.mouse,
+    );
+    await marquee.moveTo(center + const Offset(70, 45));
+    await tester.pump();
+    expect(await _canvasBytes(tester), isNot(equals(beforeMarquee)));
+    await marquee.up();
+    await tester.pump();
+    expect(find.text('2 strokes selected'), findsOneWidget);
+    expect(runtime.initialCoordinator.snapshot.revisions.document, revision);
+    expect(runtime.initialCoordinator.snapshot.canUndo, history);
+
+    final selected = await _canvasBytes(tester);
+    final cancelled = await tester.startGesture(
+      center + const Offset(80, 60),
+      kind: PointerDeviceKind.mouse,
+    );
+    await cancelled.moveBy(const Offset(30, 30));
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(await _canvasBytes(tester), equals(selected));
+    expect(runtime.initialCoordinator.snapshot.revisions.document, revision);
+    await cancelled.cancel();
+
+    final clear = await tester.startGesture(
+      center + const Offset(120, 80),
+      kind: PointerDeviceKind.mouse,
+    );
+    await clear.moveBy(const Offset(30, 30));
+    await clear.up();
+    await tester.pump();
+    expect(find.text('Selection cleared'), findsOneWidget);
+  });
+
+  testWidgets('zoom controls stay protected and aligned across resizing', (
+    WidgetTester tester,
+  ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(520, 650));
+    await tester.pumpWidget(AlNoteApp(runtime: _runtime()));
+    await tester.pump();
+    final toolbar = find.byKey(const Key('canvas-toolbar'));
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+    expect(
+      tester.getBottomLeft(toolbar).dy,
+      lessThanOrEqualTo(tester.getTopLeft(canvas).dy),
+    );
+    expect(find.text('Zoom In'), findsOneWidget);
+    expect(find.text('Zoom Out'), findsOneWidget);
+
+    tester.widget<Slider>(find.byKey(const Key('zoom-slider'))).onChanged!(8);
+    await tester.pump();
+    expect(find.byKey(const Key('zoom-percentage')), findsOneWidget);
+    expect(find.text('800%'), findsWidgets);
+    expect(find.text('Undo').hitTestable(), findsOneWidget);
+    expect(find.text('Redo'), findsOneWidget);
+
+    final atMaximum = tester.getCenter(canvas);
+    final pen = await tester.startGesture(
+      atMaximum,
+      kind: PointerDeviceKind.mouse,
+    );
+    await pen.moveBy(const Offset(20, 0));
+    await pen.up();
+    await tester.pump();
+    expect(find.text('Stroke committed'), findsOneWidget);
+    await tester.tap(find.text('selection'));
+    await tester.pump();
+    final select = await tester.startGesture(
+      atMaximum,
+      kind: PointerDeviceKind.mouse,
+    );
+    await select.up();
+    await tester.pump();
+    expect(
+      find.text('Stroke selected'),
+      findsOneWidget,
+      reason: tester.widget<Text>(find.byKey(const Key('canvas-status'))).data,
+    );
+
+    tester.widget<Slider>(find.byKey(const Key('zoom-slider'))).onChanged!(.25);
+    await tester.pump();
+    expect(find.text('25%'), findsWidgets);
+    expect(find.text('Undo').hitTestable(), findsOneWidget);
+
+    await tester.binding.setSurfaceSize(const Size(900, 700));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('zoom-reset')));
+    await tester.pump();
+    expect(find.text('100%'), findsWidgets);
+    expect(
+      tester.getBottomLeft(toolbar).dy,
+      lessThanOrEqualTo(tester.getTopLeft(canvas).dy),
+    );
+    expect(tester.getRect(canvas).right, lessThanOrEqualTo(900));
+  });
+
+  testWidgets('realistic in-memory Save and Reopen cycles restore pixels', (
+    WidgetTester tester,
+  ) async {
+    final runtime = _runtime();
+    await tester.pumpWidget(AlNoteApp(runtime: runtime));
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+    final center = tester.getCenter(canvas);
+    final reopenFinder = find.widgetWithText(TextButton, 'Reopen saved');
+    expect(tester.widget<TextButton>(reopenFinder).onPressed, isNull);
+    for (final y in [-35.0, 0.0, 35.0]) {
+      final pen = await tester.startGesture(
+        center + Offset(-50, y),
+        kind: PointerDeviceKind.mouse,
+      );
+      await pen.moveBy(const Offset(100, 0));
+      await pen.up();
+      await tester.pump();
+    }
+    await tester.tap(find.text('wholeEraser'));
+    await tester.pump();
+    final eraser = await tester.startGesture(
+      center + const Offset(0, -8),
+      kind: PointerDeviceKind.mouse,
+    );
+    await eraser.moveBy(const Offset(0, 16));
+    await eraser.up();
+    await tester.pump();
+    expect(find.text('Stroke erased'), findsOneWidget);
+
+    await tester.tap(find.text('Save in memory'));
+    await tester.pump();
+    expect(find.textContaining('Saved in memory'), findsOneWidget);
+    expect(tester.widget<TextButton>(reopenFinder).onPressed, isNotNull);
+    final savedEvidence = _canvasPainter(tester);
+    final savedBytes = List<int>.of(savedEvidence.savedBytes as List<int>);
+    final savedRoot = savedEvidence.savedRoot as DocumentRoot;
+    final opened = AlnotePackageReader(objectRegistry: runtime.objectRegistry)
+        .openBytes(
+          savedBytes,
+          limits: runtime.storageLimits,
+          cancellationToken: CancellationController().token,
+        );
+    expect(opened, isA<Completed<OpenedAlnotePackage, StructuredFailure>>());
+    final decoded =
+        (opened as Completed<OpenedAlnotePackage, StructuredFailure>).value
+            .materializeDocument(
+              cancellationToken: CancellationController().token,
+            );
+    expect(decoded, isA<Completed<DocumentRoot, StructuredFailure>>());
+    final decodedRoot =
+        (decoded as Completed<DocumentRoot, StructuredFailure>).value;
+    expect(decodedRoot, savedRoot);
+    final savedPixels = await _canvasBytes(tester);
+
+    await tester.tap(find.text('pen'));
+    await tester.pump();
+    final later = await tester.startGesture(
+      center + const Offset(-30, 70),
+      kind: PointerDeviceKind.mouse,
+    );
+    await later.moveBy(const Offset(60, 0));
+    await later.up();
+    await tester.pump();
+    expect(await _canvasBytes(tester), isNot(equals(savedPixels)));
+
+    await tester.tap(find.text('Reopen saved'));
+    await tester.pump();
+    expect(find.text('Reopened in-memory save'), findsOneWidget);
+    final reopenedEvidence = _canvasPainter(tester);
+    expect(reopenedEvidence.currentRoot, decodedRoot);
+    expect(
+      identical(
+        reopenedEvidence.currentRoot,
+        reopenedEvidence.reopenedMaterializedRoot,
+      ),
+      isTrue,
+    );
+    expect(await _canvasBytes(tester), equals(savedPixels));
+    await tester.tap(find.text('Save in memory'));
+    await tester.pump();
+    await tester.tap(find.text('Reopen saved'));
+    await tester.pump();
+    expect(find.text('Reopened in-memory save'), findsOneWidget);
+  });
+
+  testWidgets('long Pen and Erasers keep bounded live work before terminal', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(AlNoteApp(runtime: _runtime()));
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+    final start = tester.getCenter(canvas) - const Offset(180, 0);
+    final pen = await tester.startGesture(start, kind: PointerDeviceKind.mouse);
+    for (var index = 1; index <= 360; index += 1) {
+      await pen.moveTo(start + Offset(index.toDouble(), index.isEven ? 1 : -1));
+      if (index % 60 == 0) {
+        await tester.pump();
+        expect(
+          _canvasPainter(tester).previewPrimitiveCount,
+          lessThanOrEqualTo(192),
+        );
+        expect(find.text('Drawing'), findsOneWidget);
+      }
+    }
+    await pen.up();
+    await tester.pump();
+    expect(find.text('Stroke committed'), findsOneWidget);
+
+    await tester.tap(find.text('partialEraser'));
+    await tester.pump();
+    final partial = await tester.startGesture(
+      tester.getCenter(canvas),
+      kind: PointerDeviceKind.mouse,
+    );
+    for (var index = 1; index <= 240; index += 1) {
+      await partial.moveBy(Offset(0, index.isEven ? 1 : -1));
+    }
+    await tester.pump();
+    final partialEvidence = _canvasPainter(tester);
+    expect(partialEvidence.previewPrimitiveCount, lessThanOrEqualTo(192));
+    expect(partialEvidence.eraserPathLength, 241);
+    expect(partialEvidence.partialSegmentCount, 241);
+    expect(partialEvidence.partialSplitCalls, lessThanOrEqualTo(5061));
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(find.text('Cancelled'), findsOneWidget);
+    await partial.cancel();
+
+    await tester.tap(find.text('wholeEraser'));
+    await tester.pump();
+    final whole = await tester.startGesture(
+      tester.getCenter(canvas),
+      kind: PointerDeviceKind.mouse,
+    );
+    for (var index = 1; index <= 180; index += 1) {
+      await whole.moveBy(Offset(0, index.isEven ? 1 : -1));
+    }
+    await tester.pump();
+    final wholeEvidence = _canvasPainter(tester);
+    expect(wholeEvidence.previewPrimitiveCount, lessThanOrEqualTo(1));
+    expect(wholeEvidence.eraserPathLength, 181);
+    expect(wholeEvidence.wholeSegmentCount, 181);
+    expect(wholeEvidence.wholeGeometryChecks, lessThan(256));
+    await whole.up();
+    await tester.pump();
+    expect(find.text('Stroke erased'), findsOneWidget);
+  });
+
+  testWidgets('fitted paper stays centered through resize zoom save reopen', (
+    WidgetTester tester,
+  ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(1200, 1400));
+    await tester.pumpWidget(AlNoteApp(runtime: _runtime()));
+    await tester.pump();
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+
+    void expectCentered() {
+      final clip = _canvasPainter(tester).pageClip!;
+      final size = tester.getSize(canvas);
+      expect((clip.left + clip.right) / 2, closeTo(size.width / 2, .01));
+      expect((clip.top + clip.bottom) / 2, closeTo(size.height / 2, .01));
+    }
+
+    expectCentered();
+    tester.widget<Slider>(find.byKey(const Key('zoom-slider'))).onChanged!(.5);
+    await tester.pump();
+    expectCentered();
+    await tester.binding.setSurfaceSize(const Size(1000, 1200));
+    await tester.pump();
+    expectCentered();
+    await tester.tap(find.text('Save in memory'));
+    await tester.pump();
+    await tester.tap(find.text('Reopen saved'));
+    await tester.pump();
+    expect(find.text('Reopened in-memory save'), findsOneWidget);
+    expectCentered();
+    await tester.tap(find.byKey(const Key('zoom-reset')));
+    await tester.pump();
+    expectCentered();
+  });
+
+  testWidgets(
+    'long edited handwriting round-trips twice through real package controls',
+    (WidgetTester tester) async {
+      final runtime = _runtime();
+      await tester.pumpWidget(AlNoteApp(runtime: runtime));
+      final canvas = find.bySemanticsLabel('Handwriting canvas');
+      final center = tester.getCenter(canvas);
+      final pen = await tester.startGesture(
+        center - const Offset(160, 0),
+        kind: PointerDeviceKind.mouse,
+      );
+      for (var index = 1; index <= 320; index += 1) {
+        await pen.moveTo(center + Offset(index - 160, index.isEven ? 1 : -1));
+      }
+      await pen.up();
+      await tester.pump();
+      expect(find.text('Stroke committed'), findsOneWidget);
+
+      await tester.tap(find.text('partialEraser'));
+      await tester.pump();
+      final partial = await tester.startGesture(
+        center - const Offset(0, 24),
+        kind: PointerDeviceKind.mouse,
+      );
+      final localCenter = center - tester.getTopLeft(canvas);
+      final committedPixel = await _canvasPixel(tester, localCenter);
+      await partial.moveTo(center + const Offset(0, 24));
+      await tester.pump();
+      final previewPixel = await _canvasPixel(tester, localCenter);
+      expect(previewPixel, isNot(equals(committedPixel)));
+      expect(previewPixel.first, greaterThan(committedPixel.first));
+      await partial.up();
+      await tester.pump();
+      expect(find.text('Stroke partially erased'), findsOneWidget);
+      final terminalPixel = await _canvasPixel(tester, localCenter);
+      expect(terminalPixel, isNot(equals(committedPixel)));
+      expect(terminalPixel.first, greaterThanOrEqualTo(previewPixel.first));
+      final editedRoot = _canvasPainter(tester).currentRoot;
+
+      await tester.tap(find.text('Undo'));
+      await tester.pump();
+      expect(find.text('Undone'), findsOneWidget);
+      await tester.tap(find.text('Redo'));
+      await tester.pump();
+      expect(find.text('Redone'), findsOneWidget);
+      expect(_canvasPainter(tester).currentRoot, editedRoot);
+
+      for (var cycle = 0; cycle < 2; cycle += 1) {
+        await tester.tap(find.text('Save in memory'));
+        await tester.pump();
+        expect(find.textContaining('Saved in memory'), findsOneWidget);
+        final saved = _canvasPainter(tester).savedRoot!;
+        final reopen = find.widgetWithText(TextButton, 'Reopen saved');
+        expect(tester.widget<TextButton>(reopen).onPressed, isNotNull);
+        await tester.tap(find.text('pen'));
+        await tester.pump();
+        final extra = await tester.startGesture(
+          center + Offset(-30, 50 + cycle * 12),
+          kind: PointerDeviceKind.mouse,
+        );
+        await extra.moveBy(const Offset(60, 0));
+        await extra.up();
+        await tester.pump();
+        expect(_canvasPainter(tester).currentRoot, isNot(saved));
+        await tester.tap(find.text('Reopen saved'));
+        await tester.pump();
+        expect(find.text('Reopened in-memory save'), findsOneWidget);
+        expect(_canvasPainter(tester).currentRoot, saved);
+        expect(
+          identical(
+            _canvasPainter(tester).currentRoot,
+            _canvasPainter(tester).reopenedMaterializedRoot,
+          ),
+          isTrue,
+        );
+      }
+    },
+  );
+
+  testWidgets('every Reopen failure stage is fixed and preserves state', (
+    WidgetTester tester,
+  ) async {
+    for (final stage in Phase6ReopenFailureStage.values) {
+      final runtime = _runtime(reopenGateway: _FailingReopenGateway(stage));
+      await tester.pumpWidget(AlNoteApp(runtime: runtime));
+      final canvas = find.bySemanticsLabel('Handwriting canvas');
+      final first = await tester.startGesture(
+        tester.getCenter(canvas),
+        kind: PointerDeviceKind.mouse,
+      );
+      await first.moveBy(const Offset(20, 0));
+      await first.up();
+      await tester.pump();
+      await tester.tap(find.text('Save in memory'));
+      await tester.pump();
+      final savedBytes = _canvasPainter(tester).savedBytes;
+      final savedRoot = _canvasPainter(tester).savedRoot;
+      final second = await tester.startGesture(
+        tester.getCenter(canvas) + const Offset(0, 30),
+        kind: PointerDeviceKind.mouse,
+      );
+      await second.moveBy(const Offset(20, 0));
+      await second.up();
+      await tester.pump();
+      final before = runtime.initialCoordinator.snapshot;
+      final currentRoot = _canvasPainter(tester).currentRoot;
+      await tester.tap(find.text('Reopen saved'));
+      await tester.pump();
+      expect(
+        find.text(
+          stage == Phase6ReopenFailureStage.materialization
+              ? 'Reopen failed (materialization)'
+              : 'Reopen failed (${stage.name})',
+        ),
+        findsOneWidget,
+      );
+      expect(_canvasPainter(tester).currentRoot, same(currentRoot));
+      expect(_canvasPainter(tester).savedBytes, same(savedBytes));
+      expect(_canvasPainter(tester).savedRoot, same(savedRoot));
+      expect(runtime.initialCoordinator.snapshot.canUndo, before.canUndo);
+      expect(runtime.initialCoordinator.snapshot.canRedo, before.canRedo);
+      expect(runtime.initialCoordinator.snapshot.revisions, before.revisions);
+    }
+  });
+
+  testWidgets('leaving Selection clears outlines without document history', (
+    WidgetTester tester,
+  ) async {
+    final runtime = _runtime();
+    await tester.pumpWidget(AlNoteApp(runtime: runtime));
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+    final center = tester.getCenter(canvas);
+    final pen = await tester.startGesture(
+      center - const Offset(20, 0),
+      kind: PointerDeviceKind.mouse,
+    );
+    await pen.moveBy(const Offset(40, 0));
+    await pen.up();
+    await tester.pump();
+    await tester.tap(find.text('selection'));
+    await tester.pump();
+    final select = await tester.startGesture(
+      center,
+      kind: PointerDeviceKind.mouse,
+    );
+    await select.up();
+    await tester.pump();
+    expect(find.text('Stroke selected'), findsOneWidget);
+    final selectedPixels = await _canvasBytes(tester);
+    final before = runtime.initialCoordinator.snapshot;
+
+    await tester.tap(find.text('pen'));
+    await tester.pump();
+    expect(await _canvasBytes(tester), isNot(equals(selectedPixels)));
+    expect(runtime.initialCoordinator.snapshot.root, same(before.root));
+    expect(runtime.initialCoordinator.snapshot.revisions, before.revisions);
+    expect(runtime.initialCoordinator.snapshot.canUndo, before.canUndo);
+    expect(runtime.initialCoordinator.snapshot.canRedo, before.canRedo);
+
+    await tester.tap(find.text('selection'));
+    await tester.pump();
+    final active = await tester.startGesture(
+      center - const Offset(40, 20),
+      kind: PointerDeviceKind.mouse,
+    );
+    await active.moveBy(const Offset(80, 40));
+    await tester.tap(find.text('wholeEraser'));
+    await tester.pump();
+    await active.cancel();
+    expect(runtime.initialCoordinator.snapshot.root, same(before.root));
+    expect(runtime.initialCoordinator.snapshot.revisions, before.revisions);
   });
 
   test('runtime registry ceilings are injected and exact boundaries pass', () {
@@ -517,11 +1103,13 @@ Phase6CanvasRuntime _runtime({
   int storageCeiling = 10000000,
   int maximumPenSamples = 10000,
   int maximumEraserPoints = 10000,
+  Phase6ReopenGateway? reopenGateway,
 }) => _ok(
   _runtimeResult(
     storageCeiling: storageCeiling,
     maximumPenSamples: maximumPenSamples,
     maximumEraserPoints: maximumEraserPoints,
+    reopenGateway: reopenGateway,
   ),
 );
 
@@ -540,6 +1128,7 @@ Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
   int ellipseVertexCount = 16,
   int maximumGeometryElements = 20000,
   int maximumGeometryVertices = 400000,
+  Phase6ReopenGateway? reopenGateway,
 }) {
   final storageEntries =
       <({ResourceLimitKey key, ResourceLimitCeiling ceiling})>[];
@@ -613,6 +1202,7 @@ Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
     maximumEraserIntersections: 20000,
     maximumEraserFragments: 10000,
     maximumEraserOutputSamples: 200000,
+    reopenGateway: reopenGateway,
   );
 }
 
@@ -630,15 +1220,37 @@ Future<Uint8List> _canvasBytes(WidgetTester tester) async {
   return result;
 }
 
+Future<List<int>> _canvasPixel(
+  WidgetTester tester,
+  Offset localPosition,
+) async {
+  late List<int> result;
+  await tester.runAsync(() async {
+    final boundary = tester.renderObject<RenderRepaintBoundary>(
+      find.byKey(const Key('phase6-canvas-paint')),
+    );
+    final image = await boundary.toImage();
+    final data = await image.toByteData();
+    final bytes = data!.buffer.asUint8List();
+    final x = localPosition.dx.floor().clamp(0, image.width - 1);
+    final y = localPosition.dy.floor().clamp(0, image.height - 1);
+    final offset = (y * image.width + x) * 4;
+    result = bytes.sublist(offset, offset + 4);
+    image.dispose();
+  });
+  return result;
+}
+
 String _canvasPainterDescription(WidgetTester tester) => tester
-    .widget<CustomPaint>(
-      find.descendant(
-        of: find.byKey(const Key('phase6-canvas-paint')),
-        matching: find.byType(CustomPaint),
-      ),
-    )
+    .widget<CustomPaint>(find.byKey(const Key('phase6-overlay-paint')))
     .painter
     .toString();
+
+Phase6CanvasPersistenceEvidence _canvasPainter(WidgetTester tester) =>
+    tester
+            .widget<CustomPaint>(find.byKey(const Key('phase6-overlay-paint')))
+            .painter
+        as Phase6CanvasPersistenceEvidence;
 
 int _objectCount(Phase6CanvasRuntime runtime) => runtime
     .initialCoordinator
@@ -659,6 +1271,17 @@ int _handwritingStrokeCount(Phase6CanvasRuntime runtime) {
       limits: runtime.handwritingLimits,
     ),
   ).strokes.length;
+}
+
+final class _FailingReopenGateway implements Phase6ReopenGateway {
+  const _FailingReopenGateway(this.stage);
+  final Phase6ReopenFailureStage stage;
+
+  @override
+  Phase6ReopenOutcome reopen({
+    required List<int> bytes,
+    required DocumentRoot savedRoot,
+  }) => Phase6ReopenFailure(stage);
 }
 
 final class _RuntimeCountingUuidGenerator implements UuidGenerator {

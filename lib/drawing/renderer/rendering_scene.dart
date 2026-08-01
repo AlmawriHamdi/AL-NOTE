@@ -291,6 +291,7 @@ final class HandwritingRenderingDefinition
   const HandwritingRenderingDefinition({
     required this.handwritingLimits,
     required this.geometryResolver,
+    this.geometryCache,
   });
 
   /// Handwriting decode ceilings.
@@ -298,6 +299,9 @@ final class HandwritingRenderingDefinition
 
   /// Shared geometry resolver.
   final StrokeGeometryResolver geometryResolver;
+
+  /// Optional bounded cache shared with interaction subsystems.
+  final HandwritingGeometryCache? geometryCache;
 
   @override
   ObjectTypeKey get typeKey => handwritingObjectTypeKey;
@@ -317,21 +321,35 @@ final class HandwritingRenderingDefinition
         layerOpacity > 1) {
       return Err(_failure('invalid_object', FailureCategory.validation));
     }
-    final decoded = HandwritingPayload.decode(
-      object.payload,
-      limits: handwritingLimits,
+    final prepared = geometryCache?.prepare(
+      object: object,
+      handwritingLimits: handwritingLimits,
+      geometryResolver: geometryResolver,
     );
+    final decoded = prepared == null
+        ? HandwritingPayload.decode(object.payload, limits: handwritingLimits)
+        : prepared.map((value) => value.payload);
     if (decoded is Err<HandwritingPayload, StructuredFailure>) {
       return Err(_failure('invalid_object', FailureCategory.validation));
     }
     final primitives = <ScenePrimitive>[];
     final payload =
         (decoded as Ok<HandwritingPayload, StructuredFailure>).value;
-    for (final stroke in payload.strokes) {
-      final geometry = geometryResolver.resolve(
-        stroke: stroke,
-        localToPage: object.transform,
-      );
+    for (
+      var strokeIndex = 0;
+      strokeIndex < payload.strokes.length;
+      strokeIndex += 1
+    ) {
+      final stroke = payload.strokes[strokeIndex];
+      final geometry =
+          prepared is Ok<PreparedHandwritingGeometry, StructuredFailure>
+          ? Ok<TransformedStrokeGeometry, StructuredFailure>(
+              prepared.value.geometries[strokeIndex],
+            )
+          : geometryResolver.resolve(
+              stroke: stroke,
+              localToPage: object.transform,
+            );
       if (geometry is Err<TransformedStrokeGeometry, StructuredFailure>) {
         return Err(
           _failure('geometry_unavailable', FailureCategory.dependency),
@@ -446,6 +464,44 @@ final class RenderSnapshot {
   final List<Rect2> damageRegions;
 }
 
+/// Immutable committed primitives grouped by their authoritative Object ID.
+final class CommittedObjectScene {
+  /// Creates immutable Object-local committed rendering evidence.
+  CommittedObjectScene._({
+    required this.objectId,
+    required Iterable<ScenePrimitive> primitives,
+  }) : primitives = List<ScenePrimitive>.unmodifiable(primitives);
+
+  /// Identity of the Object that produced [primitives].
+  final ObjectId objectId;
+
+  /// Committed primitives produced for this Object in registry order.
+  final List<ScenePrimitive> primitives;
+}
+
+/// Immutable view-local committed scene that can be composed with overlays.
+final class CommittedPageScene {
+  /// Creates immutable committed evidence produced by [PageSceneBuilder].
+  CommittedPageScene._({
+    required this.documentRevision,
+    required this.viewportRevision,
+    required this.pageClip,
+    required Iterable<CommittedObjectScene> objects,
+  }) : objects = List<CommittedObjectScene>.unmodifiable(objects);
+
+  /// Authoritative document revision used to render this scene.
+  final Revision documentRevision;
+
+  /// Viewport revision used to render this scene.
+  final Revision viewportRevision;
+
+  /// View-space Page clip used for committed rendering.
+  final Rect2 pageClip;
+
+  /// Bounded Object-to-primitive evidence in Page/Layer/Object order.
+  final List<CommittedObjectScene> objects;
+}
+
 /// Pure scene builder using Object and Rendering registries.
 final class PageSceneBuilder {
   /// Creates a builder with explicit registries and limits.
@@ -471,6 +527,120 @@ final class PageSceneBuilder {
     required Revision documentRevision,
     Iterable<ScenePrimitive> previews = const [],
     Iterable<ScenePrimitive> selections = const [],
+    Iterable<ObjectId> excludedObjectIds = const [],
+  }) {
+    final committed = buildCommitted(
+      page: page,
+      viewport: viewport,
+      documentRevision: documentRevision,
+    );
+    if (committed is Err<CommittedPageScene, StructuredFailure>) {
+      return Err(committed.error);
+    }
+    return compose(
+      committed: (committed as Ok<CommittedPageScene, StructuredFailure>).value,
+      previews: previews,
+      selections: selections,
+      excludedObjectIds: excludedObjectIds,
+    );
+  }
+
+  /// Builds bounded committed rendering without transient overlay evidence.
+  Result<CommittedPageScene, StructuredFailure> buildCommitted({
+    required DocumentPage page,
+    required ViewportSnapshot viewport,
+    required Revision documentRevision,
+  }) {
+    final origin = viewport
+        .pageToView(_point(0, 0))
+        .fold<ViewPoint?>(onOk: (value) => value, onErr: (_) => null);
+    final far = viewport
+        .pageToView(_point(page.size.width, page.size.height))
+        .fold<ViewPoint?>(onOk: (value) => value, onErr: (_) => null);
+    if (origin == null || far == null) {
+      return Err(_failure('invalid_clip', FailureCategory.validation));
+    }
+    final clip = _rect(
+      math.min(origin.x, far.x),
+      math.min(origin.y, far.y),
+      math.max(origin.x, far.x),
+      math.max(origin.y, far.y),
+    );
+    final objects = <CommittedObjectScene>[];
+    var primitiveCount = 0;
+    for (final layer in page.layers) {
+      if (layer is! ContentLayer) continue;
+      if (!layer.visible || layer.opacity == 0) continue;
+      for (final object in layer.objects) {
+        if (!object.visible) continue;
+        if (object.typeKey == handwritingObjectTypeKey &&
+            object.typeSchemaVersion != handwritingSchemaVersion) {
+          continue;
+        }
+        final resolution = objectRegistry.resolve(object);
+        if (resolution is! SupportedObjectResolution) continue;
+        final definition = renderingRegistry.definitions[object.typeKey];
+        if (definition == null) continue;
+        final objectPrimitives = <ScenePrimitive>[];
+        final rendered = definition.render(
+          object: object,
+          viewport: viewport,
+          layerOpacity: layer.opacity,
+          plane: RenderPlane.committed,
+          limits: limits,
+        );
+        if (rendered is Ok<List<ScenePrimitive>, StructuredFailure>) {
+          for (final primitive in rendered.value) {
+            if (_intersects(primitive.bounds, clip)) {
+              objectPrimitives.add(primitive);
+            }
+          }
+        } else {
+          final placeholderBounds = _safePlaceholderBounds(
+            resolution,
+            viewport,
+          );
+          if (placeholderBounds != null) {
+            final placeholder = PlaceholderPrimitive.create(
+              plane: RenderPlane.committed,
+              bounds: placeholderBounds,
+              opacity: layer.opacity,
+            );
+            if (placeholder is Ok<PlaceholderPrimitive, StructuredFailure>) {
+              objectPrimitives.add(placeholder.value);
+            }
+          }
+        }
+        if (objectPrimitives.isNotEmpty) {
+          primitiveCount += objectPrimitives.length;
+          if (primitiveCount > limits.maximumPrimitives) {
+            return Err(_failure('primitive_count', FailureCategory.resource));
+          }
+          objects.add(
+            CommittedObjectScene._(
+              objectId: object.id,
+              primitives: objectPrimitives,
+            ),
+          );
+        }
+      }
+    }
+    return Ok(
+      CommittedPageScene._(
+        documentRevision: documentRevision,
+        viewportRevision: viewport.revision,
+        pageClip: clip,
+        objects: objects,
+      ),
+    );
+  }
+
+  /// Composes cached committed evidence with bounded exclusions and overlays.
+  Result<RenderSnapshot, StructuredFailure> compose({
+    required CommittedPageScene committed,
+    Iterable<ScenePrimitive> previews = const [],
+    Iterable<ScenePrimitive> selections = const [],
+    Iterable<ObjectId> excludedObjectIds = const [],
   }) {
     final capturedPreviews = _capture(
       previews,
@@ -486,6 +656,66 @@ final class PageSceneBuilder {
       return Err(capturedPreviews.error);
     if (capturedSelections is Err<List<ScenePrimitive>, StructuredFailure>)
       return Err(capturedSelections.error);
+    final capturedExclusions = _capture(
+      excludedObjectIds,
+      limits.maximumPrimitives,
+      'exclusion_count',
+    );
+    if (capturedExclusions is Err<List<ObjectId>, StructuredFailure>) {
+      return Err(capturedExclusions.error);
+    }
+    final previewValues =
+        (capturedPreviews as Ok<List<ScenePrimitive>, StructuredFailure>).value;
+    final selectionValues =
+        (capturedSelections as Ok<List<ScenePrimitive>, StructuredFailure>)
+            .value;
+    final exclusions =
+        (capturedExclusions as Ok<List<ObjectId>, StructuredFailure>).value
+            .toSet();
+    if (previewValues.any((value) => value.plane != RenderPlane.toolPreview) ||
+        selectionValues.any((value) => value.plane != RenderPlane.selection)) {
+      return Err(_failure('invalid_overlay_plane', FailureCategory.validation));
+    }
+    final primitives = <ScenePrimitive>[];
+    for (final object in committed.objects) {
+      if (!exclusions.contains(object.objectId)) {
+        primitives.addAll(object.primitives);
+      }
+    }
+    primitives.addAll(previewValues);
+    primitives.addAll(selectionValues);
+    return RenderSnapshot.create(
+      documentRevision: committed.documentRevision,
+      viewportRevision: committed.viewportRevision,
+      pageClip: committed.pageClip,
+      primitives: primitives,
+      damageRegions: primitives.map((value) => value.bounds),
+      limits: limits,
+    );
+  }
+
+  /// Composes only bounded transient overlays over a committed Page clip.
+  Result<RenderSnapshot, StructuredFailure> composeOverlays({
+    required CommittedPageScene committed,
+    Iterable<ScenePrimitive> previews = const [],
+    Iterable<ScenePrimitive> selections = const [],
+  }) {
+    final capturedPreviews = _capture(
+      previews,
+      limits.maximumPreviewOverlays,
+      'preview_count',
+    );
+    final capturedSelections = _capture(
+      selections,
+      limits.maximumSelectionOverlays,
+      'selection_count',
+    );
+    if (capturedPreviews is Err<List<ScenePrimitive>, StructuredFailure>) {
+      return Err(capturedPreviews.error);
+    }
+    if (capturedSelections is Err<List<ScenePrimitive>, StructuredFailure>) {
+      return Err(capturedSelections.error);
+    }
     final previewValues =
         (capturedPreviews as Ok<List<ScenePrimitive>, StructuredFailure>).value;
     final selectionValues =
@@ -495,72 +725,11 @@ final class PageSceneBuilder {
         selectionValues.any((value) => value.plane != RenderPlane.selection)) {
       return Err(_failure('invalid_overlay_plane', FailureCategory.validation));
     }
-    final origin = viewport
-        .pageToView(_point(0, 0))
-        .fold<ViewPoint?>(onOk: (value) => value, onErr: (_) => null);
-    final far = viewport
-        .pageToView(_point(page.size.width, page.size.height))
-        .fold<ViewPoint?>(onOk: (value) => value, onErr: (_) => null);
-    if (origin == null || far == null)
-      return Err(_failure('invalid_clip', FailureCategory.validation));
-    final clip = _rect(
-      math.min(origin.x, far.x),
-      math.min(origin.y, far.y),
-      math.max(origin.x, far.x),
-      math.max(origin.y, far.y),
-    );
-    final primitives = <ScenePrimitive>[];
-    for (final layer in page.layers) {
-      if (layer is! ContentLayer) continue;
-      if (!layer.visible || layer.opacity == 0) continue;
-      for (final object in layer.objects) {
-        if (!object.visible) continue;
-        if (object.typeKey == handwritingObjectTypeKey &&
-            object.typeSchemaVersion != handwritingSchemaVersion) {
-          continue;
-        }
-        final resolution = objectRegistry.resolve(object);
-        if (resolution is! SupportedObjectResolution) continue;
-        final definition = renderingRegistry.definitions[object.typeKey];
-        if (definition == null) continue;
-        final rendered = definition.render(
-          object: object,
-          viewport: viewport,
-          layerOpacity: layer.opacity,
-          plane: RenderPlane.committed,
-          limits: limits,
-        );
-        if (rendered is Ok<List<ScenePrimitive>, StructuredFailure>) {
-          for (final primitive in rendered.value) {
-            if (_intersects(primitive.bounds, clip)) primitives.add(primitive);
-          }
-        } else {
-          final placeholderBounds = _safePlaceholderBounds(
-            resolution,
-            viewport,
-          );
-          if (placeholderBounds != null) {
-            final placeholder = PlaceholderPrimitive.create(
-              plane: RenderPlane.committed,
-              bounds: placeholderBounds,
-              opacity: layer.opacity,
-            );
-            if (placeholder is Ok<PlaceholderPrimitive, StructuredFailure>) {
-              primitives.add(placeholder.value);
-            }
-          }
-        }
-        if (primitives.length > limits.maximumPrimitives) {
-          return Err(_failure('primitive_count', FailureCategory.resource));
-        }
-      }
-    }
-    primitives.addAll(previewValues);
-    primitives.addAll(selectionValues);
+    final primitives = <ScenePrimitive>[...previewValues, ...selectionValues];
     return RenderSnapshot.create(
-      documentRevision: documentRevision,
-      viewportRevision: viewport.revision,
-      pageClip: clip,
+      documentRevision: committed.documentRevision,
+      viewportRevision: committed.viewportRevision,
+      pageClip: committed.pageClip,
       primitives: primitives,
       damageRegions: primitives.map((value) => value.bounds),
       limits: limits,
