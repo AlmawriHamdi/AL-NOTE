@@ -19,6 +19,11 @@ import '../objects/object_registry.dart';
 import 'command_contracts.dart';
 import 'revision_snapshot.dart';
 
+final Revision _zeroObjectRevision = Revision.create(0).fold(
+  onOk: (value) => value,
+  onErr: (_) => throw StateError('Zero Object revision must be valid.'),
+);
+
 /// A snapshot-style listener for one already published change.
 typedef CommittedChangeListener = void Function(CommittedChange change);
 
@@ -110,7 +115,21 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
            initialSaveState == InitialDocumentSaveState.saved
            ? initialIdentity
            : null,
-       _issuedContentIdentities = <ContentIdentity>{initialIdentity};
+       _issuedContentIdentities = <ContentIdentity>{initialIdentity},
+       _issuedObjectIds = <ObjectId>{
+         for (final object
+             in root.pages
+                 .expand((page) => page.layers)
+                 .expand((layer) => layer.objects))
+           object.id,
+       },
+       _objectGenerations = <ObjectId, Revision>{
+         for (final object
+             in root.pages
+                 .expand((page) => page.layers)
+                 .expand((layer) => layer.objects))
+           object.id: _zeroObjectRevision,
+       };
 
   /// Creates a coordinator after validating the baseline and generating its
   /// initial session-only content identity.
@@ -174,6 +193,8 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   ContentIdentity _currentContentIdentity;
   ContentIdentity? _savedContentIdentity;
   final Set<ContentIdentity> _issuedContentIdentities;
+  final Set<ObjectId> _issuedObjectIds;
+  final Map<ObjectId, Revision> _objectGenerations;
   final List<_HistoryEntry> _history = [];
   int _historyCursor = 0;
   bool _historyTraversalEnabled = true;
@@ -257,10 +278,211 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     final prepared = switch (request) {
       AtomicObjectReplacementRequest() => _prepareReplacement(request),
       AtomicWholeObjectTransformRequest() => _prepareTransform(request),
+      AtomicObjectCollectionEditRequest() => _prepareCollectionEdit(request),
     };
     return prepared.fold(
       onOk: (value) => _publishPrepared(value, request),
       onErr: Err<CommandCommit, CommandFailure>.new,
+    );
+  }
+
+  Result<_Prepared, CommandFailure> _prepareCollectionEdit(
+    AtomicObjectCollectionEditRequest request,
+  ) {
+    if (!request.preconditions.pages.containsKey(request.pageId)) {
+      return Err(
+        _failure('missing_revision_precondition', FailureCategory.validation),
+      );
+    }
+    final page = _root.pages
+        .where((value) => value.id == request.pageId)
+        .firstOrNull;
+    if (page == null)
+      return Err(
+        _failure('target_missing_or_wrong_page', FailureCategory.state),
+      );
+    final layers = <LayerId, DocumentLayer>{
+      for (final layer in page.layers) layer.id: layer,
+    };
+    final current = <ObjectId, _Location>{};
+    for (final layer in page.layers)
+      for (final object in layer.objects)
+        current[object.id] = _Location(page, layer, object);
+    final replacementMap = {
+      for (final value in request.replacements) value.id: value,
+    };
+    for (final id in [...request.removals, ...replacementMap.keys]) {
+      final location = current[id];
+      if (location == null ||
+          !request.preconditions.objects.containsKey(id) ||
+          !request.preconditions.layerMembership.containsKey(
+            location.layer.id,
+          ) ||
+          _editableResolution(location.layer, location.object) == null) {
+        return Err(_failure('target_not_editable', FailureCategory.state));
+      }
+    }
+    final allExisting = <ObjectId>{
+      for (final value
+          in _root.pages.expand((p) => p.layers).expand((l) => l.objects))
+        value.id,
+    };
+    for (final addition in request.additions) {
+      final layer = layers[addition.layerId];
+      if (layer is! ContentLayer ||
+          !layer.visible ||
+          layer.locked ||
+          allExisting.contains(addition.object.id) ||
+          _issuedObjectIds.contains(addition.object.id) ||
+          !request.preconditions.layerMembership.containsKey(layer.id) ||
+          _editableResolution(
+                layer,
+                addition.object,
+                requireAvailableResources: false,
+              ) ==
+              null) {
+        return Err(_failure('invalid_addition', FailureCategory.validation));
+      }
+      allExisting.add(addition.object.id);
+    }
+    for (final entry in replacementMap.entries) {
+      final before = current[entry.key]!.object;
+      if (entry.value.id != before.id ||
+          !_replacementPreservesCommonEnvelope(before, entry.value) ||
+          _editableResolution(
+                current[entry.key]!.layer,
+                entry.value,
+                requireAvailableResources: false,
+              ) ==
+              null) {
+        return Err(_failure('invalid_replacement', FailureCategory.validation));
+      }
+    }
+    var replacementGeometryChanged = false;
+    var replacementAppearanceChanged = false;
+    var replacementTextChanged = false;
+    var replacementMetadataChanged = false;
+    final geometryReplacementIds = <ObjectId>{};
+    for (final entry in replacementMap.entries) {
+      final before = current[entry.key]!.object;
+      ObjectPayloadChangeSemantics? evidence;
+      try {
+        final resolution = _validator.objectRegistry.resolve(before);
+        final classifier =
+            resolution is SupportedObjectResolution &&
+                resolution.definition is ObjectPayloadChangeClassifier
+            ? resolution.definition as ObjectPayloadChangeClassifier
+            : null;
+        final classified = classifier?.classifyPayloadChange(
+          before.payload,
+          entry.value.payload,
+          before.typeSchemaVersion,
+        );
+        if (classified is Ok<ObjectPayloadChangeSemantics, StructuredFailure>) {
+          evidence = classified.value;
+        }
+      } on Object {
+        evidence = null;
+      }
+      if (evidence == null) {
+        return Err(
+          _failure('change_evidence_unavailable', FailureCategory.dependency),
+        );
+      }
+      replacementGeometryChanged |= evidence.geometry;
+      replacementAppearanceChanged |= evidence.appearance;
+      replacementTextChanged |= evidence.text;
+      replacementMetadataChanged |= evidence.metadata;
+      if (evidence.geometry) geometryReplacementIds.add(entry.key);
+    }
+    final claims = request.replacementChangeCategories;
+    if (claims.geometry != replacementGeometryChanged ||
+        claims.appearance != replacementAppearanceChanged ||
+        claims.text != replacementTextChanged ||
+        claims.metadata != replacementMetadataChanged) {
+      return Err(
+        _failure('inaccurate_change_evidence', FailureCategory.validation),
+      );
+    }
+    final additionsByLayer = <LayerId, List<ObjectEnvelope>>{};
+    for (final item in request.additions)
+      (additionsByLayer[item.layerId] ??= []).add(item.object);
+    final candidate = _editPageObjects(
+      _root,
+      request.pageId,
+      request.removals.toSet(),
+      replacementMap,
+      additionsByLayer,
+    ).fold<DocumentRoot?>(onOk: (value) => value, onErr: (_) => null);
+    if (candidate == null ||
+        !_validator.validate(candidate).isValid ||
+        candidate == _root)
+      return Err(_failure('invalid_candidate', FailureCategory.validation));
+    final oldBounds = <ObjectId, Rect2>{};
+    final newBounds = <ObjectId, Rect2>{};
+    for (final id in request.removals) {
+      final b = _objectBounds(current[id]!.object);
+      if (b == null)
+        return Err(_failure('target_not_editable', FailureCategory.state));
+      oldBounds[id] = b;
+    }
+    for (final entry in replacementMap.entries) {
+      final old = _objectBounds(current[entry.key]!.object),
+          next = _objectBounds(entry.value);
+      if (old == null || next == null || !_boundsAreReachable(page, next))
+        return Err(_failure('invalid_replacement', FailureCategory.validation));
+      oldBounds[entry.key] = old;
+      newBounds[entry.key] = next;
+    }
+    for (final item in request.additions) {
+      final b = _objectBounds(item.object);
+      if (b == null || !_boundsAreReachable(page, b))
+        return Err(_failure('invalid_addition', FailureCategory.validation));
+      newBounds[item.object.id] = b;
+    }
+    final referencesBefore = _resourceReferences([
+      ...request.removals.map((id) => current[id]!.object),
+      ...replacementMap.keys.map((id) => current[id]!.object),
+    ]);
+    final referencesAfter = _resourceReferences([
+      ...request.additions.map((v) => v.object),
+      ...replacementMap.values,
+    ]);
+    if (referencesBefore == null || referencesAfter == null) {
+      return Err(
+        _failure('object_behavior_unavailable', FailureCategory.dependency),
+      );
+    }
+    return Ok(
+      _Prepared(
+        before: _root,
+        after: candidate,
+        objectIds: {...oldBounds.keys, ...newBounds.keys},
+        pageIds: {request.pageId},
+        layerIds: {
+          ...request.additions.map((v) => v.layerId),
+          ...request.removals.map((id) => current[id]!.layer.id),
+          ...replacementMap.keys.map((id) => current[id]!.layer.id),
+        },
+        oldObjectBounds: oldBounds,
+        newObjectBounds: newBounds,
+        geometryChangedObjectIds: {
+          ...request.removals,
+          ...request.additions.map((value) => value.object.id),
+          ...geometryReplacementIds,
+        },
+        appearanceChanged: replacementAppearanceChanged,
+        textChanged: replacementTextChanged,
+        metadataChanged: replacementMetadataChanged,
+        addedResourceReferences: referencesAfter.difference(referencesBefore),
+        removedResourceReferences: referencesBefore.difference(referencesAfter),
+        addedObjectIds: request.additions.map((v) => v.object.id).toSet(),
+        removedObjectIds: request.removals.toSet(),
+        replacedObjectIds: replacementMap.keys.toSet(),
+        membershipChanged:
+            request.additions.isNotEmpty || request.removals.isNotEmpty,
+        movedObjectIds: const {},
+      ),
     );
   }
 
@@ -532,6 +754,8 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
 
     _root = prepared.after;
     _revisions = nextRevisions;
+    _recordObjectGenerations(prepared, nextRevisions);
+    _issuedObjectIds.addAll(prepared.addedObjectIds);
     _currentContentIdentity = nextIdentity;
     _issuedContentIdentities.add(nextIdentity);
     _history
@@ -718,7 +942,8 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         _historyTraversalEnabled = false;
         return Err(_failure('history_inconsistent', FailureCategory.state));
       }
-      final nextRevisions = _advancedRevisions(entry.prepared);
+      final prepared = undoing ? entry.prepared.reversed() : entry.prepared;
+      final nextRevisions = _advancedRevisions(prepared);
       if (nextRevisions == null) {
         return Err(_failure('revision_overflow', FailureCategory.resource));
       }
@@ -726,7 +951,6 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
       final destinationIdentity = undoing
           ? entry.beforeIdentity
           : entry.afterIdentity;
-      final prepared = undoing ? entry.prepared.reversed() : entry.prepared;
       final metadata = CommandMetadata(
         family: entry.family,
         correlationId: entry.correlationId,
@@ -742,6 +966,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
       _root = destination;
       _currentContentIdentity = destinationIdentity;
       _revisions = nextRevisions;
+      _recordObjectGenerations(prepared, nextRevisions);
       _historyCursor += undoing ? -1 : 1;
       _coalescingBoundaryPending = true;
       return Ok(
@@ -808,9 +1033,78 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   }
 
   DocumentRevisionSnapshot? _advancedRevisions(_Prepared prepared) {
-    return _revisions
-        .advanceObjects(prepared.objectIds)
-        .fold(onOk: (value) => value, onErr: (_) => null);
+    if (prepared.addedObjectIds.isEmpty && prepared.removedObjectIds.isEmpty) {
+      return _revisions
+          .advanceObjects(prepared.objectIds)
+          .fold(onOk: (value) => value, onErr: (_) => null);
+    }
+    Revision? increment(Revision value) =>
+        value.increment().fold(onOk: (v) => v, onErr: (_) => null);
+    final document = increment(_revisions.document);
+    if (document == null) return null;
+    final pages = Map<PageId, Revision>.of(_revisions.pages);
+    final membership = Map<LayerId, Revision>.of(_revisions.layerMembership);
+    for (final id in prepared.pageIds) {
+      final next = increment(pages[id]!);
+      if (next == null) return null;
+      pages[id] = next;
+    }
+    for (final id in prepared.layerIds) {
+      final next = increment(membership[id]!);
+      if (next == null) return null;
+      membership[id] = next;
+    }
+    final objects = Map<ObjectId, Revision>.of(_revisions.objects);
+    for (final id in prepared.removedObjectIds) {
+      final prior = objects[id];
+      if (prior == null || increment(prior) == null) return null;
+      objects.remove(id);
+    }
+    for (final id in prepared.addedObjectIds) {
+      final priorGeneration = _objectGenerations[id];
+      final next = priorGeneration == null
+          ? _zeroObjectRevision
+          : increment(priorGeneration);
+      if (next == null) return null;
+      objects[id] = next;
+    }
+    for (final id in prepared.replacedObjectIds) {
+      final prior = objects[id];
+      if (prior == null) return null;
+      final next = increment(prior);
+      if (next == null) return null;
+      objects[id] = next;
+    }
+    return DocumentRevisionSnapshot.fromValues(
+      documentId: _revisions.documentId,
+      document: document,
+      sections: _revisions.sections,
+      pages: pages,
+      layers: _revisions.layers,
+      layerMembership: membership,
+      objects: objects,
+      resourceCatalog: _revisions.resourceCatalog,
+    );
+  }
+
+  void _recordObjectGenerations(
+    _Prepared prepared,
+    DocumentRevisionSnapshot next,
+  ) {
+    for (final id in prepared.removedObjectIds) {
+      final prior = _objectGenerations[id];
+      if (prior != null) {
+        _objectGenerations[id] =
+            (prior.increment() as Ok<Revision, StructuredFailure>).value;
+      }
+    }
+    for (final id in {
+      ...prepared.addedObjectIds,
+      ...prepared.replacedObjectIds,
+    }) {
+      final live = next.objects[id];
+      if (live != null) _objectGenerations[id] = live;
+    }
   }
 
   CommittedChange _changeFor(
@@ -827,14 +1121,18 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     family: metadata.family,
     description: metadata.description,
     correlationId: metadata.correlationId,
-    replacedObjectIds: prepared.objectIds,
-    movedObjectIds: prepared.geometryChangedObjectIds,
+    addedObjectIds: prepared.addedObjectIds,
+    removedObjectIds: prepared.removedObjectIds,
+    replacedObjectIds: prepared.replacedObjectIds,
+    movedObjectIds: prepared.movedObjectIds,
     affectedPageIds: prepared.pageIds,
     affectedLayerIds: prepared.layerIds,
     addedResourceReferences: prepared.addedResourceReferences,
     removedResourceReferences: prepared.removedResourceReferences,
     oldBounds: prepared.oldBounds,
     newBounds: prepared.newBounds,
+    membershipChanged: prepared.membershipChanged,
+    orderChanged: prepared.membershipChanged,
     flags: CommittedChangeFlags(
       geometry: prepared.geometryChanged,
       appearance: prepared.appearanceChanged,
@@ -843,6 +1141,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
           prepared.addedResourceReferences.isNotEmpty ||
           prepared.removedResourceReferences.isNotEmpty,
       metadata: prepared.metadataChanged,
+      structure: prepared.membershipChanged,
     ),
     historyRecorded: historyRecorded,
     savedCheckpointChanged: false,
@@ -1098,6 +1397,105 @@ Result<DocumentRoot, CommandFailure> _replaceObjects(
   }
 }
 
+Result<DocumentRoot, CommandFailure> _editPageObjects(
+  DocumentRoot root,
+  PageId targetPage,
+  Set<ObjectId> removals,
+  Map<ObjectId, ObjectEnvelope> replacements,
+  Map<LayerId, List<ObjectEnvelope>> additions,
+) {
+  DocumentPage rebuildPage(DocumentPage page) {
+    if (page.id != targetPage) return page;
+    final layers = <DocumentLayer>[];
+    for (final layer in page.layers) {
+      final objects = <ObjectEnvelope>[
+        for (final object in layer.objects)
+          if (!removals.contains(object.id)) replacements[object.id] ?? object,
+        ...?additions[layer.id],
+      ];
+      layers.add(
+        layer
+            .withObjects(objects)
+            .fold(
+              onOk: (value) => value,
+              onErr: (_) => throw const _CandidateBuildFailure(),
+            ),
+      );
+    }
+    return DocumentPage.create(
+      id: page.id,
+      name: page.name,
+      size: page.size,
+      layers: layers,
+      extensionData: page.extensionData,
+    ).fold(
+      onOk: (value) => value,
+      onErr: (_) => throw const _CandidateBuildFailure(),
+    );
+  }
+
+  try {
+    return switch (root) {
+      StandalonePageDocument() =>
+        StandalonePageDocument.create(
+              id: root.id,
+              schemaVersion: root.schemaVersion,
+              title: root.title,
+              resources: root.resources,
+              extensionData: root.extensionData,
+              page: rebuildPage(root.page),
+            )
+            .map<DocumentRoot>((value) => value)
+            .mapError(
+              (_) =>
+                  (_failure('invalid_candidate', FailureCategory.validation)),
+            ),
+      StandalonePdfDocument() =>
+        StandalonePdfDocument.create(
+              id: root.id,
+              schemaVersion: root.schemaVersion,
+              title: root.title,
+              resources: root.resources,
+              extensionData: root.extensionData,
+              pages: root.pages.map(rebuildPage),
+              source: root.source,
+            )
+            .map<DocumentRoot>((value) => value)
+            .mapError(
+              (_) =>
+                  (_failure('invalid_candidate', FailureCategory.validation)),
+            ),
+      NotebookDocument() =>
+        NotebookDocument.create(
+              id: root.id,
+              schemaVersion: root.schemaVersion,
+              title: root.title,
+              resources: root.resources,
+              extensionData: root.extensionData,
+              sections: [
+                for (final section in root.sections)
+                  DocumentSection.create(
+                    id: section.id,
+                    name: section.name,
+                    pages: section.pages.map(rebuildPage),
+                    extensionData: section.extensionData,
+                  ).fold(
+                    onOk: (value) => value,
+                    onErr: (_) => throw const _CandidateBuildFailure(),
+                  ),
+              ],
+            )
+            .map<DocumentRoot>((value) => value)
+            .mapError(
+              (_) =>
+                  (_failure('invalid_candidate', FailureCategory.validation)),
+            ),
+    };
+  } on _CandidateBuildFailure {
+    return Err(_failure('invalid_candidate', FailureCategory.validation));
+  }
+}
+
 final class _Prepared {
   _Prepared({
     required this.before,
@@ -1113,9 +1511,12 @@ final class _Prepared {
     required this.metadataChanged,
     required Set<ResourceIdentity> addedResourceReferences,
     required Set<ResourceIdentity> removedResourceReferences,
-  }) : assert(_sameKeys(oldObjectBounds, newObjectBounds)),
-       assert(_setEquals(objectIds, oldObjectBounds.keys.toSet())),
-       assert(objectIds.containsAll(geometryChangedObjectIds)),
+    Set<ObjectId> addedObjectIds = const {},
+    Set<ObjectId> removedObjectIds = const {},
+    Set<ObjectId>? replacedObjectIds,
+    this.membershipChanged = false,
+    Set<ObjectId>? movedObjectIds,
+  }) : assert(objectIds.containsAll(geometryChangedObjectIds)),
        objectIds = Set<ObjectId>.unmodifiable(objectIds),
        pageIds = Set<PageId>.unmodifiable(pageIds),
        layerIds = Set<LayerId>.unmodifiable(layerIds),
@@ -1129,6 +1530,12 @@ final class _Prepared {
        ),
        removedResourceReferences = Set<ResourceIdentity>.unmodifiable(
          removedResourceReferences,
+       ),
+       addedObjectIds = Set.unmodifiable(addedObjectIds),
+       removedObjectIds = Set.unmodifiable(removedObjectIds),
+       replacedObjectIds = Set.unmodifiable(replacedObjectIds ?? objectIds),
+       movedObjectIds = Set.unmodifiable(
+         movedObjectIds ?? geometryChangedObjectIds,
        );
   final DocumentRoot before;
   final DocumentRoot after;
@@ -1146,6 +1553,11 @@ final class _Prepared {
   final bool metadataChanged;
   final Set<ResourceIdentity> addedResourceReferences;
   final Set<ResourceIdentity> removedResourceReferences;
+  final Set<ObjectId> addedObjectIds;
+  final Set<ObjectId> removedObjectIds;
+  final Set<ObjectId> replacedObjectIds;
+  final bool membershipChanged;
+  final Set<ObjectId> movedObjectIds;
 
   _Prepared reversed() => _Prepared(
     before: after,
@@ -1161,6 +1573,11 @@ final class _Prepared {
     metadataChanged: metadataChanged,
     addedResourceReferences: removedResourceReferences,
     removedResourceReferences: addedResourceReferences,
+    addedObjectIds: removedObjectIds,
+    removedObjectIds: addedObjectIds,
+    replacedObjectIds: replacedObjectIds,
+    membershipChanged: membershipChanged,
+    movedObjectIds: movedObjectIds,
   );
 
   _Prepared merge(_Prepared later) {
@@ -1197,6 +1614,11 @@ final class _Prepared {
       metadataChanged: metadataChanged || later.metadataChanged,
       addedResourceReferences: added.difference(removed),
       removedResourceReferences: removed.difference(added),
+      addedObjectIds: {...addedObjectIds, ...later.addedObjectIds},
+      removedObjectIds: {...removedObjectIds, ...later.removedObjectIds},
+      replacedObjectIds: {...replacedObjectIds, ...later.replacedObjectIds},
+      membershipChanged: membershipChanged || later.membershipChanged,
+      movedObjectIds: _boundChangedObjectIds(mergedOldBounds, mergedNewBounds),
     );
   }
 }
@@ -1220,12 +1642,6 @@ Rect2? _aggregateRectangles(Iterable<Rect2> bounds) {
   }
   return aggregate;
 }
-
-bool _sameKeys<K, V>(Map<K, V> left, Map<K, V> right) =>
-    _setEquals(left.keys.toSet(), right.keys.toSet());
-
-bool _setEquals<T>(Set<T> left, Set<T> right) =>
-    left.length == right.length && left.containsAll(right);
 
 Set<ObjectId> _boundChangedObjectIds(
   Map<ObjectId, Rect2> oldBounds,
