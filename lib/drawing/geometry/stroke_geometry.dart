@@ -98,6 +98,153 @@ final class StrokeErasureInterval {
   final double end;
 }
 
+/// Bounded work evidence for one exact source-segment erasure classification.
+final class StrokeErasureClassificationEvidence {
+  StrokeErasureClassificationEvidence._({
+    required List<StrokeErasureInterval> intervals,
+    required this.geometryResolutions,
+    required this.spatialElementsExamined,
+    required this.classificationChecks,
+    required this.maximumSearchDepth,
+    required this.maximumPendingIntervals,
+  }) : intervals = List.unmodifiable(intervals);
+
+  /// Exact erased intervals in ascending source order.
+  final List<StrokeErasureInterval> intervals;
+
+  /// Authoritative source-envelope geometries resolved.
+  final int geometryResolutions;
+
+  /// Spatial-index elements examined by the source-envelope preflight.
+  final int spatialElementsExamined;
+
+  /// Direct convex-distance evaluations performed.
+  final int classificationChecks;
+
+  /// Fixed-depth convex minimization and boundary-search depth reached.
+  final int maximumSearchDepth;
+
+  /// Maximum pending work items; direct search never queues subdivisions.
+  final int maximumPendingIntervals;
+}
+
+/// Stroke-owned transformed cross-section evidence prepared once for erasure.
+///
+/// The evidence contains no caller-controlled collections and is created only
+/// by [StrokeGeometryResolver.prepareStrokeErasure]. It can be reused for
+/// every swept segment in one Eraser gesture.
+final class PreparedStrokeErasureGeometry {
+  PreparedStrokeErasureGeometry._(List<_PreparedErasureSegment> segments)
+    : _segments = List.unmodifiable(segments);
+
+  final List<_PreparedErasureSegment> _segments;
+
+  /// Number of source sample segments represented by this evidence.
+  int get sourceSegmentCount => _segments.length;
+}
+
+/// Immutable finite Page-space path captured under an explicit practical cap.
+final class SweptPath {
+  SweptPath._(List<Point2> points) : points = List.unmodifiable(points);
+
+  /// Largest path ceiling accepted by [create].
+  static const int maximumSupportedPoints = 1000000;
+
+  /// Safely captures [source] without trusting collection metadata or tails.
+  static Result<SweptPath, StructuredFailure> create(
+    Iterable<Point2> source, {
+    required int maximumPoints,
+  }) {
+    if (maximumPoints <= 0 ||
+        maximumPoints > Revision.maximumValue ||
+        maximumPoints > maximumSupportedPoints) {
+      return Err(_failure('invalid_path_limit'));
+    }
+    final points = <Point2>[];
+    try {
+      final iterator = source.iterator;
+      while (true) {
+        final more = iterator.moveNext();
+        if (!more) break;
+        if (points.length >= maximumPoints) {
+          return Err(_failure('path_limit'));
+        }
+        points.add(iterator.current);
+      }
+    } on Object {
+      return Err(_failure('path_unavailable'));
+    }
+    if (points.isEmpty) return Err(_failure('empty_path'));
+    return Ok(SweptPath._(points));
+  }
+
+  /// Validated immutable points in accepted order.
+  final List<Point2> points;
+}
+
+/// Immutable validated simple Page-space polygon for geometry queries.
+final class GeometryQueryPolygon {
+  GeometryQueryPolygon._(List<Point2> points, this.bounds)
+    : points = List.unmodifiable(points);
+
+  /// Largest explicit polygon point ceiling accepted by [create].
+  static const int maximumSupportedPoints = 10000;
+
+  /// Safely captures and validates one simple nondegenerate polygon.
+  static Result<GeometryQueryPolygon, StructuredFailure> create(
+    Iterable<Point2> source, {
+    required int maximumPoints,
+  }) {
+    if (maximumPoints < 3 ||
+        maximumPoints > maximumSupportedPoints ||
+        maximumPoints > Revision.maximumValue) {
+      return Err(_failure('invalid_polygon_limit'));
+    }
+    final points = <Point2>[];
+    try {
+      final iterator = source.iterator;
+      while (true) {
+        final more = iterator.moveNext();
+        if (!more) break;
+        if (points.length >= maximumPoints) {
+          return Err(_failure('polygon_limit'));
+        }
+        points.add(iterator.current);
+      }
+    } on Object {
+      return Err(_failure('polygon_unavailable'));
+    }
+    if (points.length < 3 || points.toSet().length != points.length) {
+      return Err(_failure('invalid_polygon'));
+    }
+    final scale = points
+        .map((point) => math.max(point.x.abs(), point.y.abs()))
+        .reduce(math.max);
+    if (scale == 0 || !scale.isFinite) {
+      return Err(_failure('invalid_polygon'));
+    }
+    var twiceArea = 0.0;
+    for (var index = 0; index < points.length; index += 1) {
+      final next = points[(index + 1) % points.length];
+      twiceArea +=
+          points[index].x / scale * (next.y / scale) -
+          next.x / scale * (points[index].y / scale);
+    }
+    if (!twiceArea.isFinite || twiceArea == 0 || _selfIntersects(points)) {
+      return Err(_failure('invalid_polygon'));
+    }
+    final bounds = _boundsOf(points);
+    if (bounds == null) return Err(_failure('invalid_polygon'));
+    return Ok(GeometryQueryPolygon._(points, bounds));
+  }
+
+  /// Validated immutable vertices in boundary order.
+  final List<Point2> points;
+
+  /// Exact finite bounds of [points].
+  final Rect2 bounds;
+}
+
 /// Immutable shared Page-space visible geometry for one transformed stroke.
 final class TransformedStrokeGeometry {
   TransformedStrokeGeometry._(
@@ -180,29 +327,33 @@ final class TransformedStrokeGeometry {
       elements.every((element) => element.vertices.every(rectangle.contains));
 
   /// Whether any visible geometry intersects a validated simple polygon.
-  bool intersectsPolygon(List<Point2> polygon) =>
-      elements.any((element) => _polygonsIntersect(element.vertices, polygon));
+  bool intersectsPolygon(GeometryQueryPolygon polygon) => elements.any(
+    (element) => _polygonsIntersect(element.vertices, polygon.points),
+  );
 
   /// Whether all visible geometry is contained by a validated simple polygon.
-  Result<bool, StructuredFailure> containedByPolygon(List<Point2> polygon) {
+  Result<bool, StructuredFailure> containedByPolygon(
+    GeometryQueryPolygon polygon,
+  ) {
+    final points = polygon.points;
     var checks = 0;
     bool consume() => ++checks <= maximumContainmentChecks;
     for (final element in elements) {
       for (final point in element.vertices) {
         if (!consume()) return Err(_failure('containment_limit'));
-        if (!_pointInPolygon(point, polygon)) return const Ok(false);
+        if (!_pointInPolygon(point, points)) return const Ok(false);
       }
       for (var edge = 0; edge < element.vertices.length; edge += 1) {
         final first = element.vertices[edge];
         final second = element.vertices[(edge + 1) % element.vertices.length];
         final parameters = <double>[0, 1];
-        for (var boundary = 0; boundary < polygon.length; boundary += 1) {
+        for (var boundary = 0; boundary < points.length; boundary += 1) {
           if (!consume()) return Err(_failure('containment_limit'));
           final value = _segmentIntersectionParameter(
             first,
             second,
-            polygon[boundary],
-            polygon[(boundary + 1) % polygon.length],
+            points[boundary],
+            points[(boundary + 1) % points.length],
           );
           if (value != null && value > 0 && value < 1) parameters.add(value);
         }
@@ -214,59 +365,69 @@ final class TransformedStrokeGeometry {
             first.x + (second.x - first.x) * t,
             first.y + (second.y - first.y) * t,
           );
-          if (!_pointInPolygon(midpoint, polygon)) return const Ok(false);
+          if (!_pointInPolygon(midpoint, points)) return const Ok(false);
         }
       }
     }
     return const Ok(true);
   }
 
-  /// Whether visible geometry intersects a Page-space polyline swept by radius.
-  bool intersectsSweptPath(List<Point2> path, double radius) {
-    return querySweptPath(path, radius).intersects;
-  }
+  /// Whether visible geometry intersects a validated swept Page path.
+  Result<bool, StructuredFailure> intersectsSweptPath(
+    SweptPath path,
+    double radius,
+  ) => querySweptPath(
+    path,
+    radius,
+  ).fold(onOk: (value) => Ok(value.intersects), onErr: Err.new);
 
   /// Queries the prepared spatial index and reports detailed element work.
-  ({bool intersects, int examinedElements}) querySweptPath(
-    List<Point2> path,
-    double radius,
-  ) {
-    if (path.isEmpty || !radius.isFinite || radius < 0) {
-      return (intersects: false, examinedElements: 0);
+  Result<({bool intersects, int examinedElements}), StructuredFailure>
+  querySweptPath(SweptPath path, double radius) {
+    if (!radius.isFinite || radius < 0) {
+      return Err(_failure('invalid_swept_query'));
     }
-    final queryBounds = _pathBounds(path, radius);
-    if (queryBounds == null) return (intersects: false, examinedElements: 0);
+    final queryBounds = _pathBounds(path.points, radius);
     var examined = 0;
-    final hit = _spatialIndex.any(queryBounds, (element) {
+    bool matches(StrokeGeometryElement element) {
       examined += 1;
-      return _elementIntersectsSweptPath(element, path, radius);
-    });
-    return (intersects: hit, examinedElements: examined);
+      return _elementIntersectsSweptPath(element, path.points, radius);
+    }
+
+    final hit = queryBounds == null
+        ? elements.any(matches)
+        : _spatialIndex.any(queryBounds, matches);
+    return Ok((intersects: hit, examinedElements: examined));
   }
 
   /// Returns source-sample segment indices touched by one bounded swept path.
-  ({List<int> sourceSegments, int examinedElements})
-  querySweptPathSourceSegments(List<Point2> path, double radius) {
-    if (path.isEmpty || !radius.isFinite || radius < 0) {
-      return (sourceSegments: const [], examinedElements: 0);
+  Result<({List<int> sourceSegments, int examinedElements}), StructuredFailure>
+  querySweptPathSourceSegments(SweptPath path, double radius) {
+    if (!radius.isFinite || radius < 0) {
+      return Err(_failure('invalid_swept_query'));
     }
-    final queryBounds = _pathBounds(path, radius);
-    if (queryBounds == null) {
-      return (sourceSegments: const [], examinedElements: 0);
-    }
+    final queryBounds = _pathBounds(path.points, radius);
     var examined = 0;
     final segments = <int>{};
-    _spatialIndex.visitMatches(queryBounds, (element) {
+    void visit(StrokeGeometryElement element) {
       examined += 1;
-      if (_elementIntersectsSweptPath(element, path, radius)) {
+      if (_elementIntersectsSweptPath(element, path.points, radius)) {
         segments.addAll(_elementSourceSegments[element] ?? const {});
       }
-    });
+    }
+
+    if (queryBounds == null) {
+      for (final element in elements) {
+        visit(element);
+      }
+    } else {
+      _spatialIndex.visitMatches(queryBounds, visit);
+    }
     final ordered = segments.toList()..sort();
-    return (
+    return Ok((
       sourceSegments: List<int>.unmodifiable(ordered),
       examinedElements: examined,
-    );
+    ));
   }
 }
 
@@ -399,8 +560,81 @@ final class StrokeGeometryResolver {
   /// Creates a resolver with explicit geometry ceilings.
   const StrokeGeometryResolver(this.limits);
 
+  /// Maximum direct checks used by one prepared swept-segment classification.
+  static const int maximumPreparedClassificationChecks = 40;
+
   /// Geometry construction ceilings.
   final StrokeGeometryLimits limits;
+
+  /// Prepares authoritative transformed cross-sections once for one Stroke.
+  Result<PreparedStrokeErasureGeometry, StructuredFailure>
+  prepareStrokeErasure({
+    required HandwritingStroke stroke,
+    required AffineTransform2D localToPage,
+  }) => _prepareStrokeErasure(
+    samples: stroke.samples,
+    style: stroke.style,
+    localToPage: localToPage,
+  );
+
+  Result<PreparedStrokeErasureGeometry, StructuredFailure>
+  _prepareStrokeErasure({
+    required List<StrokeSample> samples,
+    required StrokeStyle style,
+    required AffineTransform2D localToPage,
+  }) {
+    try {
+      final inverted = localToPage.inverse();
+      if (inverted is! Ok<AffineTransform2D, StructuredFailure>) {
+        return Err(_failure('erasure_preparation_unavailable'));
+      }
+      final count = samples.length == 1 ? 1 : samples.length - 1;
+      final segments = <_PreparedErasureSegment>[];
+      for (var index = 0; index < count; index += 1) {
+        final first = samples.length == 1 ? samples.single : samples[index];
+        final second = samples.length == 1
+            ? samples.single
+            : samples[index + 1];
+        final start = <Point2>[], end = <Point2>[];
+        for (final point in _circle(
+          first.position,
+          style.widthFor(first.pressure) / 2,
+          limits.ellipseVertexCount,
+        )) {
+          final transformed = localToPage.applyToPoint(point);
+          if (transformed is! Ok<Point2, StructuredFailure>) {
+            return Err(_failure('erasure_preparation_unavailable'));
+          }
+          start.add(transformed.value);
+        }
+        for (final point in _circle(
+          second.position,
+          style.widthFor(second.pressure) / 2,
+          limits.ellipseVertexCount,
+        )) {
+          final transformed = localToPage.applyToPoint(point);
+          if (transformed is! Ok<Point2, StructuredFailure>) {
+            return Err(_failure('erasure_preparation_unavailable'));
+          }
+          end.add(transformed.value);
+        }
+        segments.add(
+          _PreparedErasureSegment(
+            start,
+            end,
+            first.position,
+            second.position,
+            style.widthFor(first.pressure) / 2,
+            style.widthFor(second.pressure) / 2,
+            inverted.value,
+          ),
+        );
+      }
+      return Ok(PreparedStrokeErasureGeometry._(segments));
+    } on Object {
+      return Err(_failure('erasure_preparation_unavailable'));
+    }
+  }
 
   /// Classifies erased intervals for one source segment and one latest swept
   /// Eraser segment without revisiting earlier gesture segments.
@@ -410,98 +644,190 @@ final class StrokeGeometryResolver {
     required StrokeSample second,
     required StrokeStyle style,
     required AffineTransform2D localToPage,
-    required List<Point2> eraserSegment,
+    required SweptPath eraserSegment,
     required double radius,
     required HandwritingLimits handwritingLimits,
+  }) => classifySourceSegmentErasureDetailed(
+    first: first,
+    second: second,
+    style: style,
+    localToPage: localToPage,
+    eraserSegment: eraserSegment,
+    radius: radius,
+    handwritingLimits: handwritingLimits,
+    maximumChecks: limits.maximumContainmentChecks,
+  ).fold(onOk: (value) => Ok(value.intervals), onErr: Err.new);
+
+  /// Classifies one source segment with a caller-supplied remaining work cap.
+  Result<StrokeErasureClassificationEvidence, StructuredFailure>
+  classifySourceSegmentErasureDetailed({
+    required StrokeSample first,
+    required StrokeSample second,
+    required StrokeStyle style,
+    required AffineTransform2D localToPage,
+    required SweptPath eraserSegment,
+    required double radius,
+    required HandwritingLimits handwritingLimits,
+    required int maximumChecks,
   }) {
-    if (eraserSegment.isEmpty ||
-        eraserSegment.length > 2 ||
+    final prepared = _prepareStrokeErasure(
+      samples: first == second ? [first] : [first, second],
+      style: style,
+      localToPage: localToPage,
+    );
+    if (prepared is! Ok<PreparedStrokeErasureGeometry, StructuredFailure>) {
+      return Err(_failure('erasure_classification_unavailable'));
+    }
+    return classifyPreparedSourceSegmentErasure(
+      prepared: prepared.value,
+      sourceSegment: 0,
+      eraserSegment: eraserSegment,
+      radius: radius,
+      maximumChecks: maximumChecks,
+      countPreparation: true,
+    );
+  }
+
+  /// Classifies one prepared source segment without rebuilding its geometry.
+  Result<StrokeErasureClassificationEvidence, StructuredFailure>
+  classifyPreparedSourceSegmentErasure({
+    required PreparedStrokeErasureGeometry prepared,
+    required int sourceSegment,
+    required SweptPath eraserSegment,
+    required double radius,
+    required int maximumChecks,
+    bool countPreparation = false,
+  }) {
+    if (eraserSegment.points.length > 2 ||
         !radius.isFinite ||
-        radius < 0) {
+        radius < 0 ||
+        sourceSegment < 0 ||
+        sourceSegment >= prepared._segments.length) {
       return Err(_failure('invalid_erasure_segment'));
     }
-    final pageFirst = localToPage
-        .applyToPoint(first.position)
-        .fold<Point2?>(onOk: (value) => value, onErr: (_) => null);
-    final pageSecond = localToPage
-        .applyToPoint(second.position)
-        .fold<Point2?>(onOk: (value) => value, onErr: (_) => null);
-    if (pageFirst == null || pageSecond == null) {
-      return Err(_failure('nonrepresentable_geometry'));
+    if (maximumChecks <= 0 || maximumChecks > limits.maximumContainmentChecks) {
+      return Err(_failure('erasure_classification_limit'));
     }
-    bool erased(double t) {
-      final sample = _interpolatedGeometrySample(
-        first,
-        second,
-        t,
-        handwritingLimits,
-      );
-      if (sample == null) throw const _GeometryBuildException();
-      final dot = _resolve(
-        samples: [sample],
-        style: style,
-        localToPage: localToPage,
-      );
-      if (dot is! Ok<TransformedStrokeGeometry, StructuredFailure>) {
-        throw const _GeometryBuildException();
-      }
-      return dot.value.intersectsSweptPath(eraserSegment, radius);
-    }
-
     try {
-      if (first == second) {
-        return Ok(erased(0) ? const [StrokeErasureInterval._(0, 1)] : const []);
+      final section = prepared._segments[sourceSegment];
+      var checks = 0;
+      double? distance(double parameter) {
+        checks += 1;
+        if (checks > maximumChecks) return null;
+        final value = section.distanceTo(eraserSegment.points, parameter);
+        return value.isFinite ? value : null;
       }
-      final candidates = <double>{0, 1};
-      if (eraserSegment.length == 1) {
-        candidates.add(
-          _projectionParameter(
-            erasurePoint: eraserSegment.single,
-            first: pageFirst,
-            second: pageSecond,
+
+      StrokeErasureClassificationEvidence evidence(
+        List<StrokeErasureInterval> intervals,
+      ) => StrokeErasureClassificationEvidence._(
+        intervals: intervals,
+        geometryResolutions: countPreparation ? 1 : 0,
+        spatialElementsExamined: 0,
+        classificationChecks: checks,
+        maximumSearchDepth: 12,
+        maximumPendingIntervals: 1,
+      );
+
+      if (eraserSegment.points.length == 1 && radius == 0) {
+        checks = section.start.length;
+        if (checks > maximumChecks) {
+          return Err(_failure('erasure_classification_limit'));
+        }
+        final intervals = section
+            .pointCircleIntervals(eraserSegment.points.single)
+            .map((value) => StrokeErasureInterval._(value.$1, value.$2))
+            .toList(growable: false);
+        return Ok(evidence(intervals));
+      }
+
+      if (section.isDot) {
+        final value = distance(0);
+        if (value == null) {
+          return Err(_failure('erasure_classification_limit'));
+        }
+        return Ok(
+          evidence(
+            value <= radius ? const [StrokeErasureInterval._(0, 1)] : const [],
           ),
         );
-      } else {
-        candidates.add(
-          _closestParameterOnFirstSegment(
-            pageFirst,
-            pageSecond,
-            eraserSegment.first,
-            eraserSegment.last,
-          ),
-        );
       }
-      final ordered = candidates.toList()..sort();
-      final probes = <double>{...ordered};
-      for (var index = 1; index < ordered.length; index += 1) {
-        probes.add((ordered[index - 1] + ordered[index]) / 2);
+
+      const ratio = 0.6180339887498949;
+      var low = 0.0, high = 1.0;
+      var leftProbe = high - (high - low) * ratio;
+      var rightProbe = low + (high - low) * ratio;
+      var leftValue = distance(leftProbe);
+      var rightValue = distance(rightProbe);
+      if (leftValue == null || rightValue == null) {
+        return Err(_failure('erasure_classification_limit'));
       }
-      final sorted = probes.toList()..sort();
-      final marks = sorted.map(erased).toList(growable: false);
-      final transitions = <double>[];
-      for (var index = 1; index < sorted.length; index += 1) {
-        if (marks[index - 1] == marks[index]) continue;
-        var low = sorted[index - 1], high = sorted[index];
-        final lowMark = marks[index - 1];
-        for (var iteration = 0; iteration < 32; iteration += 1) {
-          final middle = (low + high) / 2;
-          if (erased(middle) == lowMark) {
-            low = middle;
-          } else {
-            high = middle;
+      for (var depth = 0; depth < 12; depth += 1) {
+        if (leftValue! <= rightValue!) {
+          high = rightProbe;
+          rightProbe = leftProbe;
+          rightValue = leftValue;
+          leftProbe = high - (high - low) * ratio;
+          leftValue = distance(leftProbe);
+          if (leftValue == null) {
+            return Err(_failure('erasure_classification_limit'));
+          }
+        } else {
+          low = leftProbe;
+          leftProbe = rightProbe;
+          leftValue = rightValue;
+          rightProbe = low + (high - low) * ratio;
+          rightValue = distance(rightProbe);
+          if (rightValue == null) {
+            return Err(_failure('erasure_classification_limit'));
           }
         }
-        transitions.add((low + high) / 2);
       }
-      final cuts = <double>[0, ...transitions, 1];
-      final intervals = <StrokeErasureInterval>[];
-      for (var part = 1; part < cuts.length; part += 1) {
-        final start = cuts[part - 1], end = cuts[part];
-        if (erased((start + end) / 2)) {
-          intervals.add(StrokeErasureInterval._(start, end));
+      final seed = leftValue! <= rightValue! ? leftProbe : rightProbe;
+      final best = math.min(leftValue, rightValue);
+      final zero = distance(0), one = distance(1);
+      if (zero == null || one == null) {
+        return Err(_failure('erasure_classification_limit'));
+      }
+      if (best > radius && zero > radius && one > radius) {
+        return Ok(evidence(const []));
+      }
+
+      var left = 0.0;
+      if (zero > radius) {
+        var miss = 0.0, hit = seed;
+        for (var depth = 0; depth < 12; depth += 1) {
+          final middle = (miss + hit) / 2;
+          final value = distance(middle);
+          if (value == null) {
+            return Err(_failure('erasure_classification_limit'));
+          }
+          if (value <= radius) {
+            hit = middle;
+          } else {
+            miss = middle;
+          }
         }
+        left = hit;
       }
-      return Ok(List.unmodifiable(intervals));
+      var right = 1.0;
+      if (one > radius) {
+        var hit = seed, miss = 1.0;
+        for (var depth = 0; depth < 12; depth += 1) {
+          final middle = (hit + miss) / 2;
+          final value = distance(middle);
+          if (value == null) {
+            return Err(_failure('erasure_classification_limit'));
+          }
+          if (value <= radius) {
+            hit = middle;
+          } else {
+            miss = middle;
+          }
+        }
+        right = hit;
+      }
+      return Ok(evidence([StrokeErasureInterval._(left, right)]));
     } on Object {
       return Err(_failure('erasure_classification_unavailable'));
     }
@@ -795,9 +1121,8 @@ bool _pointInConvex(Point2 point, List<Point2> polygon) {
   double? sign;
   for (var index = 0; index < polygon.length; index += 1) {
     final a = polygon[index], b = polygon[(index + 1) % polygon.length];
-    final cross = (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x);
-    if (cross == 0) continue;
-    final current = cross.sign;
+    final current = _orientationSign(a, b, point);
+    if (current == 0) continue;
     sign ??= current;
     if (current != sign) return false;
   }
@@ -820,26 +1145,34 @@ double _distanceToPolygon(Point2 point, List<Point2> polygon) {
 }
 
 double _segmentDistance(Point2 point, Point2 first, Point2 second) {
-  final dx = second.x - first.x, dy = second.y - first.y;
-  final scale = math.max(dx.abs(), dy.abs());
-  if (scale == 0) return _hypot(point.x - first.x, point.y - first.y);
+  var dx = second.x - first.x, dy = second.y - first.y;
+  var px = point.x - first.x, py = point.y - first.y;
+  var scale = <double>[dx.abs(), dy.abs(), px.abs(), py.abs()].reduce(math.max);
   if (!scale.isFinite) {
-    return math.min(
-      _hypot(point.x - first.x, point.y - first.y),
-      _hypot(point.x - second.x, point.y - second.y),
-    );
+    scale = <double>[
+      point.x.abs(),
+      point.y.abs(),
+      first.x.abs(),
+      first.y.abs(),
+      second.x.abs(),
+      second.y.abs(),
+    ].reduce(math.max);
+    if (scale == 0) return 0;
+    dx = second.x / scale - first.x / scale;
+    dy = second.y / scale - first.y / scale;
+    px = point.x / scale - first.x / scale;
+    py = point.y / scale - first.y / scale;
+  } else if (scale != 0) {
+    dx /= scale;
+    dy /= scale;
+    px /= scale;
+    py /= scale;
   }
-  final normalizedX = dx / scale, normalizedY = dy / scale;
-  final squared = normalizedX * normalizedX + normalizedY * normalizedY;
-  final projectedX = normalizedX == 0
-      ? 0.0
-      : (point.x - first.x) / scale * normalizedX;
-  final projectedY = normalizedY == 0
-      ? 0.0
-      : (point.y - first.y) / scale * normalizedY;
-  final t = math.max(0.0, math.min(1.0, (projectedX + projectedY) / squared));
-  final x = first.x + t * dx, y = first.y + t * dy;
-  return _hypot(point.x - x, point.y - y);
+  if (dx == 0 && dy == 0) return scale * _hypot(px, py);
+  final squared = dx * dx + dy * dy;
+  if (squared == 0) return scale * _hypot(px, py);
+  final t = math.max(0.0, math.min(1.0, (px * dx + py * dy) / squared));
+  return scale * _hypot(px - t * dx, py - t * dy);
 }
 
 double _hypot(double x, double y) {
@@ -847,76 +1180,6 @@ double _hypot(double x, double y) {
   if (scale == 0 || !scale.isFinite) return scale;
   final a = x / scale, b = y / scale;
   return scale * math.sqrt(a * a + b * b);
-}
-
-StrokeSample? _interpolatedGeometrySample(
-  StrokeSample first,
-  StrokeSample second,
-  double t,
-  HandwritingLimits limits,
-) {
-  double? optional(double? a, double? b) =>
-      a == null || b == null ? null : a + (b - a) * t;
-  final position = Point2.create(
-    x: first.position.x + (second.position.x - first.position.x) * t,
-    y: first.position.y + (second.position.y - first.position.y) * t,
-  );
-  if (position is! Ok<Point2, StructuredFailure>) return null;
-  return StrokeSample.create(
-    position: position.value,
-    timeMicros: (first.timeMicros + (second.timeMicros - first.timeMicros) * t)
-        .round(),
-    limits: limits,
-    pressure: optional(first.pressure, second.pressure),
-    tilt: optional(first.tilt, second.tilt),
-    orientation: optional(first.orientation, second.orientation),
-    unknownFields: PreservedMap.empty(),
-  ).fold<StrokeSample?>(onOk: (value) => value, onErr: (_) => null);
-}
-
-double _projectionParameter({
-  required Point2 erasurePoint,
-  required Point2 first,
-  required Point2 second,
-}) {
-  final dx = second.x - first.x, dy = second.y - first.y;
-  final lengthSquared = dx * dx + dy * dy;
-  if (lengthSquared == 0) return 0;
-  return (((erasurePoint.x - first.x) * dx + (erasurePoint.y - first.y) * dy) /
-          lengthSquared)
-      .clamp(0.0, 1.0);
-}
-
-double _closestParameterOnFirstSegment(
-  Point2 first,
-  Point2 second,
-  Point2 pathFirst,
-  Point2 pathSecond,
-) {
-  final ux = second.x - first.x, uy = second.y - first.y;
-  final vx = pathSecond.x - pathFirst.x, vy = pathSecond.y - pathFirst.y;
-  final wx = first.x - pathFirst.x, wy = first.y - pathFirst.y;
-  final a = ux * ux + uy * uy;
-  final b = ux * vx + uy * vy;
-  final c = vx * vx + vy * vy;
-  final d = ux * wx + uy * wy;
-  final e = vx * wx + vy * wy;
-  if (a == 0) return 0;
-  if (c == 0) {
-    return _projectionParameter(
-      erasurePoint: pathFirst,
-      first: first,
-      second: second,
-    );
-  }
-  final denominator = a * c - b * b;
-  var s = denominator == 0
-      ? 0.0
-      : ((b * e - c * d) / denominator).clamp(0.0, 1.0);
-  var t = ((b * s + e) / c).clamp(0.0, 1.0);
-  s = ((b * t - d) / a).clamp(0.0, 1.0);
-  t = ((b * s + e) / c).clamp(0.0, 1.0);
-  return ((b * t - d) / a).clamp(0.0, 1.0);
 }
 
 double _segmentToSegmentDistance(Point2 a, Point2 b, Point2 c, Point2 d) {
@@ -944,6 +1207,27 @@ bool _polygonsIntersect(List<Point2> first, List<Point2> second) =>
     second.any((point) => _pointInPolygon(point, first)) ||
     _polygonEdgesIntersect(first, second);
 
+bool _selfIntersects(List<Point2> points) {
+  for (var first = 0; first < points.length; first += 1) {
+    final firstNext = (first + 1) % points.length;
+    for (var second = first + 1; second < points.length; second += 1) {
+      final secondNext = (second + 1) % points.length;
+      if (first == second || firstNext == second || secondNext == first) {
+        continue;
+      }
+      if (_segmentsIntersect(
+        points[first],
+        points[firstNext],
+        points[second],
+        points[secondNext],
+      )) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 bool _polygonEdgesIntersect(List<Point2> first, List<Point2> second) {
   for (var a = 0; a < first.length; a += 1) {
     for (var b = 0; b < second.length; b += 1) {
@@ -960,20 +1244,47 @@ bool _polygonEdgesIntersect(List<Point2> first, List<Point2> second) {
 }
 
 bool _segmentsIntersect(Point2 a, Point2 b, Point2 c, Point2 d) {
-  double orientation(Point2 p, Point2 q, Point2 r) =>
-      (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
   bool onSegment(Point2 p, Point2 q, Point2 r) =>
       q.x >= math.min(p.x, r.x) &&
       q.x <= math.max(p.x, r.x) &&
       q.y >= math.min(p.y, r.y) &&
       q.y <= math.max(p.y, r.y);
-  final first = orientation(a, b, c), second = orientation(a, b, d);
-  final third = orientation(c, d, a), fourth = orientation(c, d, b);
+  final first = _orientationSign(a, b, c);
+  final second = _orientationSign(a, b, d);
+  final third = _orientationSign(c, d, a);
+  final fourth = _orientationSign(c, d, b);
   if (first == 0 && onSegment(a, c, b)) return true;
   if (second == 0 && onSegment(a, d, b)) return true;
   if (third == 0 && onSegment(c, a, d)) return true;
   if (fourth == 0 && onSegment(c, b, d)) return true;
-  return first.sign != second.sign && third.sign != fourth.sign;
+  return first != second && third != fourth;
+}
+
+double _orientationSign(Point2 p, Point2 q, Point2 r) {
+  var qx = q.x - p.x, qy = q.y - p.y;
+  var rx = r.x - p.x, ry = r.y - p.y;
+  var scale = <double>[qx.abs(), qy.abs(), rx.abs(), ry.abs()].reduce(math.max);
+  if (!scale.isFinite) {
+    scale = <double>[
+      p.x.abs(),
+      p.y.abs(),
+      q.x.abs(),
+      q.y.abs(),
+      r.x.abs(),
+      r.y.abs(),
+    ].reduce(math.max);
+    if (scale == 0) return 0;
+    qx = q.x / scale - p.x / scale;
+    qy = q.y / scale - p.y / scale;
+    rx = r.x / scale - p.x / scale;
+    ry = r.y / scale - p.y / scale;
+  } else if (scale != 0) {
+    qx /= scale;
+    qy /= scale;
+    rx /= scale;
+    ry /= scale;
+  }
+  return (qx * ry - qy * rx).sign;
 }
 
 double? _segmentIntersectionParameter(Point2 a, Point2 b, Point2 c, Point2 d) {
@@ -1000,6 +1311,221 @@ bool _pointInPolygon(Point2 point, List<Point2> polygon) {
       inside = !inside;
   }
   return inside;
+}
+
+final class _PreparedErasureSegment {
+  _PreparedErasureSegment(
+    List<Point2> start,
+    List<Point2> end,
+    this.localStart,
+    this.localEnd,
+    this.startRadius,
+    this.endRadius,
+    this.pageToLocal,
+  ) : start = List.unmodifiable(start),
+      end = List.unmodifiable(end);
+
+  final List<Point2> start;
+  final List<Point2> end;
+  final Point2 localStart;
+  final Point2 localEnd;
+  final double startRadius;
+  final double endRadius;
+  final AffineTransform2D pageToLocal;
+
+  bool get isDot {
+    for (var index = 0; index < start.length; index += 1) {
+      if (start[index] != end[index]) return false;
+    }
+    return true;
+  }
+
+  double x(int index, double t) =>
+      start[index].x + (end[index].x - start[index].x) * t;
+  double y(int index, double t) =>
+      start[index].y + (end[index].y - start[index].y) * t;
+
+  double distanceTo(List<Point2> path, double t) {
+    var best = double.infinity;
+    for (final point in path) {
+      if (_contains(point.x, point.y, t)) return 0;
+      for (var edge = 0; edge < start.length; edge += 1) {
+        final next = (edge + 1) % start.length;
+        best = math.min(
+          best,
+          _rawPointSegmentDistance(
+            point.x,
+            point.y,
+            x(edge, t),
+            y(edge, t),
+            x(next, t),
+            y(next, t),
+          ),
+        );
+      }
+    }
+    if (path.length == 2) {
+      final a = path.first, b = path.last;
+      for (var edge = 0; edge < start.length; edge += 1) {
+        final next = (edge + 1) % start.length;
+        best = math.min(
+          best,
+          _rawSegmentDistance(
+            a.x,
+            a.y,
+            b.x,
+            b.y,
+            x(edge, t),
+            y(edge, t),
+            x(next, t),
+            y(next, t),
+          ),
+        );
+      }
+    }
+    return best;
+  }
+
+  List<(double, double)> pointCircleIntervals(Point2 pagePoint) {
+    final transformed = pageToLocal.applyToPoint(pagePoint);
+    if (transformed is! Ok<Point2, StructuredFailure>) return const [];
+    final point = transformed.value;
+    final dx = localEnd.x - localStart.x;
+    final dy = localEnd.y - localStart.y;
+    final dr = endRadius - startRadius;
+    final px = localStart.x - point.x;
+    final py = localStart.y - point.y;
+    final a = dx * dx + dy * dy - dr * dr;
+    final b = 2 * (px * dx + py * dy - startRadius * dr);
+    final c = px * px + py * py - startRadius * startRadius;
+    final boundaries = <double>[0, 1];
+    if (a.abs() < 1e-14) {
+      if (b != 0) {
+        final root = -c / b;
+        if (root > 0 && root < 1 && root.isFinite) boundaries.add(root);
+      }
+    } else {
+      final discriminant = b * b - 4 * a * c;
+      if (discriminant >= 0 && discriminant.isFinite) {
+        final root = math.sqrt(discriminant);
+        for (final value in [(-b - root) / (2 * a), (-b + root) / (2 * a)]) {
+          if (value > 0 && value < 1 && value.isFinite) boundaries.add(value);
+        }
+      }
+    }
+    boundaries.sort();
+    final unique = <double>[];
+    for (final value in boundaries) {
+      if (unique.isEmpty || (value - unique.last).abs() > 1e-12) {
+        unique.add(value);
+      }
+    }
+    final result = <(double, double)>[];
+    for (var index = 1; index < unique.length; index += 1) {
+      final first = unique[index - 1], second = unique[index];
+      final middle = (first + second) / 2;
+      if (a * middle * middle + b * middle + c > 0) continue;
+      if (result.isNotEmpty && (result.last.$2 - first).abs() <= 1e-12) {
+        result[result.length - 1] = (result.last.$1, second);
+      } else {
+        result.add((first, second));
+      }
+    }
+    return List.unmodifiable(result);
+  }
+
+  bool _contains(double px, double py, double t) {
+    double? sign;
+    for (var edge = 0; edge < start.length; edge += 1) {
+      final next = (edge + 1) % start.length;
+      final value = _rawOrientation(
+        x(edge, t),
+        y(edge, t),
+        x(next, t),
+        y(next, t),
+        px,
+        py,
+      );
+      if (value == 0) continue;
+      sign ??= value;
+      if (value != sign) return false;
+    }
+    return true;
+  }
+}
+
+double _rawPointSegmentDistance(
+  double px,
+  double py,
+  double ax,
+  double ay,
+  double bx,
+  double by,
+) {
+  final dx = bx - ax, dy = by - ay;
+  final squared = dx * dx + dy * dy;
+  if (squared == 0) return _hypot(px - ax, py - ay);
+  final t = ((px - ax) * dx + (py - ay) * dy) / squared;
+  final clamped = t.clamp(0.0, 1.0);
+  return _hypot(px - (ax + dx * clamped), py - (ay + dy * clamped));
+}
+
+double _rawSegmentDistance(
+  double ax,
+  double ay,
+  double bx,
+  double by,
+  double cx,
+  double cy,
+  double dx,
+  double dy,
+) {
+  if (_rawSegmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy)) return 0;
+  return math.min(
+    math.min(
+      _rawPointSegmentDistance(ax, ay, cx, cy, dx, dy),
+      _rawPointSegmentDistance(bx, by, cx, cy, dx, dy),
+    ),
+    math.min(
+      _rawPointSegmentDistance(cx, cy, ax, ay, bx, by),
+      _rawPointSegmentDistance(dx, dy, ax, ay, bx, by),
+    ),
+  );
+}
+
+bool _rawSegmentsIntersect(
+  double ax,
+  double ay,
+  double bx,
+  double by,
+  double cx,
+  double cy,
+  double dx,
+  double dy,
+) {
+  final first = _rawOrientation(ax, ay, bx, by, cx, cy);
+  final second = _rawOrientation(ax, ay, bx, by, dx, dy);
+  final third = _rawOrientation(cx, cy, dx, dy, ax, ay);
+  final fourth = _rawOrientation(cx, cy, dx, dy, bx, by);
+  bool between(double a, double value, double b) =>
+      value >= math.min(a, b) && value <= math.max(a, b);
+  if (first == 0 && between(ax, cx, bx) && between(ay, cy, by)) return true;
+  if (second == 0 && between(ax, dx, bx) && between(ay, dy, by)) return true;
+  if (third == 0 && between(cx, ax, dx) && between(cy, ay, dy)) return true;
+  if (fourth == 0 && between(cx, bx, dx) && between(cy, by, dy)) return true;
+  return first != second && third != fourth;
+}
+
+double _rawOrientation(
+  double ax,
+  double ay,
+  double bx,
+  double by,
+  double cx,
+  double cy,
+) {
+  final value = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  return value.sign;
 }
 
 final class _GeometryBuildException implements Exception {

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import 'dart:math' as math;
+
 import 'package:al_note/app/al_note_app.dart';
+import 'package:al_note/core/interaction.dart';
 import 'package:al_note/core/primitives.dart';
 import 'package:al_note/documents/commands.dart';
 import 'package:al_note/documents/document_model.dart';
@@ -10,6 +13,7 @@ import 'package:al_note/drawing/geometry.dart';
 import 'package:al_note/drawing/renderer.dart';
 import 'package:al_note/ui/canvas/phase6_canvas.dart';
 import 'package:al_note/ui/canvas/phase6_canvas_runtime.dart';
+import 'package:al_note/ui/canvas/phase6_diagnostics.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -21,6 +25,130 @@ import 'support/uuid_sequence_generator.dart';
 
 /// Verifies the accessible Phase 6 Canvas shell and pointer route.
 void main() {
+  testWidgets('debug Diagnostics exposes only the bounded Phase 6 trace', (
+    WidgetTester tester,
+  ) async {
+    final trace = _ok(
+      Phase6DiagnosticTrace.create(enabled: true, capacity: 16),
+    );
+    await tester.pumpWidget(
+      AlNoteApp(runtime: _ok(_runtimeResult(diagnosticTrace: trace))),
+    );
+    expect(find.byKey(const Key('phase6-diagnostics-copy')), findsOneWidget);
+    await tester.tap(find.text('partialEraser'));
+    await tester.pump();
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+    final gesture = await tester.startGesture(
+      tester.getCenter(canvas),
+      kind: PointerDeviceKind.mouse,
+    );
+    await gesture.moveBy(const Offset(1, 0));
+    await gesture.cancel();
+    await tester.pump();
+    expect(trace.events, isNotEmpty);
+    expect(
+      trace.events.map((event) => event.stage),
+      contains(Phase6DiagnosticStage.cursorRepaintRequested),
+    );
+    final diagnostics = find.byKey(const Key('phase6-diagnostics-copy'));
+    await tester.ensureVisible(diagnostics);
+    await tester.tap(diagnostics);
+    await tester.pumpAndSettle();
+    expect(find.text('Diagnostics copied'), findsOneWidget);
+    final copied = trace.copyText();
+    expect(copied, isNot(contains('00000000-')));
+    expect(copied, contains('phase6_cursor_summary'));
+    expect(copied, contains('phase6_publication_summary'));
+
+    final disabled = _ok(
+      Phase6DiagnosticTrace.create(enabled: false, capacity: 16),
+    );
+    await tester.pumpWidget(
+      AlNoteApp(runtime: _ok(_runtimeResult(diagnosticTrace: disabled))),
+    );
+    expect(find.byKey(const Key('phase6-diagnostics-copy')), findsNothing);
+  });
+
+  testWidgets(
+    'rapid Partial Eraser input paints only the newest cursor frame',
+    (WidgetTester tester) async {
+      final trace = _ok(
+        Phase6DiagnosticTrace.create(enabled: true, capacity: 64),
+      );
+      final runtime = _ok(_runtimeResult(diagnosticTrace: trace));
+      await tester.pumpWidget(AlNoteApp(runtime: runtime));
+      await tester.tap(find.text('partialEraser'));
+      await tester.pump();
+      final canvas = find.bySemanticsLabel('Handwriting canvas');
+      final center = tester.getCenter(canvas);
+      final topLeft = tester.getTopLeft(canvas);
+      final documentRevision =
+          runtime.initialCoordinator.snapshot.revisions.document;
+      final gesture = await tester.startGesture(
+        center,
+        kind: PointerDeviceKind.mouse,
+      );
+      Offset latest = center;
+      for (var index = 0; index < 600; index += 1) {
+        latest =
+            center + Offset((index % 80).toDouble(), index.isEven ? 3 : -3);
+        await gesture.moveTo(latest);
+      }
+      expect(_canvasPainter(tester).partialSegmentCount, 0);
+      expect(_canvasPainter(tester).eraserPathLength, 0);
+
+      await tester.pump();
+      final cursorPaint = tester.widget<CustomPaint>(
+        find.byKey(const Key('phase6-eraser-cursor')),
+      );
+      final cursor = cursorPaint.painter! as Phase6EraserCursorEvidence;
+      expect(
+        cursor.cursorPosition,
+        _ok(
+          ViewPoint.create(
+            x: latest.dx - topLeft.dx,
+            y: latest.dy - topLeft.dy,
+          ),
+        ),
+      );
+      final cursorEvent = trace.events.lastWhere(
+        (event) => event.stage == Phase6DiagnosticStage.cursorRepaintCompleted,
+      );
+      expect(cursorEvent.rawPointerEvents, 601);
+      expect(cursorEvent.cursorRepaintRequests, 601);
+      expect(cursorEvent.cursorRepaints, 1);
+      expect(cursorEvent.processingBatches, 0);
+      final visualPaint = tester.widget<CustomPaint>(
+        find.byKey(const Key('phase6-visual-eraser')),
+      );
+      final visual = visualPaint.painter! as Phase6VisualEraserEvidence;
+      expect(visual.visualSegmentCount, 601);
+      expect(visual.visualChunkCount, 9);
+      final visualEvent = trace.events.lastWhere(
+        (event) => event.stage == Phase6DiagnosticStage.visualPreviewCompleted,
+      );
+      expect(visualEvent.visualPathSegments, 601);
+      expect(visualEvent.visualPreviewRequests, 601);
+      expect(visualEvent.visualPreviewRepaints, 1);
+      expect(visualEvent.processingBatches, 0);
+      expect(visualEvent.exactProcessingBacklog, 601);
+
+      await gesture.cancel();
+      await tester.pump();
+      final cleared = tester.widget<CustomPaint>(
+        find.byKey(const Key('phase6-eraser-cursor')),
+      );
+      expect(
+        (cleared.painter! as Phase6EraserCursorEvidence).cursorPosition,
+        isNull,
+      );
+      expect(
+        runtime.initialCoordinator.snapshot.revisions.document,
+        documentRevision,
+      );
+    },
+  );
+
   testWidgets('renders Phase 6 controls and commits pointer handwriting', (
     final WidgetTester tester,
   ) async {
@@ -48,7 +176,7 @@ void main() {
     );
     await gesture.moveBy(const Offset(20, 10));
     await gesture.up();
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('Stroke committed'), findsOneWidget);
     expect(
       tester
@@ -69,7 +197,7 @@ void main() {
     );
     await gesture.moveBy(const Offset(20, 10));
     await gesture.up();
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('selection'));
     await tester.pump();
@@ -132,11 +260,11 @@ void main() {
     await erase.moveBy(const Offset(0, 20));
     await erase.moveBy(const Offset(20, 0));
     await erase.moveBy(const Offset(0, 20));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(_canvasPainterDescription(tester), contains('eraserPath: 4'));
     final beforeCommit = runtime.initialCoordinator.snapshot.revisions.document;
     await erase.up();
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('Stroke partially erased'), findsOneWidget);
     expect(_handwritingStrokeCount(runtime), 2);
     expect(
@@ -151,7 +279,7 @@ void main() {
     await tester.pumpWidget(AlNoteApp(runtime: _runtime()));
     final canvas = find.bySemanticsLabel('Handwriting canvas');
     await tester.tap(find.text('partialEraser'));
-    await tester.pump();
+    await tester.pumpAndSettle();
     final partial = await tester.startGesture(
       tester.getCenter(canvas),
       kind: PointerDeviceKind.mouse,
@@ -227,12 +355,12 @@ void main() {
     for (var index = 0; index < 20; index += 1) {
       await erase.moveBy(const Offset(1, 0));
     }
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(await _canvasBytes(tester), isNot(equals(blank)));
     expect(
       _canvasPainterDescription(tester),
-      contains('previews: 1, eraserPath: 21'),
-      reason: 'the Eraser cursor remains constant-size across the gesture',
+      contains('previews: 0, eraserPath: 21'),
+      reason: 'the survivor overlay is separate from the Eraser cursor',
     );
     expect(_canvasPainterDescription(tester), contains('partialSegments: 21'));
     expect(runtime.initialCoordinator.snapshot.revisions.document, revision);
@@ -240,6 +368,50 @@ void main() {
     await tester.pump();
     expect(runtime.initialCoordinator.snapshot.revisions.document, revision);
   });
+
+  testWidgets(
+    'Pen preview pixels equal committed pixels across chunks and opacity',
+    (WidgetTester tester) async {
+      for (final opacity in [1.0, .45]) {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        await tester.pumpWidget(
+          AlNoteApp(runtime: _runtime(penOpacity: opacity)),
+        );
+        final canvas = find.bySemanticsLabel('Handwriting canvas');
+        final start = tester.getCenter(canvas) - const Offset(100, 40);
+        final pen = await tester.startGesture(
+          start,
+          kind: PointerDeviceKind.mouse,
+        );
+        for (var index = 1; index <= 100; index += 1) {
+          await pen.moveTo(
+            start + Offset(index.toDouble(), index.isEven ? 2 : -2),
+          );
+        }
+        await tester.pump();
+        final preview = await _canvasBytes(tester);
+        await pen.up();
+        await tester.pump();
+        final committed = await _canvasBytes(tester);
+        expect(committed, hasLength(preview.length));
+        var maximumChannelDelta = 0;
+        for (var index = 0; index < preview.length; index += 1) {
+          maximumChannelDelta = math.max(
+            maximumChannelDelta,
+            (preview[index] - committed[index]).abs(),
+          );
+        }
+        expect(
+          maximumChannelDelta,
+          lessThanOrEqualTo(1),
+          reason:
+              'release must not visibly change resolved Pen pixels at '
+              '$opacity',
+        );
+      }
+    },
+  );
 
   testWidgets('partial Eraser gap is transparent before Pointer Up', (
     WidgetTester tester,
@@ -268,17 +440,168 @@ void main() {
       kind: PointerDeviceKind.mouse,
     );
     await eraser.moveBy(const Offset(0, 60));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(
       await _canvasPixel(tester, localCenter),
       blankCenter,
       reason: 'the predicted gap exposes the real paper pixel, not a cover',
     );
-    expect(_canvasPainterDescription(tester), contains('previews: 1'));
+    expect(_canvasPainterDescription(tester), contains('previews: 0'));
     await eraser.cancel();
     await tester.pump();
     expect(await _canvasBytes(tester), committed);
   });
+
+  testWidgets('immediate transparent preview matches the drained committed result', (
+    WidgetTester tester,
+  ) async {
+    final trace = _ok(
+      Phase6DiagnosticTrace.create(enabled: true, capacity: 64),
+    );
+    final runtime = _ok(
+      _runtimeResult(
+        diagnosticTrace: trace,
+        maximumEraserBatchCandidateSegments: 8,
+        maximumEraserBatchClassifications: 8,
+        maximumEraserBatchClassificationChecks:
+            StrokeGeometryResolver.maximumPreparedClassificationChecks * 8,
+      ),
+    );
+    await tester.pumpWidget(AlNoteApp(runtime: runtime));
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+    final center = tester.getCenter(canvas);
+    final pen = await tester.startGesture(
+      center - const Offset(90, 0),
+      kind: PointerDeviceKind.mouse,
+    );
+    for (var index = 1; index <= 180; index += 1) {
+      await pen.moveBy(const Offset(1, 0));
+    }
+    await pen.up();
+    await tester.pump();
+
+    await tester.tap(find.text('partialEraser'));
+    await tester.pump();
+    final eraser = await tester.startGesture(
+      center - const Offset(70, 0),
+      kind: PointerDeviceKind.mouse,
+    );
+    for (var index = 1; index <= 140; index += 1) {
+      await eraser.moveBy(const Offset(1, 0));
+    }
+    await eraser.up();
+    await tester.pump();
+    expect(find.text('Finishing partial erase'), findsOneWidget);
+    final visual =
+        tester
+                .widget<CustomPaint>(
+                  find.byKey(const Key('phase6-visual-eraser')),
+                )
+                .painter!
+            as Phase6VisualEraserEvidence;
+    expect(visual.visualSegmentCount, 142);
+    expect(visual.visualChunkCount, 2);
+    expect(visual.compositedObjectLayerCount, 1);
+    var drainFrames = 0;
+    while (find
+            .byKey(const Key('phase6-visual-eraser'))
+            .evaluate()
+            .isNotEmpty &&
+        drainFrames < 400) {
+      await tester.pump();
+      drainFrames += 1;
+    }
+    expect(drainFrames, greaterThan(1));
+    expect(find.byKey(const Key('phase6-visual-eraser')), findsNothing);
+    expect(find.text('Finishing partial erase'), findsOneWidget);
+    final previewClip = _canvasPainter(tester).pageClip;
+    final preview = await _canvasBytes(tester);
+    await tester.pump();
+    expect(find.text('Stroke partially erased'), findsOneWidget);
+    expect(_canvasPainter(tester).pageClip, previewClip);
+    final committed = await _canvasBytes(tester);
+    expect(committed, hasLength(preview.length));
+    var maximumChannelDelta = 0;
+    var maximumDeltaIndex = 0;
+    for (var index = 0; index < preview.length; index += 1) {
+      final delta = (preview[index] - committed[index]).abs();
+      if (delta > maximumChannelDelta) {
+        maximumChannelDelta = delta;
+        maximumDeltaIndex = index;
+      }
+    }
+    expect(
+      maximumChannelDelta,
+      lessThanOrEqualTo(1),
+      reason:
+          'maximum index $maximumDeltaIndex at '
+          '${(maximumDeltaIndex ~/ 4) % tester.getSize(find.byKey(const Key('phase6-canvas-paint'))).width.toInt()},'
+          '${(maximumDeltaIndex ~/ 4) ~/ tester.getSize(find.byKey(const Key('phase6-canvas-paint'))).width.toInt()} preview '
+          '${preview.sublist(maximumDeltaIndex & ~3, (maximumDeltaIndex & ~3) + 4)} '
+          'committed '
+          '${committed.sublist(maximumDeltaIndex & ~3, (maximumDeltaIndex & ~3) + 4)}',
+    );
+    expect(
+      trace.events
+          .where(
+            (event) => event.stage == Phase6DiagnosticStage.commandPublication,
+          )
+          .length,
+      1,
+    );
+    expect(
+      trace.copyText(),
+      allOf(
+        contains('phase6_visual_summary'),
+        contains('phase6_classification_summary'),
+        contains('phase6_publication_summary'),
+      ),
+    );
+  });
+
+  testWidgets(
+    'visual mask composites multiple translucent Objects independently',
+    (WidgetTester tester) async {
+      final runtime = _runtime(penOpacity: .45);
+      await tester.pumpWidget(AlNoteApp(runtime: runtime));
+      tester.widget<Slider>(find.byKey(const Key('zoom-slider'))).onChanged!(2);
+      await tester.pump();
+      final canvas = find.bySemanticsLabel('Handwriting canvas');
+      final center = tester.getCenter(canvas);
+      for (final y in [-24.0, 0.0, 24.0]) {
+        final pen = await tester.startGesture(
+          center + Offset(-70, y),
+          kind: PointerDeviceKind.mouse,
+        );
+        await pen.moveBy(const Offset(140, 0));
+        await pen.up();
+        await tester.pump();
+      }
+      final committed = await _canvasBytes(tester);
+      await tester.tap(find.text('partialEraser'));
+      await tester.pump();
+      final eraser = await tester.startGesture(
+        center - const Offset(0, 45),
+        kind: PointerDeviceKind.mouse,
+      );
+      await eraser.moveBy(const Offset(0, 90));
+      await tester.pump();
+      final visual =
+          tester
+                  .widget<CustomPaint>(
+                    find.byKey(const Key('phase6-visual-eraser')),
+                  )
+                  .painter!
+              as Phase6VisualEraserEvidence;
+      expect(visual.visualSegmentCount, 2);
+      expect(visual.compositedObjectLayerCount, 3);
+      expect(await _canvasBytes(tester), isNot(equals(committed)));
+      await eraser.cancel();
+      await tester.pump();
+      expect(await _canvasBytes(tester), committed);
+      expect(_objectCount(runtime), 3);
+    },
+  );
 
   testWidgets('one marquee selects many separate handwriting Objects', (
     WidgetTester tester,
@@ -485,7 +808,7 @@ void main() {
         kind: PointerDeviceKind.mouse,
       );
       await limited.moveBy(const Offset(5, 0));
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(find.text(configuration.status), findsOneWidget);
       await limited.up();
 
@@ -525,7 +848,7 @@ void main() {
     );
     await draw.moveBy(const Offset(20, 0));
     await draw.up();
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(runtime.initialCoordinator.snapshot.isDirty, isTrue);
 
     await tester.tap(find.text('Save in memory'));
@@ -749,7 +1072,8 @@ void main() {
   testWidgets('long Pen and Erasers keep bounded live work before terminal', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(AlNoteApp(runtime: _runtime()));
+    final runtime = _runtime();
+    await tester.pumpWidget(AlNoteApp(runtime: runtime));
     final canvas = find.bySemanticsLabel('Handwriting canvas');
     final start = tester.getCenter(canvas) - const Offset(180, 0);
     final pen = await tester.startGesture(start, kind: PointerDeviceKind.mouse);
@@ -777,16 +1101,28 @@ void main() {
     for (var index = 1; index <= 240; index += 1) {
       await partial.moveBy(Offset(0, index.isEven ? 1 : -1));
     }
+    final beforePartialCommit =
+        runtime.initialCoordinator.snapshot.revisions.document;
+    await partial.up();
     await tester.pump();
+    expect(find.text('Finishing partial erase'), findsOneWidget);
+    final cursorPaint = tester.widget<CustomPaint>(
+      find.byKey(const Key('phase6-eraser-cursor')),
+    );
+    expect(
+      (cursorPaint.painter! as Phase6EraserCursorEvidence).cursorPosition,
+      isNull,
+    );
+    await tester.pumpAndSettle();
     final partialEvidence = _canvasPainter(tester);
     expect(partialEvidence.previewPrimitiveCount, lessThanOrEqualTo(192));
-    expect(partialEvidence.eraserPathLength, 241);
-    expect(partialEvidence.partialSegmentCount, 241);
-    expect(partialEvidence.partialSplitCalls, lessThanOrEqualTo(5061));
-    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    expect(find.text('Stroke partially erased'), findsOneWidget);
+    expect(
+      runtime.initialCoordinator.snapshot.revisions.document.value,
+      beforePartialCommit.value + 1,
+    );
+    await tester.tap(find.byTooltip('Undo'));
     await tester.pump();
-    expect(find.text('Cancelled'), findsOneWidget);
-    await partial.cancel();
 
     await tester.tap(find.text('wholeEraser'));
     await tester.pump();
@@ -869,12 +1205,12 @@ void main() {
       final localCenter = center - tester.getTopLeft(canvas);
       final committedPixel = await _canvasPixel(tester, localCenter);
       await partial.moveTo(center + const Offset(0, 24));
-      await tester.pump();
+      await tester.pumpAndSettle();
       final previewPixel = await _canvasPixel(tester, localCenter);
       expect(previewPixel, isNot(equals(committedPixel)));
       expect(previewPixel.first, greaterThan(committedPixel.first));
       await partial.up();
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(find.text('Stroke partially erased'), findsOneWidget);
       final terminalPixel = await _canvasPixel(tester, localCenter);
       expect(terminalPixel, isNot(equals(committedPixel)));
@@ -1103,13 +1439,27 @@ Phase6CanvasRuntime _runtime({
   int storageCeiling = 10000000,
   int maximumPenSamples = 10000,
   int maximumEraserPoints = 10000,
+  int maximumEraserClassificationChecks = 2000000,
+  int maximumEraserBatchCandidateSegments = 32,
+  int maximumEraserBatchClassifications = 16,
+  int maximumEraserBatchClassificationChecks = 512,
   Phase6ReopenGateway? reopenGateway,
+  double penOpacity = 1,
 }) => _ok(
   _runtimeResult(
     storageCeiling: storageCeiling,
     maximumPenSamples: maximumPenSamples,
     maximumEraserPoints: maximumEraserPoints,
+    maximumEraserClassificationChecks: maximumEraserClassificationChecks,
+    maximumEraserBatchCandidateSegments: maximumEraserBatchCandidateSegments,
+    maximumEraserBatchClassifications: maximumEraserBatchClassifications,
+    maximumEraserBatchClassificationChecks:
+        maximumEraserBatchClassificationChecks,
+    diagnosticTrace: _ok(
+      Phase6DiagnosticTrace.create(enabled: true, capacity: 64),
+    ),
     reopenGateway: reopenGateway,
+    penOpacity: penOpacity,
   ),
 );
 
@@ -1119,6 +1469,10 @@ Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
   int maximumPenSamples = 10000,
   int maximumHandwritingSamples = 10000,
   int maximumEraserPoints = 10000,
+  int maximumEraserClassificationChecks = 2000000,
+  int maximumEraserBatchCandidateSegments = 32,
+  int maximumEraserBatchClassifications = 16,
+  int maximumEraserBatchClassificationChecks = 512,
   int maximumRenderingDefinitions = 16,
   int maximumHitTestingDefinitions = 16,
   int maximumTools = 16,
@@ -1128,7 +1482,9 @@ Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
   int ellipseVertexCount = 16,
   int maximumGeometryElements = 20000,
   int maximumGeometryVertices = 400000,
+  Phase6DiagnosticTrace? diagnosticTrace,
   Phase6ReopenGateway? reopenGateway,
+  double penOpacity = 1,
 }) {
   final storageEntries =
       <({ResourceLimitKey key, ResourceLimitCeiling ceiling})>[];
@@ -1143,23 +1499,34 @@ Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
       ),
     ));
   }
+  final handwritingLimits = _ok(
+    HandwritingLimits.create(
+      maximumStrokes: 1024,
+      maximumSamplesPerStroke: maximumHandwritingSamples,
+      maximumUnknownFields: 256,
+      maximumNestingDepth: 32,
+      maximumUnknownNodes: 100000,
+      maximumCoordinateMagnitude: 1000000,
+      maximumStrokeWidth: 1000,
+      maximumAbsoluteTilt: 1.5707963267948966,
+      maximumAbsoluteOrientation: 6.283185307179586,
+    ),
+  );
   return Phase6CanvasRuntime.create(
     uuidGenerator:
         uuidGenerator ??
         UuidSequenceGenerator.fromValues(
           List.generate(128, (index) => testUuid(1000 + index)),
         ),
-    handwritingLimits: _ok(
-      HandwritingLimits.create(
-        maximumStrokes: 1024,
-        maximumSamplesPerStroke: maximumHandwritingSamples,
-        maximumUnknownFields: 256,
-        maximumNestingDepth: 32,
-        maximumUnknownNodes: 100000,
-        maximumCoordinateMagnitude: 1000000,
-        maximumStrokeWidth: 1000,
-        maximumAbsoluteTilt: 1.5707963267948966,
-        maximumAbsoluteOrientation: 6.283185307179586,
+    handwritingLimits: handwritingLimits,
+    penStyle: _ok(
+      StrokeStyle.create(
+        argb: 0xff17324d,
+        opacity: penOpacity,
+        baseWidth: 3,
+        pressureInfluence: .65,
+        minimumPressureFactor: .2,
+        limits: handwritingLimits,
       ),
     ),
     geometryLimits: _ok(
@@ -1202,6 +1569,14 @@ Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
     maximumEraserIntersections: 20000,
     maximumEraserFragments: 10000,
     maximumEraserOutputSamples: 200000,
+    maximumEraserClassificationChecks: maximumEraserClassificationChecks,
+    maximumEraserBatchCandidateSegments: maximumEraserBatchCandidateSegments,
+    maximumEraserBatchClassifications: maximumEraserBatchClassifications,
+    maximumEraserBatchClassificationChecks:
+        maximumEraserBatchClassificationChecks,
+    diagnosticTrace:
+        diagnosticTrace ??
+        _ok(Phase6DiagnosticTrace.create(enabled: true, capacity: 64)),
     reopenGateway: reopenGateway,
   );
 }

@@ -66,6 +66,46 @@ final class EraserGestureUpdate {
   final List<EraserPreviewSegmentUpdate> previewSegmentUpdates;
 }
 
+/// Immutable Object identity and Page bounds eligible for visual erasure.
+final class EraserVisualObjectEvidence {
+  const EraserVisualObjectEvidence._({
+    required this.objectId,
+    required this.pageBounds,
+  });
+
+  /// Eligible handwriting Object identity.
+  final ObjectId objectId;
+
+  /// Complete transformed Page-space bounds of the Object's strokes.
+  final Rect2 pageBounds;
+}
+
+/// Immutable evidence from one bounded partial-Eraser processing batch.
+final class PartialEraseWorkBatch {
+  PartialEraseWorkBatch._({
+    required this.pointCompleted,
+    required this.candidateSourceSegments,
+    required this.intervalClassifications,
+    required this.classificationChecks,
+    this.update,
+  });
+
+  /// Whether the pending pointer point completed in this batch.
+  final bool pointCompleted;
+
+  /// Candidate source segments completed in this batch.
+  final int candidateSourceSegments;
+
+  /// Direct interval classifications completed in this batch.
+  final int intervalClassifications;
+
+  /// Direct interval-distance checks completed in this batch.
+  final int classificationChecks;
+
+  /// Exact preview update, present only when [pointCompleted] is true.
+  final EraserGestureUpdate? update;
+}
+
 /// Exact prepared survivor geometry for one source Stroke segment.
 final class EraserPreviewSegmentUpdate {
   EraserPreviewSegmentUpdate._({
@@ -283,18 +323,29 @@ final class WholeEraseGesturePlan {
   Result<EraserGestureUpdate, StructuredFailure> acceptPoint(Point2 point) {
     if (_pointCount >= maximumPoints) return Err(_failure('eraser_path_limit'));
     final first = _lastPoint ?? point;
-    final path = <Point2>[first, point];
+    final path = SweptPath.create([first, point], maximumPoints: 2);
+    if (path is! Ok<SweptPath, StructuredFailure>) {
+      return Err(_failure('invalid_segment'));
+    }
     final sweptBounds = _sweptBounds(first, point, radius);
-    if (sweptBounds == null) return Err(_failure('invalid_segment'));
     final changed = <ObjectId>{};
     var newlyAffected = 0;
     for (final candidate in _candidates) {
       if (candidate.affected) continue;
-      if (!_boundsIntersect(candidate.geometry.bounds, sweptBounds)) continue;
+      if (sweptBounds != null &&
+          !_boundsIntersect(candidate.geometry.bounds, sweptBounds))
+        continue;
       _geometryCheckCount += 1;
-      final query = candidate.geometry.querySweptPath(path, radius);
-      _geometryElementExaminationCount += query.examinedElements;
-      if (!query.intersects) continue;
+      final query = candidate.geometry.querySweptPath(path.value, radius);
+      if (query
+          is! Ok<
+            ({bool intersects, int examinedElements}),
+            StructuredFailure
+          >) {
+        return Err(_failure('whole_geometry_unavailable'));
+      }
+      _geometryElementExaminationCount += query.value.examinedElements;
+      if (!query.value.intersects) continue;
       if (_affectedCount >= maximumTargets) {
         return Err(_failure('whole_target_limit'));
       }
@@ -437,6 +488,7 @@ final class PartialEraseGesturePlan {
     required this.maximumFragments,
     required this.maximumOutputSamples,
     required this.maximumOperations,
+    required this.maximumClassificationChecks,
     required this.handwritingLimits,
     required this.geometryResolver,
     required int geometryResolutionCount,
@@ -462,6 +514,7 @@ final class PartialEraseGesturePlan {
     required int maximumFragments,
     required int maximumOutputSamples,
     required int maximumOperations,
+    required int maximumClassificationChecks,
   }) {
     if (!_validLimits(
           radius,
@@ -471,6 +524,8 @@ final class PartialEraseGesturePlan {
         ) ||
         maximumIntersections < 0 ||
         maximumOutputSamples < 0 ||
+        maximumClassificationChecks <= 0 ||
+        maximumClassificationChecks > Revision.maximumValue ||
         !_validCaptureLimits(maximumObjects, maximumStrokes)) {
       return Err(_failure('invalid_partial_plan'));
     }
@@ -579,7 +634,17 @@ final class PartialEraseGesturePlan {
             return Err(_failure('partial_geometry_unavailable'));
           }
           geometryResolutionCount += 1;
-          working.add(_WorkingStroke(stroke, false, geometry.value));
+          final erasure = geometryResolver.prepareStrokeErasure(
+            stroke: stroke,
+            localToPage: object.transform,
+          );
+          if (erasure
+              is! Ok<PreparedStrokeErasureGeometry, StructuredFailure>) {
+            return Err(_failure('partial_geometry_unavailable'));
+          }
+          working.add(
+            _WorkingStroke(stroke, false, geometry.value, erasure.value),
+          );
         }
         objects.add(
           _PartialObjectPlan(
@@ -603,6 +668,7 @@ final class PartialEraseGesturePlan {
         maximumFragments: maximumFragments,
         maximumOutputSamples: maximumOutputSamples,
         maximumOperations: maximumOperations,
+        maximumClassificationChecks: maximumClassificationChecks,
         handwritingLimits: handwritingLimits,
         geometryResolver: geometryResolver,
         geometryResolutionCount: geometryResolutionCount,
@@ -636,6 +702,9 @@ final class PartialEraseGesturePlan {
   /// Maximum affected Object operations.
   final int maximumOperations;
 
+  /// Aggregate direct interval-classification work allowed for this gesture.
+  final int maximumClassificationChecks;
+
   /// Handwriting validation limits.
   final HandwritingLimits handwritingLimits;
 
@@ -654,6 +723,19 @@ final class PartialEraseGesturePlan {
   int _terminalSourceSegmentPassCount = 0;
   int _intervalEvidenceCount = 0;
   int _previewRangeMaterializationCount = 0;
+  int _candidateSourceSegmentCount = 0;
+  int _spatialElementExaminationCount = 0;
+  int _classificationCheckCount = 0;
+  int _maximumClassificationDepth = 0;
+  int _maximumPendingClassificationIntervals = 0;
+  int _intervalMergeCount = 0;
+  int _uuidAllocationCount = 0;
+  int _classificationCacheHitCount = 0;
+  int _classificationGeometryResolutionCount = 0;
+  int _processedBatchCount = 0;
+  int _maximumProcessedBatchSize = 0;
+  _PendingPartialPoint? _pendingPoint;
+  bool _finalPreviewMaterialized = false;
 
   /// Accepted pointer-point count.
   int get pointCount => _pointCount;
@@ -682,8 +764,80 @@ final class PartialEraseGesturePlan {
   /// Changed survivor ranges materialized for incremental preview updates.
   int get previewRangeMaterializationCount => _previewRangeMaterializationCount;
 
+  /// Candidate Strokes captured once during preparation.
+  int get candidateStrokeCount =>
+      _objects.fold(0, (count, object) => count + object.working.length);
+
+  /// Candidate source segments returned by spatial queries so far.
+  int get candidateSourceSegmentCount => _candidateSourceSegmentCount;
+
+  /// Spatial-index elements examined across accepted and rejected updates.
+  int get spatialElementExaminationCount => _spatialElementExaminationCount;
+
+  /// Aggregate direct interval-distance evaluations consumed by this gesture.
+  int get classificationCheckCount => _classificationCheckCount;
+
+  /// Maximum fixed direct-search depth reached by one classification.
+  int get maximumClassificationDepth => _maximumClassificationDepth;
+
+  /// Maximum pending interval work; direct classification keeps this at one.
+  int get maximumPendingClassificationIntervals =>
+      _maximumPendingClassificationIntervals;
+
+  /// Interval merge operations performed across accepted pointer segments.
+  int get intervalMergeCount => _intervalMergeCount;
+
+  /// Fragment count produced by the one terminal materialization pass.
+  int get fragmentCount => _fragmentCount;
+
+  /// UUID generation attempts made only during terminal request creation.
+  int get uuidAllocationCount => _uuidAllocationCount;
+
+  /// Exact source-segment interval classifications reused by this gesture.
+  int get classificationCacheHitCount => _classificationCacheHitCount;
+
+  /// Preparation, classification-envelope, and preview geometry resolutions.
+  int get totalGeometryResolutionCount =>
+      _geometryResolutionCount +
+      _classificationGeometryResolutionCount +
+      _previewRangeMaterializationCount;
+
+  /// Stroke-level parametric erasure preparations reused by the gesture.
+  int get erasurePreparationCount => candidateStrokeCount;
+
+  /// Number of explicitly bounded input batches processed by this gesture.
+  int get processedBatchCount => _processedBatchCount;
+
+  /// Largest accepted bounded batch size.
+  int get maximumProcessedBatchSize => _maximumProcessedBatchSize;
+
   /// Whether the plan has any predictive change.
   bool get hasChanges => _objects.any((value) => value.affected);
+
+  /// Bounded immutable visual-erasure eligibility captured at preparation.
+  List<EraserVisualObjectEvidence> get visualObjectEvidence =>
+      List.unmodifiable(
+        _objects.expand((object) sync* {
+          if (object.working.isEmpty) return;
+          var bounds = object.working.first.geometry.bounds;
+          for (final working in object.working.skip(1)) {
+            final next = working.geometry.bounds;
+            bounds = _rect(
+              math.min(bounds.left, next.left),
+              math.min(bounds.top, next.top),
+              math.max(bounds.right, next.right),
+              math.max(bounds.bottom, next.bottom),
+            );
+          }
+          yield EraserVisualObjectEvidence._(
+            objectId: object.object.id,
+            pageBounds: bounds,
+          );
+        }),
+      );
+
+  /// Whether a pointer segment has retained candidate work for a later batch.
+  bool get hasPendingPointWork => _pendingPoint != null;
 
   /// Whether [latest] still has the captured content identity.
   bool isCurrent(DocumentCoordinatorSnapshot latest) =>
@@ -692,126 +846,201 @@ final class PartialEraseGesturePlan {
   /// Classifies only the newest point or swept segment against cached source
   /// geometry. Exact survivor materialization is deferred to [createRequest].
   Result<EraserGestureUpdate, StructuredFailure> acceptPoint(Point2 point) {
+    if (_pendingPoint != null) {
+      return Err(_failure('partial_point_work_pending'));
+    }
     if (_pointCount >= maximumPoints) return Err(_failure('eraser_path_limit'));
     final first = _lastPoint ?? point;
-    final path = <Point2>[first, point];
+    final path = SweptPath.create([first, point], maximumPoints: 2);
+    if (path is! Ok<SweptPath, StructuredFailure>) {
+      return Err(_failure('invalid_segment'));
+    }
     final sweptBounds = _sweptBounds(first, point, radius);
-    if (sweptBounds == null) return Err(_failure('invalid_segment'));
     final changed = <ObjectId>{};
     final previewUpdates = <EraserPreviewSegmentUpdate>[];
+    final stagedIntervals =
+        <
+          (_PartialObjectPlan, _WorkingStroke, int),
+          List<StrokeErasureInterval>
+        >{};
+    var stagedIntervalEvidenceCount = _intervalEvidenceCount;
     var newlyAffected = 0;
     for (final object in _objects) {
-      var objectChanged = false;
-      final changedSegments = <(_WorkingStroke, int)>{};
       for (final working in object.working) {
-        if (!_boundsIntersect(working.geometry.bounds, sweptBounds)) {
+        if (sweptBounds != null &&
+            !_boundsIntersect(working.geometry.bounds, sweptBounds)) {
           continue;
         }
         final query = working.geometry.querySweptPathSourceSegments(
-          path,
+          path.value,
           radius,
         );
-        for (final segmentIndex in query.sourceSegments) {
-          final samples = working.stroke.samples;
-          final first = samples.length == 1
-              ? samples.single
-              : samples[segmentIndex];
-          final second = samples.length == 1
-              ? samples.single
-              : samples[segmentIndex + 1];
+        if (query
+            is! Ok<
+              ({List<int> sourceSegments, int examinedElements}),
+              StructuredFailure
+            >) {
+          return Err(_failure('partial_geometry_unavailable'));
+        }
+        _spatialElementExaminationCount += query.value.examinedElements;
+        _candidateSourceSegmentCount += query.value.sourceSegments.length;
+        for (final segmentIndex in query.value.sourceSegments) {
           _splitInvocationCount += 1;
-          final classified = geometryResolver.classifySourceSegmentErasure(
-            first: first,
-            second: second,
-            style: working.stroke.style,
-            localToPage: object.object.transform,
-            eraserSegment: path,
-            radius: radius,
-            handwritingLimits: handwritingLimits,
+          final cacheKey = _classificationCacheKey(
+            segmentIndex,
+            path.value.points.first,
+            path.value.points.last,
           );
-          if (classified
-              is! Ok<List<StrokeErasureInterval>, StructuredFailure>) {
-            return Err(_failure('partial_split_unavailable'));
+          var classifiedIntervals = working.classificationCache[cacheKey];
+          if (classifiedIntervals == null) {
+            final remainingChecks =
+                maximumClassificationChecks - _classificationCheckCount;
+            if (remainingChecks <= 0) {
+              return Err(_failure('partial_classification_work_limit'));
+            }
+            final classified = geometryResolver
+                .classifyPreparedSourceSegmentErasure(
+                  prepared: working.erasure,
+                  sourceSegment: segmentIndex,
+                  eraserSegment: path.value,
+                  radius: radius,
+                  maximumChecks: math.min(
+                    remainingChecks,
+                    geometryResolver.limits.maximumContainmentChecks,
+                  ),
+                );
+            if (classified
+                is! Ok<
+                  StrokeErasureClassificationEvidence,
+                  StructuredFailure
+                >) {
+              if (classified
+                      is Err<
+                        StrokeErasureClassificationEvidence,
+                        StructuredFailure
+                      > &&
+                  classified.error.code ==
+                      'drawing.geometry.erasure_classification_limit') {
+                _classificationCheckCount = maximumClassificationChecks;
+                return Err(_failure('partial_classification_work_limit'));
+              }
+              return Err(_failure('partial_split_unavailable'));
+            }
+            _classificationCheckCount += classified.value.classificationChecks;
+            _classificationGeometryResolutionCount +=
+                classified.value.geometryResolutions;
+            _spatialElementExaminationCount +=
+                classified.value.spatialElementsExamined;
+            _maximumClassificationDepth = math.max(
+              _maximumClassificationDepth,
+              classified.value.maximumSearchDepth,
+            );
+            _maximumPendingClassificationIntervals = math.max(
+              _maximumPendingClassificationIntervals,
+              classified.value.maximumPendingIntervals,
+            );
+            classifiedIntervals = classified.value.intervals;
+            working.classificationCache[cacheKey] = classifiedIntervals;
+          } else {
+            _classificationCacheHitCount += 1;
           }
-          if (classified.value.isEmpty) continue;
-          final merged = _mergeIntervals(
-            working.erasedIntervals[segmentIndex] ?? const [],
-            classified.value,
-          );
-          if (_sameIntervals(
-            working.erasedIntervals[segmentIndex] ?? const [],
-            merged,
-          )) {
-            continue;
-          }
-          final previousLength =
-              working.erasedIntervals[segmentIndex]?.length ?? 0;
+          if (classifiedIntervals.isEmpty) continue;
+          final key = (object, working, segmentIndex);
+          final existing =
+              stagedIntervals[key] ??
+              working.erasedIntervals[segmentIndex] ??
+              const [];
+          if (_sameIntervals(existing, classifiedIntervals)) continue;
+          _intervalMergeCount += 1;
+          final merged = _mergeIntervals(existing, classifiedIntervals);
+          if (_sameIntervals(existing, merged)) continue;
+          final previousLength = existing.length;
           final nextEvidence =
-              _intervalEvidenceCount - previousLength + merged.length;
+              stagedIntervalEvidenceCount - previousLength + merged.length;
           if (nextEvidence > math.max(maximumIntersections, maximumFragments)) {
             return Err(_failure('eraser_cumulative_limit'));
           }
-          working.erasedIntervals[segmentIndex] = merged;
-          _intervalEvidenceCount = nextEvidence;
-          objectChanged = true;
-          changedSegments.add((working, segmentIndex));
-          if (!working.requiresIdentity) newlyAffected += 1;
-          working.requiresIdentity = true;
+          stagedIntervals[key] = merged;
+          stagedIntervalEvidenceCount = nextEvidence;
         }
-        if (!working.requiresIdentity) continue;
-      }
-      if (objectChanged) {
-        final initialize = !object.affected;
-        if (initialize) {
-          for (final working in object.working) {
-            final count = working.stroke.samples.length == 1
-                ? 1
-                : working.stroke.samples.length - 1;
-            for (var segment = 0; segment < count; segment += 1) {
-              working.previewElements[segment] = working.geometry
-                  .sourceSegmentElements(segment);
-            }
-          }
-        }
-        for (final entry in changedSegments) {
-          final preview = _survivorElementsForSegment(
-            entry.$1,
-            entry.$2,
-            localToPage: object.object.transform,
-            geometryResolver: geometryResolver,
-            handwritingLimits: handwritingLimits,
-          );
-          if (preview == null) {
-            return Err(_failure('partial_preview_unavailable'));
-          }
-          entry.$1.previewElements[entry.$2] = preview.elements;
-          _previewRangeMaterializationCount += preview.materializations;
-        }
-        final publishedSegments = initialize
-            ? object.working.expand((working) sync* {
-                for (final entry in working.previewElements.entries) {
-                  yield (working, entry.key);
-                }
-              })
-            : changedSegments;
-        for (final entry in publishedSegments) {
-          previewUpdates.add(
-            EraserPreviewSegmentUpdate._(
-              objectId: object.object.id,
-              strokeId: entry.$1.stroke.id,
-              sourceSegment: entry.$2,
-              style: entry.$1.stroke.style,
-              elements: entry.$1.previewElements[entry.$2] ?? const [],
-            ),
-          );
-        }
-        object.affected = true;
-        changed.add(object.object.id);
       }
     }
-    if (_objects.where((value) => value.affected).length > maximumOperations) {
+    final changedObjects = stagedIntervals.keys
+        .map((entry) => entry.$1)
+        .toSet();
+    final affectedObjectCount = _objects
+        .where((object) => object.affected || changedObjects.contains(object))
+        .length;
+    if (affectedObjectCount > maximumOperations) {
       return Err(_failure('eraser_operation_limit'));
     }
+    final stagedPreviews =
+        <
+          (_PartialObjectPlan, _WorkingStroke, int),
+          List<StrokeGeometryElement>
+        >{};
+    for (final entry in stagedIntervals.entries) {
+      final key = entry.key;
+      final preview = _survivorElementsForSegment(
+        key.$2,
+        key.$3,
+        erased: entry.value,
+        localToPage: key.$1.object.transform,
+        geometryResolver: geometryResolver,
+        handwritingLimits: handwritingLimits,
+      );
+      if (preview == null) {
+        return Err(_failure('partial_preview_unavailable'));
+      }
+      stagedPreviews[key] = preview.elements;
+      _previewRangeMaterializationCount += preview.materializations;
+    }
+    for (final object in changedObjects) {
+      final initialize = !object.affected;
+      if (initialize) {
+        for (final working in object.working) {
+          final count = working.stroke.samples.length == 1
+              ? 1
+              : working.stroke.samples.length - 1;
+          for (var segment = 0; segment < count; segment += 1) {
+            working.previewElements[segment] = working.geometry
+                .sourceSegmentElements(segment);
+          }
+        }
+      }
+      final entries = stagedIntervals.entries.where(
+        (entry) => identical(entry.key.$1, object),
+      );
+      for (final entry in entries) {
+        final working = entry.key.$2;
+        if (!working.requiresIdentity) newlyAffected += 1;
+        working.requiresIdentity = true;
+        working.erasedIntervals[entry.key.$3] = entry.value;
+        working.previewElements[entry.key.$3] =
+            stagedPreviews[entry.key] ?? const [];
+      }
+      final publishedSegments = initialize
+          ? object.working.expand((working) sync* {
+              for (final entry in working.previewElements.entries) {
+                yield (working, entry.key);
+              }
+            })
+          : entries.map((entry) => (entry.key.$2, entry.key.$3));
+      for (final entry in publishedSegments) {
+        previewUpdates.add(
+          EraserPreviewSegmentUpdate._(
+            objectId: object.object.id,
+            strokeId: entry.$1.stroke.id,
+            sourceSegment: entry.$2,
+            style: entry.$1.stroke.style,
+            elements: entry.$1.previewElements[entry.$2] ?? const [],
+          ),
+        );
+      }
+      object.affected = true;
+      changed.add(object.object.id);
+    }
+    _intervalEvidenceCount = stagedIntervalEvidenceCount;
     _lastPoint = point;
     _pointCount += 1;
     _segmentCount += 1;
@@ -820,6 +1049,383 @@ final class PartialEraseGesturePlan {
         changed,
         newlyAffectedStrokeCount: newlyAffected,
         previewSegmentUpdates: previewUpdates,
+      ),
+    );
+  }
+
+  /// Processes one pointer point under explicit candidate and classifier work
+  /// ceilings, resuming the same internally owned point on later calls.
+  Result<PartialEraseWorkBatch, StructuredFailure> processPointWork({
+    Point2? point,
+    required int maximumCandidateSourceSegments,
+    required int maximumClassifications,
+    required int maximumChecks,
+    required bool materializePreviewEvidence,
+  }) {
+    if (maximumCandidateSourceSegments <= 0 ||
+        maximumClassifications <= 0 ||
+        maximumChecks <
+            StrokeGeometryResolver.maximumPreparedClassificationChecks ||
+        maximumCandidateSourceSegments > Revision.maximumValue ||
+        maximumClassifications > Revision.maximumValue ||
+        maximumChecks > Revision.maximumValue) {
+      return Err(_failure('invalid_partial_work_batch'));
+    }
+    if (_pendingPoint == null) {
+      if (point == null || _pointCount >= maximumPoints) {
+        return Err(_failure('eraser_path_limit'));
+      }
+      final first = _lastPoint ?? point;
+      final path = SweptPath.create([first, point], maximumPoints: 2);
+      if (path is! Ok<SweptPath, StructuredFailure>) {
+        return Err(_failure('invalid_segment'));
+      }
+      _pendingPoint = _PendingPartialPoint(
+        point: point,
+        path: path.value,
+        sweptBounds: _sweptBounds(first, point, radius),
+        stagedIntervalEvidenceCount: _intervalEvidenceCount,
+      );
+    } else if (point != null) {
+      return Err(_failure('partial_point_work_pending'));
+    }
+
+    final pending = _pendingPoint!;
+    var candidates = 0;
+    var classifications = 0;
+    var checks = 0;
+    while (candidates < maximumCandidateSourceSegments) {
+      final next = _nextPartialCandidate(pending);
+      if (next is! Ok<_PartialCandidate?, StructuredFailure>) {
+        _pendingPoint = null;
+        return Err(_failure('partial_geometry_unavailable'));
+      }
+      final candidate = next.value;
+      if (candidate == null) {
+        final completed = _completePendingPoint(
+          pending,
+          materializePreviewEvidence: materializePreviewEvidence,
+        );
+        _pendingPoint = null;
+        if (completed is! Ok<EraserGestureUpdate, StructuredFailure>) {
+          return Err(_failure('partial_point_failed'));
+        }
+        return Ok(
+          PartialEraseWorkBatch._(
+            pointCompleted: true,
+            candidateSourceSegments: candidates,
+            intervalClassifications: classifications,
+            classificationChecks: checks,
+            update: completed.value,
+          ),
+        );
+      }
+
+      final cacheKey = _classificationCacheKey(
+        candidate.segmentIndex,
+        pending.path.points.first,
+        pending.path.points.last,
+      );
+      var classifiedIntervals = candidate.working.classificationCache[cacheKey];
+      if (classifiedIntervals == null) {
+        final gestureChecksRemaining =
+            maximumClassificationChecks - _classificationCheckCount;
+        final requiredChecks = math.min(
+          StrokeGeometryResolver.maximumPreparedClassificationChecks,
+          gestureChecksRemaining,
+        );
+        if (classifications >= maximumClassifications ||
+            requiredChecks <= 0 ||
+            maximumChecks - checks < requiredChecks) {
+          if (requiredChecks <= 0) {
+            _pendingPoint = null;
+            return Err(_failure('partial_classification_work_limit'));
+          }
+          return Ok(
+            PartialEraseWorkBatch._(
+              pointCompleted: false,
+              candidateSourceSegments: candidates,
+              intervalClassifications: classifications,
+              classificationChecks: checks,
+            ),
+          );
+        }
+        final classified = geometryResolver
+            .classifyPreparedSourceSegmentErasure(
+              prepared: candidate.working.erasure,
+              sourceSegment: candidate.segmentIndex,
+              eraserSegment: pending.path,
+              radius: radius,
+              maximumChecks: requiredChecks,
+            );
+        if (classified
+            is! Ok<StrokeErasureClassificationEvidence, StructuredFailure>) {
+          _pendingPoint = null;
+          if (classified
+                  is Err<
+                    StrokeErasureClassificationEvidence,
+                    StructuredFailure
+                  > &&
+              classified.error.code ==
+                  'drawing.geometry.erasure_classification_limit') {
+            _classificationCheckCount = maximumClassificationChecks;
+            return Err(_failure('partial_classification_work_limit'));
+          }
+          return Err(_failure('partial_split_unavailable'));
+        }
+        classifications += 1;
+        checks += classified.value.classificationChecks;
+        _classificationCheckCount += classified.value.classificationChecks;
+        _classificationGeometryResolutionCount +=
+            classified.value.geometryResolutions;
+        _spatialElementExaminationCount +=
+            classified.value.spatialElementsExamined;
+        _maximumClassificationDepth = math.max(
+          _maximumClassificationDepth,
+          classified.value.maximumSearchDepth,
+        );
+        _maximumPendingClassificationIntervals = math.max(
+          _maximumPendingClassificationIntervals,
+          classified.value.maximumPendingIntervals,
+        );
+        classifiedIntervals = classified.value.intervals;
+        candidate.working.classificationCache[cacheKey] = classifiedIntervals;
+      } else {
+        _classificationCacheHitCount += 1;
+      }
+
+      _splitInvocationCount += 1;
+      _candidateSourceSegmentCount += 1;
+      candidates += 1;
+      pending.currentCandidate = null;
+      if (classifiedIntervals.isEmpty) continue;
+      final key = (candidate.object, candidate.working, candidate.segmentIndex);
+      final existing =
+          pending.stagedIntervals[key] ??
+          candidate.working.erasedIntervals[candidate.segmentIndex] ??
+          const [];
+      if (_sameIntervals(existing, classifiedIntervals)) continue;
+      _intervalMergeCount += 1;
+      final merged = _mergeIntervals(existing, classifiedIntervals);
+      if (_sameIntervals(existing, merged)) continue;
+      final nextEvidence =
+          pending.stagedIntervalEvidenceCount - existing.length + merged.length;
+      if (nextEvidence > math.max(maximumIntersections, maximumFragments)) {
+        _pendingPoint = null;
+        return Err(_failure('eraser_cumulative_limit'));
+      }
+      pending.stagedIntervals[key] = merged;
+      pending.stagedIntervalEvidenceCount = nextEvidence;
+    }
+    return Ok(
+      PartialEraseWorkBatch._(
+        pointCompleted: false,
+        candidateSourceSegments: candidates,
+        intervalClassifications: classifications,
+        classificationChecks: checks,
+      ),
+    );
+  }
+
+  Result<_PartialCandidate?, StructuredFailure> _nextPartialCandidate(
+    _PendingPartialPoint pending,
+  ) {
+    final retained = pending.currentCandidate;
+    if (retained != null) return Ok(retained);
+    while (true) {
+      if (pending.sourceSegmentIndex < pending.sourceSegments.length) {
+        final candidate = _PartialCandidate(
+          object: pending.sourceObject!,
+          working: pending.sourceWorking!,
+          segmentIndex: pending.sourceSegments[pending.sourceSegmentIndex++],
+        );
+        pending.currentCandidate = candidate;
+        return Ok(candidate);
+      }
+      pending.sourceSegments = const [];
+      pending.sourceSegmentIndex = 0;
+      pending.sourceObject = null;
+      pending.sourceWorking = null;
+      if (pending.objectIndex >= _objects.length) return const Ok(null);
+      final object = _objects[pending.objectIndex];
+      if (pending.workingIndex >= object.working.length) {
+        pending.objectIndex += 1;
+        pending.workingIndex = 0;
+        continue;
+      }
+      final working = object.working[pending.workingIndex++];
+      if (pending.sweptBounds != null &&
+          !_boundsIntersect(working.geometry.bounds, pending.sweptBounds!)) {
+        continue;
+      }
+      final query = working.geometry.querySweptPathSourceSegments(
+        pending.path,
+        radius,
+      );
+      if (query
+          is! Ok<
+            ({List<int> sourceSegments, int examinedElements}),
+            StructuredFailure
+          >) {
+        return Err(_failure('partial_geometry_unavailable'));
+      }
+      _spatialElementExaminationCount += query.value.examinedElements;
+      if (query.value.sourceSegments.isEmpty) continue;
+      pending.sourceObject = object;
+      pending.sourceWorking = working;
+      pending.sourceSegments = query.value.sourceSegments;
+    }
+  }
+
+  Result<EraserGestureUpdate, StructuredFailure> _completePendingPoint(
+    _PendingPartialPoint pending, {
+    required bool materializePreviewEvidence,
+  }) {
+    final changedObjects = pending.stagedIntervals.keys
+        .map((entry) => entry.$1)
+        .toSet();
+    final affectedObjectCount = _objects
+        .where((object) => object.affected || changedObjects.contains(object))
+        .length;
+    if (affectedObjectCount > maximumOperations) {
+      return Err(_failure('eraser_operation_limit'));
+    }
+    final stagedPreviews =
+        <
+          (_PartialObjectPlan, _WorkingStroke, int),
+          List<StrokeGeometryElement>
+        >{};
+    if (materializePreviewEvidence) {
+      for (final entry in pending.stagedIntervals.entries) {
+        final key = entry.key;
+        final preview = _survivorElementsForSegment(
+          key.$2,
+          key.$3,
+          erased: entry.value,
+          localToPage: key.$1.object.transform,
+          geometryResolver: geometryResolver,
+          handwritingLimits: handwritingLimits,
+        );
+        if (preview == null) {
+          return Err(_failure('partial_preview_unavailable'));
+        }
+        stagedPreviews[key] = preview.elements;
+        _previewRangeMaterializationCount += preview.materializations;
+      }
+    }
+    final changed = <ObjectId>{};
+    final previewUpdates = <EraserPreviewSegmentUpdate>[];
+    var newlyAffected = 0;
+    for (final object in changedObjects) {
+      final initialize = !object.affected;
+      if (initialize && materializePreviewEvidence) {
+        for (final working in object.working) {
+          final count = working.stroke.samples.length == 1
+              ? 1
+              : working.stroke.samples.length - 1;
+          for (var segment = 0; segment < count; segment += 1) {
+            working.previewElements[segment] = working.geometry
+                .sourceSegmentElements(segment);
+          }
+        }
+      }
+      final entries = pending.stagedIntervals.entries.where(
+        (entry) => identical(entry.key.$1, object),
+      );
+      for (final entry in entries) {
+        final working = entry.key.$2;
+        if (!working.requiresIdentity) newlyAffected += 1;
+        working.requiresIdentity = true;
+        working.erasedIntervals[entry.key.$3] = entry.value;
+        if (materializePreviewEvidence) {
+          working.previewElements[entry.key.$3] =
+              stagedPreviews[entry.key] ?? const [];
+        }
+      }
+      final publishedSegments = !materializePreviewEvidence
+          ? const <(_WorkingStroke, int)>[]
+          : initialize
+          ? object.working.expand((working) sync* {
+              for (final entry in working.previewElements.entries) {
+                yield (working, entry.key);
+              }
+            })
+          : entries.map((entry) => (entry.key.$2, entry.key.$3));
+      for (final entry in publishedSegments) {
+        previewUpdates.add(
+          EraserPreviewSegmentUpdate._(
+            objectId: object.object.id,
+            strokeId: entry.$1.stroke.id,
+            sourceSegment: entry.$2,
+            style: entry.$1.stroke.style,
+            elements: entry.$1.previewElements[entry.$2] ?? const [],
+          ),
+        );
+      }
+      object.affected = true;
+      changed.add(object.object.id);
+    }
+    _intervalEvidenceCount = pending.stagedIntervalEvidenceCount;
+    _lastPoint = pending.point;
+    _pointCount += 1;
+    _segmentCount += 1;
+    return Ok(
+      EraserGestureUpdate._(
+        changed,
+        newlyAffectedStrokeCount: newlyAffected,
+        previewSegmentUpdates: previewUpdates,
+      ),
+    );
+  }
+
+  /// Processes new points once in one explicitly bounded batch.
+  Result<EraserGestureUpdate, StructuredFailure> acceptBatch(
+    Iterable<Point2> source, {
+    required int maximumBatchPoints,
+  }) {
+    if (maximumBatchPoints <= 0 ||
+        maximumBatchPoints > maximumPoints ||
+        maximumBatchPoints > Revision.maximumValue) {
+      return Err(_failure('invalid_partial_batch'));
+    }
+    final points = <Point2>[];
+    try {
+      final iterator = source.iterator;
+      while (iterator.moveNext()) {
+        if (points.length >= maximumBatchPoints) {
+          return Err(_failure('partial_batch_limit'));
+        }
+        points.add(iterator.current);
+      }
+    } on Object {
+      return Err(_failure('partial_batch_unavailable'));
+    }
+    if (points.isEmpty) return Err(_failure('empty_partial_batch'));
+    final changed = <ObjectId>{};
+    final previews = <(ObjectId, StrokeId, int), EraserPreviewSegmentUpdate>{};
+    var newlyAffected = 0;
+    for (final point in points) {
+      final update = acceptPoint(point);
+      if (update is! Ok<EraserGestureUpdate, StructuredFailure>) {
+        return Err(_failure('partial_batch_failed'));
+      }
+      changed.addAll(update.value.changedObjectIds);
+      for (final preview in update.value.previewSegmentUpdates) {
+        previews[(preview.objectId, preview.strokeId, preview.sourceSegment)] =
+            preview;
+      }
+      newlyAffected += update.value.newlyAffectedStrokeCount;
+    }
+    _processedBatchCount += 1;
+    _maximumProcessedBatchSize = math.max(
+      _maximumProcessedBatchSize,
+      points.length,
+    );
+    return Ok(
+      EraserGestureUpdate._(
+        changed,
+        newlyAffectedStrokeCount: newlyAffected,
+        previewSegmentUpdates: previews.values,
       ),
     );
   }
@@ -863,6 +1469,79 @@ final class PartialEraseGesturePlan {
           );
   }
 
+  /// Materializes complete exact survivor Strokes once for terminal display.
+  Result<List<EraserPreviewObject>, StructuredFailure>
+  materializeFinalObjectPreviews() {
+    if (_pendingPoint != null || _finalPreviewMaterialized) {
+      return Err(_failure('final_preview_unavailable'));
+    }
+    final previews = <EraserPreviewObject>[];
+    var intersections = 0;
+    var fragments = 0;
+    var outputSamples = 0;
+    for (final object in _objects.where((value) => value.affected)) {
+      final strokes = <EraserPreviewStroke>[];
+      for (final working in object.working) {
+        final survivors = <HandwritingStroke>[];
+        if (!working.requiresIdentity) {
+          survivors.add(working.stroke);
+        } else {
+          final split = _materializeIntervals(
+            working,
+            handwritingLimits: handwritingLimits,
+            maximumIntersections: maximumIntersections,
+            maximumFragments: maximumFragments,
+            maximumOutputSamples: maximumOutputSamples,
+          );
+          _terminalMaterializationCount += 1;
+          _terminalSourceSegmentPassCount += working.stroke.samples.length == 1
+              ? 1
+              : working.stroke.samples.length - 1;
+          if (split is! Ok<StrokeSplitResult, StructuredFailure>) {
+            return Err(_failure('partial_split_unavailable'));
+          }
+          working.terminalSplit = split.value;
+          intersections += split.value.intersectionCount;
+          fragments += split.value.affected ? split.value.strokes.length : 0;
+          outputSamples += split.value.outputSampleCount;
+          if (intersections > maximumIntersections ||
+              fragments > maximumFragments ||
+              outputSamples > maximumOutputSamples) {
+            return Err(_failure('eraser_cumulative_limit'));
+          }
+          survivors.addAll(split.value.strokes);
+        }
+        for (final survivor in survivors) {
+          final geometry = identical(survivor, working.stroke)
+              ? Ok<TransformedStrokeGeometry, StructuredFailure>(
+                  working.geometry,
+                )
+              : geometryResolver.resolve(
+                  stroke: survivor,
+                  localToPage: object.object.transform,
+                );
+          if (geometry is! Ok<TransformedStrokeGeometry, StructuredFailure>) {
+            return Err(_failure('partial_geometry_unavailable'));
+          }
+          strokes.add(
+            EraserPreviewStroke(stroke: survivor, geometry: geometry.value),
+          );
+        }
+      }
+      previews.add(
+        EraserPreviewObject._(
+          objectId: object.object.id,
+          localToPage: object.object.transform,
+          strokes: strokes,
+        ),
+      );
+    }
+    if (previews.isEmpty) return Err(_failure('nothing_erased'));
+    _fragmentCount = fragments;
+    _finalPreviewMaterialized = true;
+    return Ok(List.unmodifiable(previews));
+  }
+
   /// Allocates fragment and correlation identities only at terminal request time.
   Result<AtomicObjectCollectionEditRequest, StructuredFailure> createRequest({
     required UuidGenerator uuidGenerator,
@@ -880,17 +1559,22 @@ final class PartialEraseGesturePlan {
           strokes.add(_PartialTerminalStroke(working.stroke, null));
           continue;
         }
-        final split = _materializeIntervals(
-          working,
-          handwritingLimits: handwritingLimits,
-          maximumIntersections: maximumIntersections,
-          maximumFragments: maximumFragments,
-          maximumOutputSamples: maximumOutputSamples,
-        );
-        _terminalMaterializationCount += 1;
-        _terminalSourceSegmentPassCount += working.stroke.samples.length == 1
-            ? 1
-            : working.stroke.samples.length - 1;
+        final cached = working.terminalSplit;
+        final split = cached == null
+            ? _materializeIntervals(
+                working,
+                handwritingLimits: handwritingLimits,
+                maximumIntersections: maximumIntersections,
+                maximumFragments: maximumFragments,
+                maximumOutputSamples: maximumOutputSamples,
+              )
+            : Ok<StrokeSplitResult, StructuredFailure>(cached);
+        if (cached == null) {
+          _terminalMaterializationCount += 1;
+          _terminalSourceSegmentPassCount += working.stroke.samples.length == 1
+              ? 1
+              : working.stroke.samples.length - 1;
+        }
         if (split is! Ok<StrokeSplitResult, StructuredFailure>) {
           return Err(_failure('partial_split_unavailable'));
         }
@@ -924,6 +1608,7 @@ final class PartialEraseGesturePlan {
           continue;
         }
         for (final fragment in split.strokes) {
+          _uuidAllocationCount += 1;
           final uuid = _generate(uuidGenerator);
           final id = uuid == null ? null : StrokeId.fromUuid(uuid);
           if (id == null ||
@@ -964,6 +1649,7 @@ final class PartialEraseGesturePlan {
         (replacement as Ok<ObjectEnvelope, StructuredFailure>).value,
       );
     }
+    _uuidAllocationCount += 1;
     final correlation = _generate(uuidGenerator);
     if (correlation == null || !occupiedUuids.add(correlation.value)) {
       return Err(_failure('uuid_generation'));
@@ -1019,6 +1705,44 @@ final class _WholeCandidate {
   bool affected = false;
 }
 
+final class _PendingPartialPoint {
+  _PendingPartialPoint({
+    required this.point,
+    required this.path,
+    required this.sweptBounds,
+    required this.stagedIntervalEvidenceCount,
+  });
+
+  final Point2 point;
+  final SweptPath path;
+  final Rect2? sweptBounds;
+  int objectIndex = 0;
+  int workingIndex = 0;
+  _PartialObjectPlan? sourceObject;
+  _WorkingStroke? sourceWorking;
+  List<int> sourceSegments = const [];
+  int sourceSegmentIndex = 0;
+  _PartialCandidate? currentCandidate;
+  final Map<
+    (_PartialObjectPlan, _WorkingStroke, int),
+    List<StrokeErasureInterval>
+  >
+  stagedIntervals = {};
+  int stagedIntervalEvidenceCount;
+}
+
+final class _PartialCandidate {
+  const _PartialCandidate({
+    required this.object,
+    required this.working,
+    required this.segmentIndex,
+  });
+
+  final _PartialObjectPlan object;
+  final _WorkingStroke working;
+  final int segmentIndex;
+}
+
 final class _PartialObjectPlan {
   _PartialObjectPlan({
     required this.layerId,
@@ -1038,12 +1762,33 @@ final class _PartialObjectPlan {
 }
 
 final class _WorkingStroke {
-  _WorkingStroke(this.stroke, this.requiresIdentity, this.geometry);
+  _WorkingStroke(
+    this.stroke,
+    this.requiresIdentity,
+    this.geometry,
+    this.erasure,
+  );
   final HandwritingStroke stroke;
   bool requiresIdentity;
   final TransformedStrokeGeometry geometry;
+  final PreparedStrokeErasureGeometry erasure;
   final Map<int, List<StrokeErasureInterval>> erasedIntervals = {};
   final Map<int, List<StrokeGeometryElement>> previewElements = {};
+  StrokeSplitResult? terminalSplit;
+  final Map<(int, Point2, Point2), List<StrokeErasureInterval>>
+  classificationCache = {};
+}
+
+(int, Point2, Point2) _classificationCacheKey(
+  int sourceSegment,
+  Point2 first,
+  Point2 second,
+) {
+  final ordered =
+      first.x < second.x || (first.x == second.x && first.y <= second.y);
+  return ordered
+      ? (sourceSegment, first, second)
+      : (sourceSegment, second, first);
 }
 
 final class _PartialTerminalPlan {
@@ -1062,6 +1807,7 @@ final class _PartialTerminalStroke {
 _survivorElementsForSegment(
   _WorkingStroke working,
   int segment, {
+  required List<StrokeErasureInterval> erased,
   required AffineTransform2D localToPage,
   required StrokeGeometryResolver geometryResolver,
   required HandwritingLimits handwritingLimits,
@@ -1071,7 +1817,6 @@ _survivorElementsForSegment(
     return (elements: const [], materializations: 0);
   }
   final first = samples[segment], second = samples[segment + 1];
-  final erased = working.erasedIntervals[segment] ?? const [];
   final elements = <StrokeGeometryElement>[];
   var cursor = 0.0;
   var materializations = 0;
@@ -1151,7 +1896,9 @@ Result<StrokeSplitResult, StructuredFailure> _materializeIntervals(
   required int maximumOutputSamples,
 }) {
   final source = working.stroke;
-  if (!working.requiresIdentity) return Ok(StrokeSplitResult([source]));
+  if (!working.requiresIdentity) {
+    return StrokeSplitResult.create(strokes: [source], maximumStrokes: 1);
+  }
   final runs = <List<StrokeSample>>[];
   List<StrokeSample>? run;
   var intersections = 0;
@@ -1170,7 +1917,7 @@ Result<StrokeSplitResult, StructuredFailure> _materializeIntervals(
 
   if (source.samples.length == 1) {
     if ((working.erasedIntervals[0] ?? const []).isEmpty) {
-      return Ok(StrokeSplitResult([source]));
+      return StrokeSplitResult.create(strokes: [source], maximumStrokes: 1);
     }
   } else {
     for (var segment = 0; segment + 1 < source.samples.length; segment += 1) {
@@ -1234,13 +1981,12 @@ Result<StrokeSplitResult, StructuredFailure> _materializeIntervals(
     }
     fragments.add(fragment.value);
   }
-  return Ok(
-    StrokeSplitResult(
-      fragments,
-      intersectionCount: intersections,
-      outputSampleCount: outputSamples,
-      affected: true,
-    ),
+  return StrokeSplitResult.create(
+    strokes: fragments,
+    maximumStrokes: math.max(1, maximumFragments),
+    intersectionCount: intersections,
+    outputSampleCount: outputSamples,
+    affected: true,
   );
 }
 
@@ -1348,6 +2094,11 @@ Rect2? _sweptBounds(Point2 first, Point2 second, double radius) =>
       right: math.max(first.x, second.x) + radius,
       bottom: math.max(first.y, second.y) + radius,
     ).fold<Rect2?>(onOk: (value) => value, onErr: (_) => null);
+
+Rect2 _rect(double left, double top, double right, double bottom) =>
+    (Rect2.fromEdges(left: left, top: top, right: right, bottom: bottom)
+            as Ok<Rect2, StructuredFailure>)
+        .value;
 
 bool _boundsIntersect(Rect2 first, Rect2 second) =>
     first.left <= second.right &&

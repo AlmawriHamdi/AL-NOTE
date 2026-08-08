@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import 'dart:math' as math;
-
 import '../../core/geometry/geometry_values.dart';
 import '../../core/outcomes/result.dart';
 import '../../core/outcomes/structured_failure.dart';
@@ -76,7 +74,7 @@ abstract interface class ObjectHitTestingDefinition {
   /// Returns matching subtargets for a validated Page-space polygon.
   Result<List<StrokeId>, StructuredFailure> lasso({
     required ObjectEnvelope object,
-    required List<Point2> polygon,
+    required GeometryQueryPolygon polygon,
     required AreaHitMode mode,
   });
 }
@@ -178,7 +176,7 @@ final class _CapturedHitTestingDefinition
   @override
   Result<List<StrokeId>, StructuredFailure> lasso({
     required ObjectEnvelope object,
-    required List<Point2> polygon,
+    required GeometryQueryPolygon polygon,
     required AreaHitMode mode,
   }) => _isolateList(
     () => _delegate.lasso(object: object, polygon: polygon, mode: mode),
@@ -330,15 +328,13 @@ final class HandwritingHitTestingDefinition
   @override
   Result<List<StrokeId>, StructuredFailure> lasso({
     required ObjectEnvelope object,
-    required List<Point2> polygon,
+    required GeometryQueryPolygon polygon,
     required AreaHitMode mode,
   }) => _area(
     object,
     mode,
     boundsRejects: (bounds) {
-      final polygonBounds = _polygonBounds(polygon);
-      return polygonBounds != null &&
-          !_rectanglesIntersect(bounds, polygonBounds);
+      return !_rectanglesIntersect(bounds, polygon.bounds);
     },
     matches: (geometry) => mode == AreaHitMode.containment
         ? geometry.containedByPolygon(polygon)
@@ -480,10 +476,15 @@ final class PageHitTester {
     required Iterable<Point2> polygon,
     required AreaHitMode mode,
   }) {
-    final captured = _captureLasso(polygon, maximumLassoPoints);
-    if (captured is Err<List<Point2>, StructuredFailure>)
+    final captured = GeometryQueryPolygon.create(
+      polygon,
+      maximumPoints: maximumLassoPoints,
+    );
+    if (captured is Err<GeometryQueryPolygon, StructuredFailure>) {
       return Err(captured.error);
-    final values = (captured as Ok<List<Point2>, StructuredFailure>).value;
+    }
+    final values =
+        (captured as Ok<GeometryQueryPolygon, StructuredFailure>).value;
     return _area(
       page,
       (definition, object) =>
@@ -564,78 +565,6 @@ final class _PageHitCandidate {
   final ObjectHitTestingDefinition definition;
 }
 
-Result<List<Point2>, StructuredFailure> _captureLasso(
-  Iterable<Point2> source,
-  int maximum,
-) {
-  if (maximum < 3 || maximum > Revision.maximumValue) {
-    return Err(_failure('invalid_lasso_limit', FailureCategory.validation));
-  }
-  final points = <Point2>[];
-  try {
-    final iterator = source.iterator;
-    while (true) {
-      final next = iterator.moveNext();
-      if (!next) break;
-      if (points.length >= maximum) {
-        return Err(_failure('lasso_limit', FailureCategory.resource));
-      }
-      points.add(iterator.current);
-    }
-  } on Object {
-    return Err(_failure('invalid_lasso_iterable', FailureCategory.dependency));
-  }
-  if (points.length < 3 || points.toSet().length != points.length) {
-    return Err(_failure('invalid_lasso', FailureCategory.validation));
-  }
-  var twiceArea = 0.0;
-  for (var index = 0; index < points.length; index += 1) {
-    final next = points[(index + 1) % points.length];
-    twiceArea += points[index].x * next.y - next.x * points[index].y;
-  }
-  if (!twiceArea.isFinite || twiceArea == 0 || _selfIntersects(points)) {
-    return Err(_failure('invalid_lasso', FailureCategory.validation));
-  }
-  return Ok(List.unmodifiable(points));
-}
-
-bool _selfIntersects(List<Point2> points) {
-  for (var first = 0; first < points.length; first += 1) {
-    final firstNext = (first + 1) % points.length;
-    for (var second = first + 1; second < points.length; second += 1) {
-      final secondNext = (second + 1) % points.length;
-      if (first == second || firstNext == second || secondNext == first)
-        continue;
-      if (_segmentsIntersect(
-        points[first],
-        points[firstNext],
-        points[second],
-        points[secondNext],
-      )) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-bool _segmentsIntersect(Point2 a, Point2 b, Point2 c, Point2 d) {
-  double orientation(Point2 p, Point2 q, Point2 r) =>
-      (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
-  bool onSegment(Point2 p, Point2 q, Point2 r) =>
-      q.x >= math.min(p.x, r.x) &&
-      q.x <= math.max(p.x, r.x) &&
-      q.y >= math.min(p.y, r.y) &&
-      q.y <= math.max(p.y, r.y);
-  final one = orientation(a, b, c), two = orientation(a, b, d);
-  final three = orientation(c, d, a), four = orientation(c, d, b);
-  if (one == 0 && onSegment(a, c, b)) return true;
-  if (two == 0 && onSegment(a, d, b)) return true;
-  if (three == 0 && onSegment(c, a, d)) return true;
-  if (four == 0 && onSegment(c, b, d)) return true;
-  return one.sign != two.sign && three.sign != four.sign;
-}
-
 bool _rectanglesIntersect(Rect2 first, Rect2 second) =>
     first.left <= second.right &&
     first.right >= second.left &&
@@ -653,26 +582,6 @@ bool _pointInExpandedRect(Point2 point, Rect2 bounds, double amount) =>
     point.x <= bounds.right + amount &&
     point.y >= bounds.top - amount &&
     point.y <= bounds.bottom + amount;
-
-Rect2? _polygonBounds(List<Point2> polygon) {
-  if (polygon.isEmpty) return null;
-  var left = polygon.first.x;
-  var right = left;
-  var top = polygon.first.y;
-  var bottom = top;
-  for (final point in polygon.skip(1)) {
-    left = math.min(left, point.x);
-    right = math.max(right, point.x);
-    top = math.min(top, point.y);
-    bottom = math.max(bottom, point.y);
-  }
-  return Rect2.fromEdges(
-    left: left,
-    top: top,
-    right: right,
-    bottom: bottom,
-  ).fold<Rect2?>(onOk: (value) => value, onErr: (_) => null);
-}
 
 StructuredFailure _failure(String leaf, FailureCategory category) =>
     StructuredFailure(

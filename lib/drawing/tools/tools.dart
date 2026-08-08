@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import 'dart:math' as math;
+
 import '../../core/geometry/affine_transform_2d.dart';
 import '../../core/geometry/geometry_values.dart';
 import '../../core/geometry/transform_operations.dart';
@@ -113,7 +115,7 @@ final class PenPreset {
 /// Temporary immutable Pen preview; never part of a Document root.
 final class PenPreview {
   /// Creates a defensively copied preview.
-  PenPreview({required Iterable<StrokeSample> samples, required this.style})
+  PenPreview._({required Iterable<StrokeSample> samples, required this.style})
     : samples = List.unmodifiable(samples);
 
   /// Page-space samples.
@@ -234,7 +236,7 @@ final class PenGestureSession {
 
   /// Current disposable preview, absent after any terminal outcome.
   PenPreview? get preview => _state == PenSessionState.active
-      ? PenPreview(samples: _samples, style: preset.style)
+      ? PenPreview._(samples: _samples, style: preset.style)
       : null;
 
   /// Latest one- or two-sample preview segment without copying prior input.
@@ -243,7 +245,7 @@ final class PenGestureSession {
     final start = _samples.length > 1 ? _samples.length - 2 : 0;
     final values = _samples.sublist(start);
     _previewSampleCopyCount += values.length;
-    return PenPreview(samples: values, style: preset.style);
+    return PenPreview._(samples: values, style: preset.style);
   }
 
   /// Accepted sample count without materializing preview evidence.
@@ -278,7 +280,6 @@ final class PenGestureSession {
   }
 
   Result<void, StructuredFailure> _append(NormalizedPointerEvent event) {
-    if (_samples.length >= maximumSamples) return Err(_failure('sample_limit'));
     final page = viewport
         .viewToPage(event.viewPosition)
         .fold<Point2?>(onOk: (v) => v, onErr: (_) => null);
@@ -296,7 +297,13 @@ final class PenGestureSession {
     );
     if (sample is Err<StrokeSample, StructuredFailure>)
       return Err(_failure('invalid_pen_sample'));
-    _samples.add((sample as Ok<StrokeSample, StructuredFailure>).value);
+    final accepted = (sample as Ok<StrokeSample, StructuredFailure>).value;
+    final previous = _samples.lastOrNull;
+    if (previous != null && previous.position == accepted.position) {
+      return const Ok(null);
+    }
+    if (_samples.length >= maximumSamples) return Err(_failure('sample_limit'));
+    _samples.add(accepted);
     return const Ok(null);
   }
 
@@ -482,13 +489,63 @@ final class PenGestureSession {
 
 /// Result of deterministic visible-geometry erasing.
 final class StrokeSplitResult {
-  /// Creates immutable split results.
-  StrokeSplitResult(
-    Iterable<HandwritingStroke> strokes, {
-    this.intersectionCount = 0,
-    this.outputSampleCount = 0,
-    this.affected = false,
+  StrokeSplitResult._({
+    required List<HandwritingStroke> strokes,
+    required this.intersectionCount,
+    required this.outputSampleCount,
+    required this.affected,
   }) : strokes = List.unmodifiable(strokes);
+
+  /// Largest caller-supplied split-result collection accepted at this boundary.
+  static const int maximumSupportedStrokes = 1000000;
+
+  /// Safely captures immutable split evidence under an explicit Stroke cap.
+  static Result<StrokeSplitResult, StructuredFailure> create({
+    required Iterable<HandwritingStroke> strokes,
+    required int maximumStrokes,
+    int intersectionCount = 0,
+    int outputSampleCount = 0,
+    bool affected = false,
+  }) {
+    if (maximumStrokes <= 0 ||
+        maximumStrokes > maximumSupportedStrokes ||
+        maximumStrokes > Revision.maximumValue) {
+      return Err(_failure('invalid_split_limit'));
+    }
+    if (intersectionCount < 0 ||
+        intersectionCount > Revision.maximumValue ||
+        outputSampleCount < 0 ||
+        outputSampleCount > Revision.maximumValue ||
+        (!affected && (intersectionCount != 0 || outputSampleCount != 0))) {
+      return Err(_failure('invalid_split_evidence'));
+    }
+    final captured = <HandwritingStroke>[];
+    try {
+      final iterator = strokes.iterator;
+      while (true) {
+        final more = iterator.moveNext();
+        if (!more) break;
+        if (captured.length >= maximumStrokes) {
+          return Err(_failure('split_limit'));
+        }
+        captured.add(iterator.current);
+      }
+    } on Object {
+      return Err(_failure('split_unavailable'));
+    }
+    if ((!affected && captured.length != 1) ||
+        (affected && !_coherentAffectedSplit(captured, outputSampleCount))) {
+      return Err(_failure('invalid_split_result'));
+    }
+    return Ok(
+      StrokeSplitResult._(
+        strokes: captured,
+        intersectionCount: intersectionCount,
+        outputSampleCount: outputSampleCount,
+        affected: affected,
+      ),
+    );
+  }
 
   /// Ordered survivors.
   final List<HandwritingStroke> strokes;
@@ -503,6 +560,76 @@ final class StrokeSplitResult {
   final bool affected;
 }
 
+bool _coherentAffectedSplit(
+  List<HandwritingStroke> strokes,
+  int outputSampleCount,
+) {
+  var actualSamples = 0;
+  for (final stroke in strokes) {
+    if (actualSamples > Revision.maximumValue - stroke.samples.length) {
+      return false;
+    }
+    actualSamples += stroke.samples.length;
+  }
+  return actualSamples == outputSampleCount;
+}
+
+Result<Set<StrokeId>, StructuredFailure> _captureExistingStrokeIds(
+  Iterable<StrokeId> source,
+  int maximum,
+) {
+  if (maximum <= 0 ||
+      maximum > StrokeSplitResult.maximumSupportedStrokes ||
+      maximum > Revision.maximumValue) {
+    return Err(_failure('invalid_existing_id_limit'));
+  }
+  final values = <StrokeId>{};
+  try {
+    final iterator = source.iterator;
+    while (true) {
+      final more = iterator.moveNext();
+      if (!more) break;
+      if (values.length >= maximum) {
+        return Err(_failure('existing_id_limit'));
+      }
+      if (!values.add(iterator.current)) {
+        return Err(_failure('duplicate_existing_id'));
+      }
+    }
+  } on Object {
+    return Err(_failure('existing_ids_unavailable'));
+  }
+  return Ok(Set.unmodifiable(values));
+}
+
+List<StrokeErasureInterval> _mergeStrokeIntervals(
+  List<StrokeErasureInterval> first,
+  List<StrokeErasureInterval> second,
+) {
+  final values = <StrokeErasureInterval>[...first, ...second]
+    ..sort((left, right) => left.start.compareTo(right.start));
+  final merged = <StrokeErasureInterval>[];
+  for (final value in values) {
+    if (merged.isEmpty || value.start > merged.last.end) {
+      merged.add(value);
+      continue;
+    }
+    if (value.end > merged.last.end) {
+      merged[merged.length - 1] = _okStrokeInterval(
+        merged.last.start,
+        value.end,
+      );
+    }
+  }
+  return List.unmodifiable(merged);
+}
+
+StrokeErasureInterval _okStrokeInterval(double start, double end) =>
+    StrokeErasureInterval.create(start: start, end: end).fold(
+      onOk: (value) => value,
+      onErr: (_) => throw StateError('Owned interval merge must remain valid.'),
+    );
+
 /// Splits at deterministic entry/exit boundaries of the Page-space swept
 /// eraser and complete transformed visible stroke geometry. Original samples
 /// are retained byte-for-byte; boundary samples interpolate numeric sensor and
@@ -515,27 +642,40 @@ Result<StrokeSplitResult, StructuredFailure> splitStrokeByEraser({
   required AffineTransform2D localToPage,
   required StrokeGeometryResolver geometryResolver,
   required UuidGenerator strokeIdGenerator,
-  required Set<StrokeId> existingIds,
+  required Iterable<StrokeId> existingIds,
+  required int maximumExistingIds,
   required int maximumEraserPoints,
   required int maximumIntersections,
   required int maximumFragments,
   required int maximumOutputSamples,
   required HandwritingLimits handwritingLimits,
-}) => _splitStrokeByEraser(
-  source: source,
-  eraserPath: eraserPath,
-  radius: radius,
-  localToPage: localToPage,
-  geometryResolver: geometryResolver,
-  strokeIdGenerator: strokeIdGenerator,
-  existingIds: existingIds,
-  maximumEraserPoints: maximumEraserPoints,
-  maximumIntersections: maximumIntersections,
-  maximumFragments: maximumFragments,
-  maximumOutputSamples: maximumOutputSamples,
-  handwritingLimits: handwritingLimits,
-  allocateIdentities: true,
-);
+}) {
+  final path = SweptPath.create(eraserPath, maximumPoints: maximumEraserPoints);
+  if (path is! Ok<SweptPath, StructuredFailure>) {
+    return Err(_failure('invalid_eraser_path'));
+  }
+  final capturedIds = _captureExistingStrokeIds(
+    existingIds,
+    maximumExistingIds,
+  );
+  if (capturedIds is! Ok<Set<StrokeId>, StructuredFailure>) {
+    return Err(_failure('existing_ids_unavailable'));
+  }
+  return _splitStrokeByEraser(
+    source: source,
+    eraserPath: path.value,
+    radius: radius,
+    localToPage: localToPage,
+    geometryResolver: geometryResolver,
+    strokeIdGenerator: strokeIdGenerator,
+    existingIds: capturedIds.value,
+    maximumIntersections: maximumIntersections,
+    maximumFragments: maximumFragments,
+    maximumOutputSamples: maximumOutputSamples,
+    handwritingLimits: handwritingLimits,
+    allocateIdentities: true,
+  );
+}
 
 /// Plans one stroke split without allocating persistent fragment identities.
 ///
@@ -553,33 +693,37 @@ Result<StrokeSplitResult, StructuredFailure> previewStrokeSplitByEraser({
   required int maximumFragments,
   required int maximumOutputSamples,
   required HandwritingLimits handwritingLimits,
-}) => _splitStrokeByEraser(
-  source: source,
-  sourceGeometry: sourceGeometry,
-  eraserPath: eraserPath,
-  radius: radius,
-  localToPage: localToPage,
-  geometryResolver: geometryResolver,
-  strokeIdGenerator: const _ForbiddenUuidGenerator(),
-  existingIds: const {},
-  maximumEraserPoints: maximumEraserPoints,
-  maximumIntersections: maximumIntersections,
-  maximumFragments: maximumFragments,
-  maximumOutputSamples: maximumOutputSamples,
-  handwritingLimits: handwritingLimits,
-  allocateIdentities: false,
-);
+}) {
+  final path = SweptPath.create(eraserPath, maximumPoints: maximumEraserPoints);
+  if (path is! Ok<SweptPath, StructuredFailure>) {
+    return Err(_failure('invalid_eraser_path'));
+  }
+  return _splitStrokeByEraser(
+    source: source,
+    sourceGeometry: sourceGeometry,
+    eraserPath: path.value,
+    radius: radius,
+    localToPage: localToPage,
+    geometryResolver: geometryResolver,
+    strokeIdGenerator: const _ForbiddenUuidGenerator(),
+    existingIds: const {},
+    maximumIntersections: maximumIntersections,
+    maximumFragments: maximumFragments,
+    maximumOutputSamples: maximumOutputSamples,
+    handwritingLimits: handwritingLimits,
+    allocateIdentities: false,
+  );
+}
 
 Result<StrokeSplitResult, StructuredFailure> _splitStrokeByEraser({
   required HandwritingStroke source,
   TransformedStrokeGeometry? sourceGeometry,
-  required Iterable<Point2> eraserPath,
+  required SweptPath eraserPath,
   required double radius,
   required AffineTransform2D localToPage,
   required StrokeGeometryResolver geometryResolver,
   required UuidGenerator strokeIdGenerator,
   required Set<StrokeId> existingIds,
-  required int maximumEraserPoints,
   required int maximumIntersections,
   required int maximumFragments,
   required int maximumOutputSamples,
@@ -588,8 +732,6 @@ Result<StrokeSplitResult, StructuredFailure> _splitStrokeByEraser({
 }) {
   if (!radius.isFinite ||
       radius < 0 ||
-      maximumEraserPoints <= 0 ||
-      maximumEraserPoints > Revision.maximumValue ||
       maximumIntersections < 0 ||
       maximumIntersections > Revision.maximumValue ||
       maximumFragments < 0 ||
@@ -597,47 +739,18 @@ Result<StrokeSplitResult, StructuredFailure> _splitStrokeByEraser({
       maximumOutputSamples < 0 ||
       maximumOutputSamples > Revision.maximumValue)
     return Err(_failure('invalid_eraser'));
-  final path = <Point2>[];
-  try {
-    final iterator = eraserPath.iterator;
-    while (iterator.moveNext()) {
-      if (path.length >= maximumEraserPoints)
-        return Err(_failure('eraser_path_limit'));
-      path.add(iterator.current);
+  final path = eraserPath.points;
+  if (sourceGeometry != null) {
+    final query = sourceGeometry.intersectsSweptPath(eraserPath, radius);
+    if (query is! Ok<bool, StructuredFailure>) {
+      return Err(_failure('eraser_geometry_unavailable'));
     }
-  } on Object {
-    return Err(_failure('invalid_eraser_path'));
-  }
-  if (path.isEmpty) return Err(_failure('empty_eraser_path'));
-  if (sourceGeometry != null &&
-      !sourceGeometry.intersectsSweptPath(path, radius)) {
-    return Ok(StrokeSplitResult([source]));
-  }
-  Result<bool, StructuredFailure> erased(StrokeSample sample) {
-    final dot = HandwritingStroke.create(
-      id: source.id,
-      samples: [sample],
-      style: source.style,
-      limits: handwritingLimits,
-      unknownFields: source.unknownFields,
-    );
-    if (dot is Err<HandwritingStroke, StructuredFailure>) return Err(dot.error);
-    final geometry = geometryResolver.resolve(
-      stroke: (dot as Ok<HandwritingStroke, StructuredFailure>).value,
-      localToPage: localToPage,
-    );
-    if (geometry is Err<TransformedStrokeGeometry, StructuredFailure>) {
-      return Err(geometry.error);
+    if (!query.value) {
+      return StrokeSplitResult.create(strokes: [source], maximumStrokes: 1);
     }
-    return Ok(
-      (geometry as Ok<TransformedStrokeGeometry, StructuredFailure>).value
-          .intersectsSweptPath(path, radius),
-    );
   }
-
   final runs = <List<StrokeSample>>[];
   List<StrokeSample>? run;
-  var changed = false;
   var intersections = 0;
   var outputSamples = 0;
 
@@ -650,133 +763,98 @@ Result<StrokeSplitResult, StructuredFailure> _splitStrokeByEraser({
     }
   }
 
-  void closeRun() => run = null;
-
-  if (source.samples.length == 1) {
-    final hit = erased(source.samples.single);
-    if (hit is Err<bool, StructuredFailure>) return Err(hit.error);
-    if (!(hit as Ok<bool, StructuredFailure>).value)
-      return Ok(StrokeSplitResult([source]));
-    changed = true;
+  final gestureSegments = <SweptPath>[];
+  if (path.length == 1) {
+    gestureSegments.add(eraserPath);
   } else {
-    for (var segment = 1; segment < source.samples.length; segment += 1) {
-      final first = source.samples[segment - 1];
-      final second = source.samples[segment];
-      final candidates = <double>{0, 1};
-      final pageFirst = localToPage
-          .applyToPoint(first.position)
-          .fold<Point2?>(onOk: (value) => value, onErr: (_) => null);
-      final pageSecond = localToPage
-          .applyToPoint(second.position)
-          .fold<Point2?>(onOk: (value) => value, onErr: (_) => null);
-      if (pageFirst == null || pageSecond == null) {
-        return Err(_failure('eraser_transform_unavailable'));
+    for (var index = 1; index < path.length; index += 1) {
+      final segment = SweptPath.create([
+        path[index - 1],
+        path[index],
+      ], maximumPoints: 2);
+      if (segment is! Ok<SweptPath, StructuredFailure>) {
+        return Err(_failure('invalid_eraser_path'));
       }
-      if (path.length == 1) {
-        candidates.add(
-          _projectionParameter(path.single, pageFirst, pageSecond),
-        );
-      } else {
-        for (var pathIndex = 1; pathIndex < path.length; pathIndex += 1) {
-          candidates.add(
-            _closestParameterOnFirstSegment(
-              pageFirst,
-              pageSecond,
-              path[pathIndex - 1],
-              path[pathIndex],
-            ),
-          );
-        }
+      gestureSegments.add(segment.value);
+    }
+  }
+  final erasedBySegment = <int, List<StrokeErasureInterval>>{};
+  final sourceSegmentCount = source.samples.length == 1
+      ? 1
+      : source.samples.length - 1;
+  for (var segment = 0; segment < sourceSegmentCount; segment += 1) {
+    final first = source.samples.length == 1
+        ? source.samples.single
+        : source.samples[segment];
+    final second = source.samples.length == 1
+        ? source.samples.single
+        : source.samples[segment + 1];
+    var accumulated = <StrokeErasureInterval>[];
+    for (final gesture in gestureSegments) {
+      final classified = geometryResolver.classifySourceSegmentErasure(
+        first: first,
+        second: second,
+        style: source.style,
+        localToPage: localToPage,
+        eraserSegment: gesture,
+        radius: radius,
+        handwritingLimits: handwritingLimits,
+      );
+      if (classified is! Ok<List<StrokeErasureInterval>, StructuredFailure>) {
+        return Err(_failure('eraser_classification_unavailable'));
       }
-      final ordered = candidates.toList()..sort();
-      final probes = <double>{...ordered};
-      for (var index = 1; index < ordered.length; index += 1) {
-        probes.add((ordered[index - 1] + ordered[index]) / 2);
+      accumulated = _mergeStrokeIntervals(accumulated, classified.value);
+      if (accumulated.length > maximumIntersections) {
+        return Err(_failure('eraser_intersection_limit'));
       }
-      final sorted = probes.toList()..sort();
-      final marks = <bool>[];
-      for (final t in sorted) {
-        final sample = _interpolateSample(first, second, t, handwritingLimits);
-        if (sample is Err<StrokeSample, StructuredFailure>)
-          return Err(sample.error);
-        final hit = erased(
-          (sample as Ok<StrokeSample, StructuredFailure>).value,
-        );
-        if (hit is Err<bool, StructuredFailure>) return Err(hit.error);
-        marks.add((hit as Ok<bool, StructuredFailure>).value);
-      }
-      final transitions = <double>[];
-      for (var index = 1; index < sorted.length; index += 1) {
-        if (marks[index - 1] == marks[index]) continue;
-        var low = sorted[index - 1], high = sorted[index];
-        final lowMark = marks[index - 1];
-        for (var iteration = 0; iteration < 32; iteration += 1) {
-          final middle = (low + high) / 2;
-          final sample = _interpolateSample(
+    }
+    if (accumulated.isNotEmpty) erasedBySegment[segment] = accumulated;
+  }
+  if (erasedBySegment.isEmpty) {
+    return StrokeSplitResult.create(strokes: [source], maximumStrokes: 1);
+  }
+  if (source.samples.length > 1) {
+    for (var segment = 0; segment < sourceSegmentCount; segment += 1) {
+      final first = source.samples[segment];
+      final second = source.samples[segment + 1];
+      final erased = erasedBySegment[segment] ?? const [];
+      var cursor = 0.0;
+      for (final interval in erased) {
+        if (interval.start > cursor) {
+          final start = _boundarySample(
             first,
             second,
-            middle,
+            cursor,
             handwritingLimits,
           );
-          if (sample is Err<StrokeSample, StructuredFailure>)
-            return Err(sample.error);
-          final hit = erased(
-            (sample as Ok<StrokeSample, StructuredFailure>).value,
+          final end = _boundarySample(
+            first,
+            second,
+            interval.start,
+            handwritingLimits,
           );
-          if (hit is Err<bool, StructuredFailure>) return Err(hit.error);
-          if ((hit as Ok<bool, StructuredFailure>).value == lowMark) {
-            low = middle;
-          } else {
-            high = middle;
+          if (start == null || end == null) {
+            return Err(_failure('invalid_eraser_boundary'));
           }
+          append(start);
+          append(end);
         }
-        transitions.add((low + high) / 2);
-        intersections += 1;
+        if (interval.start > 0) intersections += 1;
+        if (interval.end < 1) intersections += 1;
         if (intersections > maximumIntersections) {
           return Err(_failure('eraser_intersection_limit'));
         }
+        run = null;
+        cursor = math.max(cursor, interval.end);
       }
-      final cuts = <double>[0, ...transitions, 1];
-      for (var part = 1; part < cuts.length; part += 1) {
-        final start = cuts[part - 1], end = cuts[part];
-        final middle = (start + end) / 2;
-        final middleSample = _interpolateSample(
-          first,
-          second,
-          middle,
-          handwritingLimits,
-        );
-        if (middleSample is Err<StrokeSample, StructuredFailure>)
-          return Err(middleSample.error);
-        final hit = erased(
-          (middleSample as Ok<StrokeSample, StructuredFailure>).value,
-        );
-        if (hit is Err<bool, StructuredFailure>) return Err(hit.error);
-        if ((hit as Ok<bool, StructuredFailure>).value) {
-          changed = true;
-          closeRun();
-          continue;
-        }
-        final startSample = _boundarySample(
-          first,
-          second,
-          start,
-          handwritingLimits,
-        );
-        final endSample = _boundarySample(
-          first,
-          second,
-          end,
-          handwritingLimits,
-        );
-        if (startSample == null || endSample == null)
-          return Err(_failure('invalid_eraser_boundary'));
-        append(startSample);
-        append(endSample);
+      if (cursor < 1) {
+        final start = _boundarySample(first, second, cursor, handwritingLimits);
+        if (start == null) return Err(_failure('invalid_eraser_boundary'));
+        append(start);
+        append(second);
       }
     }
   }
-  if (!changed) return Ok(StrokeSplitResult([source]));
   if (runs.length > maximumFragments || outputSamples > maximumOutputSamples) {
     return Err(_failure('eraser_output_limit'));
   }
@@ -813,13 +891,12 @@ Result<StrokeSplitResult, StructuredFailure> _splitStrokeByEraser({
       return Err(fragment.error);
     fragments.add((fragment as Ok<HandwritingStroke, StructuredFailure>).value);
   }
-  return Ok(
-    StrokeSplitResult(
-      fragments,
-      intersectionCount: intersections,
-      outputSampleCount: outputSamples,
-      affected: true,
-    ),
+  return StrokeSplitResult.create(
+    strokes: fragments,
+    maximumStrokes: math.max(1, maximumFragments),
+    intersectionCount: intersections,
+    outputSampleCount: outputSamples,
+    affected: true,
   );
 }
 
@@ -856,19 +933,10 @@ createPartialEraseRequest({
       maximumCommandOperations > Revision.maximumValue) {
     return Err(_failure('invalid_eraser'));
   }
-  final path = <Point2>[];
-  try {
-    final iterator = pagePath.iterator;
-    while (iterator.moveNext()) {
-      if (path.length >= maximumEraserPoints) {
-        return Err(_failure('eraser_path_limit'));
-      }
-      path.add(iterator.current);
-    }
-  } on Object {
+  final path = SweptPath.create(pagePath, maximumPoints: maximumEraserPoints);
+  if (path is! Ok<SweptPath, StructuredFailure>) {
     return Err(_failure('invalid_eraser_path'));
   }
-  if (path.isEmpty) return Err(_failure('empty_eraser_path'));
   if (document.root.id != document.revisions.documentId ||
       document.revisions.pages.keys.toSet().length !=
           document.root.pages.length ||
@@ -943,13 +1011,12 @@ createPartialEraseRequest({
       for (final stroke in payload.strokes) {
         final split = _splitStrokeByEraser(
           source: stroke,
-          eraserPath: path,
+          eraserPath: path.value,
           radius: pageRadius,
           localToPage: object.transform,
           geometryResolver: geometryResolver,
           strokeIdGenerator: const _ForbiddenUuidGenerator(),
           existingIds: existingStrokeIds,
-          maximumEraserPoints: maximumEraserPoints,
           maximumIntersections: maximumIntersections,
           maximumFragments: maximumFragments,
           maximumOutputSamples: maximumOutputSamples,
@@ -1203,40 +1270,6 @@ StrokeSample? _boundarySample(
     t,
     limits,
   ).fold<StrokeSample?>(onOk: (value) => value, onErr: (_) => null);
-}
-
-double _projectionParameter(Point2 point, Point2 first, Point2 second) {
-  final dx = second.x - first.x, dy = second.y - first.y;
-  final lengthSquared = dx * dx + dy * dy;
-  if (lengthSquared == 0) return 0;
-  return (((point.x - first.x) * dx + (point.y - first.y) * dy) / lengthSquared)
-      .clamp(0.0, 1.0);
-}
-
-double _closestParameterOnFirstSegment(
-  Point2 first,
-  Point2 second,
-  Point2 pathFirst,
-  Point2 pathSecond,
-) {
-  final ux = second.x - first.x, uy = second.y - first.y;
-  final vx = pathSecond.x - pathFirst.x, vy = pathSecond.y - pathFirst.y;
-  final wx = first.x - pathFirst.x, wy = first.y - pathFirst.y;
-  final a = ux * ux + uy * uy;
-  final b = ux * vx + uy * vy;
-  final c = vx * vx + vy * vy;
-  final d = ux * wx + uy * wy;
-  final e = vx * wx + vy * wy;
-  if (a == 0) return 0;
-  if (c == 0) return _projectionParameter(pathFirst, first, second);
-  final denominator = a * c - b * b;
-  var s = denominator == 0
-      ? 0.0
-      : ((b * e - c * d) / denominator).clamp(0.0, 1.0);
-  var t = ((b * s + e) / c).clamp(0.0, 1.0);
-  s = ((b * t - d) / a).clamp(0.0, 1.0);
-  t = ((b * s + e) / c).clamp(0.0, 1.0);
-  return ((b * t - d) / a).clamp(0.0, 1.0);
 }
 
 StructuredFailure _failure(String leaf) => StructuredFailure(

@@ -8,6 +8,8 @@ import 'package:al_note/documents/objects/handwriting.dart';
 import 'package:al_note/drawing/geometry.dart';
 import 'package:al_note/drawing/renderer.dart';
 import 'package:al_note/ui/canvas/phase6_canvas_runtime.dart';
+import 'package:al_note/ui/canvas/phase6_diagnostics.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 /// Starts AL NOTE from explicit SDK-backed production dependencies.
@@ -43,17 +45,35 @@ void main() {
     maximumEstimatedRetainedBytes: 10000000,
   ).fold<HistoryLimits?>(onOk: (value) => value, onErr: (_) => null);
   final storage = _productionStorageLimits();
+  final diagnostics = Phase6DiagnosticTrace.create(
+    enabled: kDebugMode,
+    capacity: 64,
+    emitToDebugOutput: kDebugMode,
+  ).fold<Phase6DiagnosticTrace?>(onOk: (value) => value, onErr: (_) => null);
+  final penStyle = handwriting == null
+      ? null
+      : StrokeStyle.create(
+          argb: 0xff17324d,
+          opacity: 1,
+          baseWidth: 3,
+          pressureInfluence: .65,
+          minimumPressureFactor: .2,
+          limits: handwriting,
+        ).fold<StrokeStyle?>(onOk: (value) => value, onErr: (_) => null);
   if (handwriting == null ||
       geometry == null ||
       rendering == null ||
       history == null ||
-      storage == null) {
+      storage == null ||
+      diagnostics == null ||
+      penStyle == null) {
     runApp(const AlNoteInitializationFailureApp());
     return;
   }
   final runtime = Phase6CanvasRuntime.create(
     uuidGenerator: uuid,
     handwritingLimits: handwriting,
+    penStyle: penStyle,
     geometryLimits: geometry,
     renderingLimits: rendering,
     historyLimits: history,
@@ -74,6 +94,11 @@ void main() {
     maximumEraserIntersections: 20000,
     maximumEraserFragments: 10000,
     maximumEraserOutputSamples: 200000,
+    maximumEraserClassificationChecks: 2000000,
+    maximumEraserBatchCandidateSegments: 32,
+    maximumEraserBatchClassifications: 16,
+    maximumEraserBatchClassificationChecks: 512,
+    diagnosticTrace: diagnostics,
   );
   runApp(
     runtime is Ok<Phase6CanvasRuntime, StructuredFailure>

@@ -20,6 +20,7 @@ import '../../drawing/hit_testing.dart';
 import '../../drawing/renderer.dart';
 import '../../drawing/tools.dart';
 import 'flutter_pointer_adapter.dart';
+import 'phase6_diagnostics.dart';
 
 /// Fixed redaction-safe failure stages for an in-memory package reopen.
 enum Phase6ReopenFailureStage {
@@ -76,6 +77,7 @@ final class Phase6CanvasRuntime {
   const Phase6CanvasRuntime._({
     required this.uuidGenerator,
     required this.handwritingLimits,
+    required this.penStyle,
     required this.geometryResolver,
     required this.geometryCache,
     required this.renderingLimits,
@@ -102,12 +104,18 @@ final class Phase6CanvasRuntime {
     required this.maximumEraserIntersections,
     required this.maximumEraserFragments,
     required this.maximumEraserOutputSamples,
+    required this.maximumEraserClassificationChecks,
+    required this.maximumEraserBatchCandidateSegments,
+    required this.maximumEraserBatchClassifications,
+    required this.maximumEraserBatchClassificationChecks,
+    required this.diagnosticTrace,
   });
 
   /// Creates the complete runtime and generates initial persistent identities.
   static Result<Phase6CanvasRuntime, StructuredFailure> create({
     required UuidGenerator uuidGenerator,
     required HandwritingLimits handwritingLimits,
+    required StrokeStyle penStyle,
     required StrokeGeometryLimits geometryLimits,
     required RenderingLimits renderingLimits,
     required HistoryLimits historyLimits,
@@ -128,6 +136,11 @@ final class Phase6CanvasRuntime {
     required int maximumEraserIntersections,
     required int maximumEraserFragments,
     required int maximumEraserOutputSamples,
+    required int maximumEraserClassificationChecks,
+    required int maximumEraserBatchCandidateSegments,
+    required int maximumEraserBatchClassifications,
+    required int maximumEraserBatchClassificationChecks,
+    required Phase6DiagnosticTrace diagnosticTrace,
     Phase6ReopenGateway? reopenGateway,
   }) {
     final ceilings = <int>[
@@ -147,6 +160,10 @@ final class Phase6CanvasRuntime {
       maximumEraserIntersections,
       maximumEraserFragments,
       maximumEraserOutputSamples,
+      maximumEraserClassificationChecks,
+      maximumEraserBatchCandidateSegments,
+      maximumEraserBatchClassifications,
+      maximumEraserBatchClassificationChecks,
     ];
     final requiredElements = _multiplyCost(
       maximumPenSamples,
@@ -183,7 +200,9 @@ final class Phase6CanvasRuntime {
         requiredVertices == null ||
         requiredVertices > geometryLimits.maximumVertices ||
         renderingLimits.maximumPointsPerPrimitive <
-            geometryLimits.ellipseVertexCount) {
+            geometryLimits.ellipseVertexCount ||
+        maximumEraserBatchClassificationChecks <
+            StrokeGeometryResolver.maximumPreparedClassificationChecks) {
       return Err(_failure('invalid_limits'));
     }
     final geometry = StrokeGeometryResolver(geometryLimits);
@@ -307,6 +326,7 @@ final class Phase6CanvasRuntime {
       Phase6CanvasRuntime._(
         uuidGenerator: identities,
         handwritingLimits: handwritingLimits,
+        penStyle: penStyle,
         geometryResolver: geometry,
         geometryCache: geometryCache,
         renderingLimits: renderingLimits,
@@ -347,12 +367,22 @@ final class Phase6CanvasRuntime {
         maximumEraserIntersections: maximumEraserIntersections,
         maximumEraserFragments: maximumEraserFragments,
         maximumEraserOutputSamples: maximumEraserOutputSamples,
+        maximumEraserClassificationChecks: maximumEraserClassificationChecks,
+        maximumEraserBatchCandidateSegments:
+            maximumEraserBatchCandidateSegments,
+        maximumEraserBatchClassifications: maximumEraserBatchClassifications,
+        maximumEraserBatchClassificationChecks:
+            maximumEraserBatchClassificationChecks,
+        diagnosticTrace: diagnosticTrace,
       ),
     );
   }
 
   final UuidGenerator uuidGenerator;
   final HandwritingLimits handwritingLimits;
+
+  /// Resolved persistent Pen appearance shared by preview and commit.
+  final StrokeStyle penStyle;
   final StrokeGeometryResolver geometryResolver;
   final HandwritingGeometryCache geometryCache;
   final RenderingLimits renderingLimits;
@@ -381,6 +411,19 @@ final class Phase6CanvasRuntime {
   final int maximumEraserIntersections;
   final int maximumEraserFragments;
   final int maximumEraserOutputSamples;
+  final int maximumEraserClassificationChecks;
+
+  /// Candidate source-segment work allowed in one UI processing batch.
+  final int maximumEraserBatchCandidateSegments;
+
+  /// Interval classifications allowed in one UI processing batch.
+  final int maximumEraserBatchClassifications;
+
+  /// Direct classification checks allowed in one UI processing batch.
+  final int maximumEraserBatchClassificationChecks;
+
+  /// Injected bounded debug/test diagnostic trace.
+  final Phase6DiagnosticTrace diagnosticTrace;
 
   /// Creates a fresh coordinator for a successfully reopened exact root.
   Result<DocumentMutationCoordinator, CommandFailure> createCoordinator(
