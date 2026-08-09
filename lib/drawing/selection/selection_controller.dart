@@ -8,23 +8,100 @@ import '../../core/outcomes/structured_failure.dart';
 import '../../core/versioning/revision.dart';
 import '../../documents/commands.dart';
 import '../../documents/document_model.dart';
+import '../../documents/objects/handwriting.dart';
+import '../geometry.dart';
 import 'selection_contracts.dart';
+
+/// Redaction-safe rejection of an invalid Selection controller configuration.
+final class SelectionControllerConfigurationException implements Exception {
+  const SelectionControllerConfigurationException._(this.failure);
+
+  /// Fixed structured reason that construction was rejected.
+  final SelectionFailure failure;
+
+  @override
+  String toString() => failure.toString();
+}
 
 /// Owns one view's temporary page-scoped editable Selection.
 final class SelectionController {
   /// Creates an empty controller using injected Registry and boundary sink.
-  SelectionController({
+  ///
+  /// Throws a [SelectionControllerConfigurationException] containing a fixed
+  /// [SelectionFailure] when [maximumTargets] is not a positive, Web-safe,
+  /// practical ceiling.
+  factory SelectionController({
     required ObjectRegistry objectRegistry,
     required CoalescingBoundarySink coalescingBoundarySink,
+    required int maximumTargets,
+    HandwritingLimits? handwritingLimits,
+    StrokeGeometryResolver? strokeGeometryResolver,
+    HandwritingGeometryCache? handwritingGeometryCache,
     Revision? initialRevision,
+  }) {
+    if (maximumTargets <= 0 ||
+        maximumTargets > Revision.maximumValue ||
+        maximumTargets > maximumSupportedTargets) {
+      throw SelectionControllerConfigurationException._(
+        _selectionFailure('invalid_target_limit'),
+      );
+    }
+    return SelectionController._(
+      objectRegistry: objectRegistry,
+      coalescingBoundarySink: coalescingBoundarySink,
+      maximumTargets: maximumTargets,
+      handwritingLimits: handwritingLimits,
+      strokeGeometryResolver: strokeGeometryResolver,
+      handwritingGeometryCache: handwritingGeometryCache,
+      initialRevision: initialRevision,
+    );
+  }
+
+  SelectionController._({
+    required ObjectRegistry objectRegistry,
+    required CoalescingBoundarySink coalescingBoundarySink,
+    required this.maximumTargets,
+    required this.handwritingLimits,
+    required this.strokeGeometryResolver,
+    required this.handwritingGeometryCache,
+    required Revision? initialRevision,
   }) : _registry = objectRegistry,
        _boundarySink = coalescingBoundarySink,
        _state = SelectionState.empty(initialRevision ?? _zeroRevision);
 
+  /// Largest explicit target ceiling accepted by this controller.
+  ///
+  /// This implementation ceiling prevents a caller from configuring a
+  /// Web-safe but operationally unbounded collection allocation.
+  static const int maximumSupportedTargets = 1000000;
+
   final ObjectRegistry _registry;
   final CoalescingBoundarySink _boundarySink;
+
+  /// Maximum targets captured by one operation.
+  final int maximumTargets;
+
+  /// Decode limits required for Handwriting Stroke targets.
+  final HandwritingLimits? handwritingLimits;
+
+  /// Shared geometry required for exact Stroke bounds.
+  final StrokeGeometryResolver? strokeGeometryResolver;
+
+  /// Optional bounded prepared geometry shared with rendering and hit testing.
+  final HandwritingGeometryCache? handwritingGeometryCache;
   SelectionState _state;
   DocumentCoordinatorSnapshot? _previewBase;
+  DocumentPage? _resolvedCachePage;
+  ResourceCatalog? _resolvedCacheResources;
+  final Map<SelectionTarget, _Resolved> _resolvedCache = {};
+  int _targetResolutionCount = 0;
+  int _publicationCount = 0;
+
+  /// Target resolutions performed across cache misses.
+  int get targetResolutionCount => _targetResolutionCount;
+
+  /// Atomic Selection state publications performed by this controller.
+  int get publicationCount => _publicationCount;
 
   /// Current immutable temporary state.
   SelectionState get state => _state;
@@ -34,12 +111,16 @@ final class SelectionController {
     required DocumentRoot root,
     required Iterable<SelectionTarget> targets,
     SelectionTarget? primaryTarget,
-  }) => _setTargets(
-    root: root,
-    proposed: List.of(targets),
-    primary: primaryTarget,
-    rejectIneligible: true,
-  );
+  }) {
+    final captured = _captureTargets(targets);
+    if (captured == null) return Err(_selectionFailure('target_limit'));
+    return _setTargets(
+      root: root,
+      proposed: captured,
+      primary: primaryTarget,
+      rejectIneligible: true,
+    );
+  }
 
   /// Adds unique [targets] after existing targets.
   Result<SelectionState, SelectionFailure> add({
@@ -47,16 +128,22 @@ final class SelectionController {
     required Iterable<SelectionTarget> targets,
     SelectionTarget? primaryTarget,
   }) {
-    final additions = List<SelectionTarget>.of(targets);
+    final additions = _captureTargets(targets);
+    if (additions == null) return Err(_selectionFailure('target_limit'));
     if (additions.toSet().length != additions.length) {
       return Err(_selectionFailure('duplicate_target'));
     }
+    final proposed = List<SelectionTarget>.of(_state.targets);
+    for (final target in additions) {
+      if (proposed.contains(target)) continue;
+      if (proposed.length >= maximumTargets) {
+        return Err(_selectionFailure('target_limit'));
+      }
+      proposed.add(target);
+    }
     return _setTargets(
       root: root,
-      proposed: [
-        ..._state.targets,
-        ...additions.where((t) => !_state.targets.contains(t)),
-      ],
+      proposed: proposed,
       primary: primaryTarget ?? _state.primaryTarget,
       rejectIneligible: true,
     );
@@ -67,7 +154,8 @@ final class SelectionController {
     required DocumentRoot root,
     required Iterable<SelectionTarget> targets,
   }) {
-    final removals = List<SelectionTarget>.of(targets);
+    final removals = _captureTargets(targets);
+    if (removals == null) return Err(_selectionFailure('target_limit'));
     if (removals.toSet().length != removals.length) {
       return Err(_selectionFailure('duplicate_target'));
     }
@@ -89,15 +177,21 @@ final class SelectionController {
     required DocumentRoot root,
     required Iterable<SelectionTarget> targets,
   }) {
-    final toggles = List<SelectionTarget>.of(targets);
+    final toggles = _captureTargets(targets);
+    if (toggles == null) return Err(_selectionFailure('target_limit'));
     if (toggles.toSet().length != toggles.length) {
       return Err(_selectionFailure('duplicate_target'));
     }
     final proposed = List<SelectionTarget>.of(_state.targets);
     for (final target in toggles) {
-      proposed.contains(target)
-          ? proposed.remove(target)
-          : proposed.add(target);
+      if (proposed.contains(target)) {
+        proposed.remove(target);
+      } else {
+        if (proposed.length >= maximumTargets) {
+          return Err(_selectionFailure('target_limit'));
+        }
+        proposed.add(target);
+      }
     }
     return _setTargets(
       root: root,
@@ -121,6 +215,22 @@ final class SelectionController {
       bounds: null,
       preview: null,
       createBoundary: true,
+    );
+  }
+
+  /// Discards temporary Selection while leaving command coalescing untouched.
+  Result<SelectionState, SelectionFailure> discard() {
+    if (_state.targets.isEmpty && _state.transformPreview == null) {
+      return Ok(_state);
+    }
+    return _publishState(
+      activePageId: null,
+      targets: const [],
+      primary: null,
+      memberships: const {},
+      bounds: null,
+      preview: null,
+      createBoundary: false,
     );
   }
 
@@ -154,6 +264,7 @@ final class SelectionController {
           layerMembership: _state.layerMembership,
           aggregateBounds: _state.aggregateBounds,
           transformPreview: value,
+          maximumTargets: maximumTargets,
         );
         final failure = next.fold<SelectionFailure?>(
           onOk: (_) => null,
@@ -190,6 +301,7 @@ final class SelectionController {
           layerMembership: _state.layerMembership,
           aggregateBounds: _state.aggregateBounds,
           transformPreview: value,
+          maximumTargets: maximumTargets,
         );
         final failure = next.fold<SelectionFailure?>(
           onOk: (_) => null,
@@ -216,6 +328,7 @@ final class SelectionController {
       layerMembership: _state.layerMembership,
       aggregateBounds: _state.aggregateBounds,
       transformPreview: null,
+      maximumTargets: maximumTargets,
     );
     return _state;
   }
@@ -313,6 +426,7 @@ final class SelectionController {
       ),
       oldBounds: oldBounds,
       newBounds: newBounds,
+      maximumTargets: maximumTargets,
     );
   }
 
@@ -322,6 +436,9 @@ final class SelectionController {
     required SelectionTarget? primary,
     required bool rejectIneligible,
   }) {
+    if (proposed.length > maximumTargets) {
+      return Err(_selectionFailure('target_limit'));
+    }
     if (proposed.toSet().length != proposed.length) {
       return Err(_selectionFailure('duplicate_target'));
     }
@@ -338,13 +455,9 @@ final class SelectionController {
       return Err(_selectionFailure('page_unavailable'));
     }
     final accepted = <SelectionTarget>[];
+    final acceptedResolutions = <_Resolved>[];
     final memberships = <ObjectId, LayerId>{};
     for (final target in proposed) {
-      if (!target.isWholeObject) {
-        if (rejectIneligible)
-          return Err(_selectionFailure('unsupported_sub_target'));
-        continue;
-      }
       final resolved = page == null
           ? null
           : _resolve(page, root.resources, target);
@@ -354,13 +467,14 @@ final class SelectionController {
         continue;
       }
       accepted.add(target);
+      acceptedResolutions.add(resolved);
       memberships[target.objectId] = resolved.layer.id;
     }
     final resolvedPrimary = accepted.contains(primary)
         ? primary
         : (accepted.isEmpty ? null : accepted.first);
-    final bounds = _aggregateBounds(
-      accepted.map((target) => _resolve(page!, root.resources, target)!.object),
+    final bounds = _aggregateRectBounds(
+      acceptedResolutions.map((value) => value.bounds),
     );
     final unchanged =
         _listEquals(accepted, _state.targets) &&
@@ -403,6 +517,7 @@ final class SelectionController {
       layerMembership: memberships,
       aggregateBounds: bounds,
       transformPreview: preview,
+      maximumTargets: maximumTargets,
     );
     final stateFailure = candidate.fold<SelectionFailure?>(
       onOk: (_) => null,
@@ -426,6 +541,7 @@ final class SelectionController {
       }
     }
     _state = (candidate as Ok<SelectionState, SelectionFailure>).value;
+    _publicationCount += 1;
     if (createBoundary) _previewBase = null;
     return Ok(_state);
   }
@@ -436,19 +552,32 @@ final class SelectionController {
     SelectionTarget target,
   ) {
     if (target.pageId != page.id) return null;
+    if (!identical(page, _resolvedCachePage) ||
+        !identical(resources, _resolvedCacheResources)) {
+      _resolvedCachePage = page;
+      _resolvedCacheResources = resources;
+      _resolvedCache.clear();
+    }
+    final cached = _resolvedCache[target];
+    if (cached != null) return cached;
+    _targetResolutionCount += 1;
     _Resolved? result;
     for (final layer in page.layers) {
+      if (layer is! ContentLayer) continue;
       for (final object in layer.objects) {
         if (object.id != target.objectId) continue;
         if (result != null ||
             !layer.isObjectEffectivelyVisible(object) ||
             layer.isObjectEffectivelyLocked(object))
           return null;
+        if (object.typeKey == handwritingObjectTypeKey &&
+            object.typeSchemaVersion != handwritingSchemaVersion) {
+          return null;
+        }
         final resolution = _registry.resolve(object);
         if (resolution is! SupportedObjectResolution ||
             !resolution.definition.capabilities.selectable ||
-            !resolution.definition.capabilities.hasIntrinsicGeometry ||
-            !_reachable(page, object)) {
+            !resolution.definition.capabilities.hasIntrinsicGeometry) {
           return null;
         }
         if (resolution.definition.capabilities.discoversResourceReferences) {
@@ -466,8 +595,59 @@ final class SelectionController {
             return null;
           }
         }
-        result = _Resolved(layer, object, resolution);
+        Rect2? targetBounds;
+        if (target.isWholeObject) {
+          targetBounds = _boundsFromResolution(object, resolution);
+        } else if (target.subTargetKind ==
+                handwritingStrokeSelectionSubTargetKind &&
+            object.typeKey == handwritingObjectTypeKey &&
+            object.typeSchemaVersion == handwritingSchemaVersion &&
+            handwritingLimits != null &&
+            strokeGeometryResolver != null) {
+          final prepared = handwritingGeometryCache
+              ?.prepare(
+                object: object,
+                handwritingLimits: handwritingLimits!,
+                geometryResolver: strokeGeometryResolver!,
+              )
+              .fold<PreparedHandwritingGeometry?>(
+                onOk: (value) => value,
+                onErr: (_) => null,
+              );
+          final payload =
+              prepared?.payload ??
+              HandwritingPayload.decode(
+                object.payload,
+                limits: handwritingLimits!,
+              ).fold<HandwritingPayload?>(
+                onOk: (value) => value,
+                onErr: (_) => null,
+              );
+          final strokeIndex = payload?.strokes.indexWhere(
+            (value) => value.id.uuid == target.subTargetId!.uuid,
+          );
+          final stroke = payload?.strokes
+              .where((value) => value.id.uuid == target.subTargetId!.uuid)
+              .firstOrNull;
+          targetBounds = stroke == null
+              ? null
+              : prepared != null && strokeIndex != null && strokeIndex >= 0
+              ? prepared.geometries[strokeIndex].bounds
+              : strokeGeometryResolver!
+                    .resolve(stroke: stroke, localToPage: object.transform)
+                    .fold<Rect2?>(
+                      onOk: (value) => value.bounds,
+                      onErr: (_) => null,
+                    );
+        }
+        if (targetBounds == null || !_reachableBounds(page, targetBounds)) {
+          return null;
+        }
+        result = _Resolved(layer, object, resolution, targetBounds);
       }
+    }
+    if (result != null && _resolvedCache.length < maximumTargets) {
+      _resolvedCache[target] = result;
     }
     return result;
   }
@@ -486,18 +666,27 @@ final class SelectionController {
 
   bool _reachable(DocumentPage page, ObjectEnvelope object) {
     final bounds = _bounds(object);
-    return bounds != null &&
-        bounds.right >= 0 &&
-        bounds.bottom >= 0 &&
-        bounds.left <= page.size.width &&
-        bounds.top <= page.size.height;
+    return bounds != null && _reachableBounds(page, bounds);
   }
+
+  bool _reachableBounds(DocumentPage page, Rect2 bounds) =>
+      bounds.right >= 0 &&
+      bounds.bottom >= 0 &&
+      bounds.left <= page.size.width &&
+      bounds.top <= page.size.height;
 
   Rect2? _bounds(ObjectEnvelope object) {
     final resolution = _registry.resolve(object);
     if (resolution is! SupportedObjectResolution ||
         !resolution.definition.capabilities.hasIntrinsicGeometry)
       return null;
+    return _boundsFromResolution(object, resolution);
+  }
+
+  Rect2? _boundsFromResolution(
+    ObjectEnvelope object,
+    SupportedObjectResolution resolution,
+  ) {
     try {
       final intrinsic = resolution.definition
           .intrinsicGeometry(object.payload, object.typeSchemaVersion)
@@ -554,13 +743,48 @@ final class SelectionController {
     }
     return result;
   }
+
+  Rect2? _aggregateRectBounds(Iterable<Rect2> values) {
+    Rect2? result;
+    for (final bounds in values) {
+      result = result == null
+          ? bounds
+          : Rect2.fromEdges(
+              left: result.left < bounds.left ? result.left : bounds.left,
+              top: result.top < bounds.top ? result.top : bounds.top,
+              right: result.right > bounds.right ? result.right : bounds.right,
+              bottom: result.bottom > bounds.bottom
+                  ? result.bottom
+                  : bounds.bottom,
+            ).fold<Rect2?>(onOk: (value) => value, onErr: (_) => null);
+      if (result == null) return null;
+    }
+    return result;
+  }
+
+  List<SelectionTarget>? _captureTargets(Iterable<SelectionTarget> source) {
+    final values = <SelectionTarget>[];
+    try {
+      final iterator = source.iterator;
+      while (true) {
+        final hasNext = iterator.moveNext();
+        if (!hasNext) break;
+        if (values.length >= maximumTargets) return null;
+        values.add(iterator.current);
+      }
+    } on Object {
+      return null;
+    }
+    return values;
+  }
 }
 
 final class _Resolved {
-  const _Resolved(this.layer, this.object, this.resolution);
+  const _Resolved(this.layer, this.object, this.resolution, this.bounds);
   final DocumentLayer layer;
   final ObjectEnvelope object;
   final SupportedObjectResolution resolution;
+  final Rect2 bounds;
 }
 
 final Revision _zeroRevision = Revision.create(0).fold(
@@ -586,6 +810,7 @@ SelectionState _trustedSelectionState({
   required Map<ObjectId, LayerId> layerMembership,
   required Rect2? aggregateBounds,
   required WholeObjectTransformPreview? transformPreview,
+  required int maximumTargets,
 }) =>
     SelectionState.create(
       activePageId: activePageId,
@@ -596,6 +821,7 @@ SelectionState _trustedSelectionState({
       layerMembership: layerMembership,
       aggregateBounds: aggregateBounds,
       transformPreview: transformPreview,
+      maximumTargets: maximumTargets,
     ).fold(
       onOk: (value) => value,
       onErr: (failure) => throw StateError(

@@ -39,6 +39,13 @@ final class SelectionSubTargetKind {
   String toString() => value;
 }
 
+/// Stable closed built-in kind for one Handwriting Stroke sub-target.
+final SelectionSubTargetKind handwritingStrokeSelectionSubTargetKind =
+    SelectionSubTargetKind.parse('alnote.selection.handwriting_stroke').fold(
+      onOk: (value) => value,
+      onErr: (_) => throw StateError('Built-in Selection kind must be valid.'),
+    );
+
 /// UUID-backed stable identity of a sub-target within one Object.
 final class SelectionSubTargetId {
   /// Creates an identity from an AL NOTE UUID.
@@ -195,12 +202,51 @@ final class WholeObjectTransformPreview {
     required RevisionPreconditions preconditions,
     required Rect2 oldBounds,
     required Rect2 newBounds,
+    required int maximumTargets,
   }) {
-    final targets = List<ObjectId>.of(targetIds);
+    if (maximumTargets <= 0 || maximumTargets > Revision.maximumValue) {
+      return Err(_selectionContractFailure('invalid_preview_limit'));
+    }
+    final capturedTargets = _captureSelectionIterable(
+      targetIds,
+      maximumTargets,
+      'preview_target_limit',
+    );
+    final capturedBase = _captureSelectionMap(
+      baseObjects,
+      maximumTargets,
+      'preview_map_limit',
+    );
+    final capturedCandidates = _captureSelectionMap(
+      candidateObjects,
+      maximumTargets,
+      'preview_map_limit',
+    );
+    final capturedMembership = _captureSelectionMap(
+      targetLayerMembership,
+      maximumTargets,
+      'preview_map_limit',
+    );
+    if (capturedTargets is Err<List<ObjectId>, SelectionFailure> ||
+        capturedBase is Err<Map<ObjectId, ObjectEnvelope>, SelectionFailure> ||
+        capturedCandidates
+            is Err<Map<ObjectId, ObjectEnvelope>, SelectionFailure> ||
+        capturedMembership is Err<Map<ObjectId, LayerId>, SelectionFailure>) {
+      return Err(_selectionContractFailure('preview_input_unavailable'));
+    }
+    final targets =
+        (capturedTargets as Ok<List<ObjectId>, SelectionFailure>).value;
     final targetSet = targets.toSet();
-    final base = Map<ObjectId, ObjectEnvelope>.of(baseObjects);
-    final candidates = Map<ObjectId, ObjectEnvelope>.of(candidateObjects);
-    final membership = Map<ObjectId, LayerId>.of(targetLayerMembership);
+    final base =
+        (capturedBase as Ok<Map<ObjectId, ObjectEnvelope>, SelectionFailure>)
+            .value;
+    final candidates =
+        (capturedCandidates
+                as Ok<Map<ObjectId, ObjectEnvelope>, SelectionFailure>)
+            .value;
+    final membership =
+        (capturedMembership as Ok<Map<ObjectId, LayerId>, SelectionFailure>)
+            .value;
     final requiredLayers = membership.values.toSet();
     if (targets.isEmpty || targets.toSet().length != targets.length) {
       return Err(_selectionContractFailure('invalid_preview_targets'));
@@ -347,8 +393,30 @@ final class SelectionState {
     required Map<ObjectId, LayerId> layerMembership,
     required Rect2? aggregateBounds,
     required WholeObjectTransformPreview? transformPreview,
+    required int maximumTargets,
   }) {
-    final copied = List<SelectionTarget>.of(targets);
+    if (maximumTargets <= 0 || maximumTargets > Revision.maximumValue) {
+      return Err(_selectionContractFailure('invalid_selection_limit'));
+    }
+    final capturedTargets = _captureSelectionIterable(
+      targets,
+      maximumTargets,
+      'selection_target_limit',
+    );
+    final capturedMembership = _captureSelectionMap(
+      layerMembership,
+      maximumTargets,
+      'selection_membership_limit',
+    );
+    if (capturedTargets is Err<List<SelectionTarget>, SelectionFailure> ||
+        capturedMembership is Err<Map<ObjectId, LayerId>, SelectionFailure>) {
+      return Err(_selectionContractFailure('selection_input_unavailable'));
+    }
+    final copied =
+        (capturedTargets as Ok<List<SelectionTarget>, SelectionFailure>).value;
+    final membership =
+        (capturedMembership as Ok<Map<ObjectId, LayerId>, SelectionFailure>)
+            .value;
     final empty = copied.isEmpty;
     if (copied.toSet().length != copied.length ||
         (activePageId == null) != empty ||
@@ -357,12 +425,8 @@ final class SelectionState {
         copied.any((target) => target.pageId != activePageId)) {
       return Err(_selectionContractFailure('invalid_selection_state'));
     }
-    final wholeIds = copied
-        .where((target) => target.isWholeObject)
-        .map((target) => target.objectId)
-        .toSet();
-    if (layerMembership.keys.toSet().length != layerMembership.length ||
-        !_setEquals(layerMembership.keys.toSet(), wholeIds) ||
+    final containingObjectIds = copied.map((target) => target.objectId).toSet();
+    if (!_setEquals(membership.keys.toSet(), containingObjectIds) ||
         (!empty && aggregateBounds == null) ||
         (empty && (aggregateBounds != null || transformPreview != null))) {
       return Err(_selectionContractFailure('invalid_selection_derived_state'));
@@ -375,7 +439,7 @@ final class SelectionState {
               preview.targetIds,
               copied.map((target) => target.objectId).toList(),
             ) ||
-            !_mapEquals(preview.targetLayerMembership, layerMembership))) {
+            !_mapEquals(preview.targetLayerMembership, membership))) {
       return Err(_selectionContractFailure('invalid_selection_preview'));
     }
     return Ok(
@@ -385,7 +449,7 @@ final class SelectionState {
         primaryTarget: primaryTarget,
         revision: revision,
         operationMode: operationMode,
-        layerMembership: layerMembership,
+        layerMembership: membership,
         aggregateBounds: aggregateBounds,
         transformPreview: transformPreview,
       ),
@@ -433,6 +497,52 @@ bool _sameExceptTransform(ObjectEnvelope left, ObjectEnvelope right) =>
     left.locked == right.locked &&
     left.payload == right.payload &&
     left.extensionData == right.extensionData;
+
+Result<List<T>, SelectionFailure> _captureSelectionIterable<T>(
+  Iterable<T> source,
+  int maximum,
+  String limitLeaf,
+) {
+  final values = <T>[];
+  try {
+    final iterator = source.iterator;
+    while (iterator.moveNext()) {
+      if (values.length >= maximum) {
+        return Err(_selectionContractFailure(limitLeaf));
+      }
+      values.add(iterator.current);
+    }
+  } on Object {
+    return Err(_selectionContractFailure('collection_unavailable'));
+  }
+  return Ok(List<T>.unmodifiable(values));
+}
+
+Result<Map<K, V>, SelectionFailure> _captureSelectionMap<K, V>(
+  Map<K, V> source,
+  int maximum,
+  String limitLeaf,
+) {
+  final values = <K, V>{};
+  try {
+    final iterator = source.entries.iterator;
+    while (iterator.moveNext()) {
+      if (values.length >= maximum) {
+        return Err(_selectionContractFailure(limitLeaf));
+      }
+      final entry = iterator.current;
+      final key = entry.key;
+      final value = entry.value;
+      if (values.containsKey(key)) {
+        return Err(_selectionContractFailure('duplicate_map_key'));
+      }
+      values[key] = value;
+    }
+  } on Object {
+    return Err(_selectionContractFailure('collection_unavailable'));
+  }
+  return Ok(UnmodifiableMapView<K, V>(values));
+}
 
 bool _setEquals<T>(Set<T> left, Set<T> right) =>
     left.length == right.length && left.containsAll(right);

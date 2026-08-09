@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import 'dart:collection';
+
 import 'package:al_note/core/primitives.dart';
 import 'package:al_note/documents/commands.dart';
 import 'package:al_note/documents/document_model.dart';
@@ -48,8 +50,107 @@ SelectionTarget target(PageId page, int object) => SelectionTarget.wholeObject(
   objectId: ObjectId.fromUuid(testUuid(object)),
 );
 
+const int _maximumTestSelectionTargets = 8;
+
+typedef _SelectionControllerConstructor =
+    SelectionController Function({
+      required ObjectRegistry objectRegistry,
+      required CoalescingBoundarySink coalescingBoundarySink,
+      required int maximumTargets,
+    });
+
 void main() {
   group('temporary Selection', () {
+    test('constructor requires and accepts an explicit practical ceiling', () {
+      const _SelectionControllerConstructor constructor =
+          SelectionController.new;
+      final controller = constructor(
+        objectRegistry: editableTestRegistry(),
+        coalescingBoundarySink: BoundaryRecorder(),
+        maximumTargets: 2,
+      );
+      expect(controller.maximumTargets, 2);
+    });
+
+    test('invalid explicit ceilings fail with one redaction-safe failure', () {
+      SelectionController construct(int maximumTargets) => SelectionController(
+        objectRegistry: editableTestRegistry(),
+        coalescingBoundarySink: BoundaryRecorder(),
+        maximumTargets: maximumTargets,
+      );
+
+      for (final invalid in <int>[
+        0,
+        -1,
+        SelectionController.maximumSupportedTargets + 1,
+        Revision.maximumValue,
+        Revision.maximumValue + 1,
+      ]) {
+        expect(
+          () => construct(invalid),
+          throwsA(
+            isA<SelectionControllerConfigurationException>()
+                .having(
+                  (exception) => exception.failure.code,
+                  'code',
+                  'drawing.selection.invalid_target_limit',
+                )
+                .having(
+                  (exception) => exception.toString(),
+                  'redacted text',
+                  'SelectionFailure(drawing.selection.invalid_target_limit)',
+                ),
+          ),
+        );
+      }
+    });
+
+    test(
+      'explicit ceiling bounds hostile target iterables without state changes',
+      () {
+        final root = phase3Notebook();
+        final page = root.pages.single.id;
+        final controller = SelectionController(
+          objectRegistry: editableTestRegistry(),
+          coalescingBoundarySink: BoundaryRecorder(),
+          maximumTargets: 2,
+        );
+        expect(
+          controller.replace(
+            root: root,
+            targets: [target(page, 1), target(page, 2)],
+          ),
+          isA<Ok<SelectionState, SelectionFailure>>(),
+        );
+        final accepted = controller.state;
+
+        final rejectedTail = _SelectionTailIterable<SelectionTarget>([
+          target(page, 1),
+          target(page, 2),
+        ]);
+        final failures = <Result<SelectionState, SelectionFailure>>[
+          controller.replace(root: root, targets: rejectedTail),
+          controller.add(root: root, targets: [target(page, 3)]),
+          controller.toggle(root: root, targets: [target(page, 3)]),
+          controller.add(
+            root: root,
+            targets: _infiniteTargets(target(page, 1)),
+          ),
+          controller.remove(root: root, targets: _ThrowingSelectionIterable()),
+          controller.toggle(root: root, targets: _ThrowingSelectionIterable()),
+        ];
+
+        expect(rejectedTail.rejectedCurrentRead, isFalse);
+        for (final result in failures) {
+          final failure =
+              (result as Err<SelectionState, SelectionFailure>).error;
+          expect(failure.code, 'drawing.selection.target_limit');
+          expect(failure.toString(), isNot(contains('secret')));
+          expect(identical(controller.state, accepted), isTrue);
+        }
+      },
+    );
+
     test(
       'replace, add, remove, toggle, and clear are ordered and monotonic',
       () {
@@ -59,6 +160,7 @@ void main() {
         final controller = SelectionController(
           objectRegistry: editableTestRegistry(),
           coalescingBoundarySink: barriers,
+          maximumTargets: _maximumTestSelectionTargets,
         );
         expect(
           controller.replace(root: root, targets: [target(page, 1)]),
@@ -91,6 +193,7 @@ void main() {
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: barriers,
+        maximumTargets: _maximumTestSelectionTargets,
       );
       controller.replace(root: root, targets: [target(page, 1)]);
       final revision = controller.state.revision;
@@ -99,12 +202,37 @@ void main() {
       expect(barriers.boundaries, hasLength(1));
     });
 
+    test('clearing temporary Selection never changes document history', () {
+      final coordinator = phase3Coordinator();
+      final before = coordinator.snapshot;
+      final controller = SelectionController(
+        objectRegistry: editableTestRegistry(),
+        coalescingBoundarySink: coordinator,
+        maximumTargets: _maximumTestSelectionTargets,
+      );
+      expect(
+        controller.replace(
+          root: before.root,
+          targets: [target(before.root.pages.single.id, 1)],
+        ),
+        isA<Ok<SelectionState, SelectionFailure>>(),
+      );
+      expect(controller.discard(), isA<Ok<SelectionState, SelectionFailure>>());
+      final after = coordinator.snapshot;
+      expect(controller.state.isEmpty, isTrue);
+      expect(after.root, same(before.root));
+      expect(after.revisions, before.revisions);
+      expect(after.canUndo, before.canUndo);
+      expect(after.canRedo, before.canRedo);
+    });
+
     test('rejects duplicate, cross-Page, and invalid primary inputs', () {
       final root = phase3Notebook();
       final page = root.pages.single.id;
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: BoundaryRecorder(),
+        maximumTargets: _maximumTestSelectionTargets,
       );
       expect(
         controller.replace(
@@ -155,6 +283,7 @@ void main() {
         final controller = SelectionController(
           objectRegistry: pair.$2,
           coalescingBoundarySink: BoundaryRecorder(),
+          maximumTargets: _maximumTestSelectionTargets,
         );
         expect(
           controller.replace(
@@ -172,6 +301,7 @@ void main() {
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: BoundaryRecorder(),
+        maximumTargets: _maximumTestSelectionTargets,
       );
       controller.replace(
         root: root,
@@ -204,6 +334,7 @@ void main() {
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: BoundaryRecorder(),
+        maximumTargets: _maximumTestSelectionTargets,
       );
       expect(
         controller.replace(root: root, targets: [subTarget]),
@@ -220,6 +351,7 @@ void main() {
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: BoundaryRecorder(),
+        maximumTargets: _maximumTestSelectionTargets,
         initialRevision: maximum,
       );
       expect(
@@ -252,6 +384,7 @@ void main() {
           layerMembership: {selected.objectId: layer},
           aggregateBounds: bounds,
           transformPreview: null,
+          maximumTargets: 8,
         ),
         SelectionState.create(
           activePageId: null,
@@ -262,6 +395,7 @@ void main() {
           layerMembership: {selected.objectId: layer},
           aggregateBounds: bounds,
           transformPreview: null,
+          maximumTargets: 8,
         ),
         SelectionState.create(
           activePageId: page,
@@ -272,6 +406,7 @@ void main() {
           layerMembership: {selected.objectId: layer},
           aggregateBounds: bounds,
           transformPreview: null,
+          maximumTargets: 8,
         ),
         SelectionState.create(
           activePageId: page,
@@ -282,6 +417,7 @@ void main() {
           layerMembership: const {},
           aggregateBounds: bounds,
           transformPreview: null,
+          maximumTargets: 8,
         ),
       ];
       expect(
@@ -300,6 +436,7 @@ void main() {
                 layerMembership: memberships,
                 aggregateBounds: bounds,
                 transformPreview: null,
+                maximumTargets: 8,
               )
               as Ok<SelectionState, SelectionFailure>;
       targets.clear();
@@ -328,6 +465,7 @@ void main() {
         final controller = SelectionController(
           objectRegistry: editableTestRegistry(),
           coalescingBoundarySink: sink,
+          maximumTargets: _maximumTestSelectionTargets,
         );
         if (operation != 'replace') {
           controller.replace(
@@ -367,6 +505,7 @@ void main() {
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: sink,
+        maximumTargets: _maximumTestSelectionTargets,
       );
       final before = controller.state;
       final result = controller.replace(
@@ -383,6 +522,7 @@ void main() {
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: sink,
+        maximumTargets: _maximumTestSelectionTargets,
       );
       final page = coordinator.snapshot.root.pages.single.id;
       controller.replace(
@@ -465,6 +605,7 @@ void main() {
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: BoundaryRecorder(),
+        maximumTargets: _maximumTestSelectionTargets,
       );
       final page = original.pages.single.id;
       controller.replace(root: original, targets: [target(page, 1)]);
@@ -503,6 +644,7 @@ void main() {
         final controller = SelectionController(
           objectRegistry: registry,
           coalescingBoundarySink: BoundaryRecorder(),
+          maximumTargets: _maximumTestSelectionTargets,
         );
         expect(
           controller.replace(
@@ -548,6 +690,7 @@ void main() {
         final controller = SelectionController(
           objectRegistry: registry,
           coalescingBoundarySink: BoundaryRecorder(),
+          maximumTargets: _maximumTestSelectionTargets,
         );
         final selection = controller.replace(
           root: root,
@@ -588,6 +731,7 @@ void main() {
         final controller = SelectionController(
           objectRegistry: editableTestRegistry(),
           coalescingBoundarySink: coordinator,
+          maximumTargets: _maximumTestSelectionTargets,
         );
         final snapshot = coordinator.snapshot;
         controller.replace(
@@ -639,6 +783,7 @@ void main() {
         final controller = SelectionController(
           objectRegistry: testRegistry([definition]),
           coalescingBoundarySink: BoundaryRecorder(),
+          maximumTargets: _maximumTestSelectionTargets,
         );
         expect(
           controller.replace(
@@ -658,6 +803,7 @@ void main() {
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: coordinator,
+        maximumTargets: _maximumTestSelectionTargets,
       );
       final page = coordinator.snapshot.root.pages.single.id;
       controller.replace(
@@ -706,6 +852,7 @@ void main() {
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: coordinator,
+        maximumTargets: _maximumTestSelectionTargets,
       );
       final page = coordinator.snapshot.root.pages.single.id;
       controller.replace(
@@ -740,6 +887,7 @@ void main() {
         final controller = SelectionController(
           objectRegistry: editableTestRegistry(),
           coalescingBoundarySink: coordinator,
+          maximumTargets: _maximumTestSelectionTargets,
         );
         final page = coordinator.snapshot.root.pages.single.id;
         controller.replace(
@@ -779,6 +927,7 @@ void main() {
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: coordinator,
+        maximumTargets: _maximumTestSelectionTargets,
       );
       final initial = coordinator.snapshot;
       final page = initial.root.pages.single.id;
@@ -819,6 +968,7 @@ void main() {
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: coordinator,
+        maximumTargets: _maximumTestSelectionTargets,
       );
       final initial = coordinator.snapshot;
       final page = initial.root.pages.single.id;
@@ -871,6 +1021,7 @@ void main() {
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: coordinator,
+        maximumTargets: _maximumTestSelectionTargets,
       );
       final page = root.pages.single.id;
       controller.replace(
@@ -903,6 +1054,7 @@ void main() {
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: coordinator,
+        maximumTargets: _maximumTestSelectionTargets,
       );
       final coalescing = CommandCoalescing(
         mergeKey: commandValue(
@@ -989,6 +1141,7 @@ void main() {
           final controller = SelectionController(
             objectRegistry: editableTestRegistry(),
             coalescingBoundarySink: coordinator,
+            maximumTargets: _maximumTestSelectionTargets,
           );
           controller.replace(root: valid.root, targets: [target(page.id, 1)]);
           final beforeSelection = controller.state;
@@ -1038,6 +1191,7 @@ void main() {
         final movedController = SelectionController(
           objectRegistry: editableTestRegistry(),
           coalescingBoundarySink: coordinator,
+          maximumTargets: _maximumTestSelectionTargets,
         );
         movedController.replace(
           root: valid.root,
@@ -1070,6 +1224,7 @@ void main() {
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: coordinator,
+        maximumTargets: _maximumTestSelectionTargets,
       );
       final snapshot = coordinator.snapshot;
       final page = snapshot.root.pages.single.id;
@@ -1093,6 +1248,7 @@ void main() {
           preconditions: valid.preconditions,
           oldBounds: valid.oldBounds,
           newBounds: valid.newBounds,
+          maximumTargets: 8,
         ),
         isA<Err<WholeObjectTransformPreview, SelectionFailure>>(),
       );
@@ -1108,6 +1264,7 @@ void main() {
           preconditions: RevisionPreconditions(),
           oldBounds: valid.oldBounds,
           newBounds: valid.newBounds,
+          maximumTargets: 8,
         ),
         isA<Err<WholeObjectTransformPreview, SelectionFailure>>(),
       );
@@ -1124,6 +1281,7 @@ void main() {
           },
           aggregateBounds: valid.oldBounds,
           transformPreview: valid,
+          maximumTargets: 8,
         ),
         isA<Err<SelectionState, SelectionFailure>>(),
       );
@@ -1148,6 +1306,7 @@ void main() {
           layerMembership: const {},
           aggregateBounds: valid.oldBounds,
           transformPreview: valid,
+          maximumTargets: 8,
         ),
         isA<Err<SelectionState, SelectionFailure>>(),
       );
@@ -1164,6 +1323,7 @@ void main() {
           preconditions: valid.preconditions,
           oldBounds: valid.oldBounds,
           newBounds: valid.newBounds,
+          maximumTargets: 8,
         ),
         isA<Err<WholeObjectTransformPreview, SelectionFailure>>(),
       );
@@ -1181,6 +1341,7 @@ void main() {
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: coordinator,
+        maximumTargets: _maximumTestSelectionTargets,
       );
       final snapshot = coordinator.snapshot;
       final page = snapshot.root.pages.single;
@@ -1206,6 +1367,7 @@ void main() {
         preconditions: preconditions,
         oldBounds: valid.oldBounds,
         newBounds: valid.newBounds,
+        maximumTargets: 8,
       );
 
       final extraObject = ObjectId.fromUuid(testUuid(997));
@@ -1260,6 +1422,7 @@ void main() {
           layerMembership: wrongMembership,
           aggregateBounds: valid.oldBounds,
           transformPreview: valid,
+          maximumTargets: 8,
         ),
         isA<Err<SelectionState, SelectionFailure>>(),
       );
@@ -1277,6 +1440,79 @@ void main() {
       expect(copied.value.targetLayerMembership, valid.targetLayerMembership);
       expect(copied.value.targetLayerMembership.clear, throwsUnsupportedError);
     });
+
+    test(
+      'public Selection factories bound hostile collections incrementally',
+      () {
+        final coordinator = phase3Coordinator();
+        final controller = SelectionController(
+          objectRegistry: editableTestRegistry(),
+          coalescingBoundarySink: coordinator,
+          maximumTargets: _maximumTestSelectionTargets,
+        );
+        final snapshot = coordinator.snapshot;
+        final page = snapshot.root.pages.single;
+        controller.replace(root: snapshot.root, targets: [target(page.id, 1)]);
+        controller.beginTransform(
+          document: snapshot,
+          operation: TranslationTransformOperation2D(
+            modelValue(Vector2.create(x: 1, y: 0)),
+          ),
+        );
+        final valid = controller.state.transformPreview!;
+        final tail = _SelectionTailIterable<ObjectId>(valid.targetIds);
+        expect(
+          WholeObjectTransformPreview.create(
+            documentId: valid.documentId,
+            pageId: valid.pageId,
+            targetIds: tail,
+            operation: valid.operation,
+            baseObjects: valid.baseObjects,
+            candidateObjects: valid.candidateObjects,
+            targetLayerMembership: valid.targetLayerMembership,
+            preconditions: valid.preconditions,
+            oldBounds: valid.oldBounds,
+            newBounds: valid.newBounds,
+            maximumTargets: 1,
+          ),
+          isA<Err<WholeObjectTransformPreview, SelectionFailure>>(),
+        );
+        expect(tail.rejectedCurrentRead, isFalse);
+        expect(
+          WholeObjectTransformPreview.create(
+            documentId: valid.documentId,
+            pageId: valid.pageId,
+            targetIds: valid.targetIds,
+            operation: valid.operation,
+            baseObjects: _ThrowingEntriesMap<ObjectId, ObjectEnvelope>(),
+            candidateObjects: valid.candidateObjects,
+            targetLayerMembership: valid.targetLayerMembership,
+            preconditions: valid.preconditions,
+            oldBounds: valid.oldBounds,
+            newBounds: valid.newBounds,
+            maximumTargets: 1,
+          ),
+          isA<Err<WholeObjectTransformPreview, SelectionFailure>>(),
+        );
+        final accepted = SelectionState.create(
+          activePageId: page.id,
+          targets: controller.state.targets,
+          primaryTarget: controller.state.primaryTarget,
+          revision: controller.state.revision,
+          operationMode: controller.state.operationMode,
+          layerMembership: controller.state.layerMembership,
+          aggregateBounds: controller.state.aggregateBounds,
+          transformPreview: controller.state.transformPreview,
+          maximumTargets: 1,
+        );
+        expect(accepted, isA<Ok<SelectionState, SelectionFailure>>());
+        expect(
+          () => (accepted as Ok<SelectionState, SelectionFailure>).value.targets
+              .clear(),
+          throwsUnsupportedError,
+        );
+      },
+    );
   });
 }
 
@@ -1303,6 +1539,63 @@ AtomicWholeObjectTransformRequest transformRequestForSelectionTest(
       operation: operation,
     ),
   );
+}
+
+final class _SelectionTailIterable<T> extends Iterable<T> {
+  _SelectionTailIterable(this.values);
+  final List<T> values;
+  bool rejectedCurrentRead = false;
+
+  @override
+  int get length => throw StateError('untrusted length');
+
+  @override
+  Iterator<T> get iterator => _SelectionTailIterator<T>(this);
+}
+
+final class _SelectionTailIterator<T> implements Iterator<T> {
+  _SelectionTailIterator(this.owner);
+  final _SelectionTailIterable<T> owner;
+  var index = -1;
+
+  @override
+  bool moveNext() => ++index <= owner.values.length;
+
+  @override
+  T get current {
+    if (index >= owner.values.length) {
+      owner.rejectedCurrentRead = true;
+      throw StateError('secret rejected current');
+    }
+    return owner.values[index];
+  }
+}
+
+Iterable<SelectionTarget> _infiniteTargets(SelectionTarget value) sync* {
+  while (true) {
+    yield value;
+  }
+}
+
+final class _ThrowingSelectionIterable extends Iterable<SelectionTarget> {
+  @override
+  Iterator<SelectionTarget> get iterator =>
+      throw StateError('secret target iterable');
+}
+
+final class _ThrowingEntriesMap<K, V> extends MapBase<K, V> {
+  @override
+  Iterable<MapEntry<K, V>> get entries => throw StateError('secret entries');
+  @override
+  V? operator [](Object? key) => null;
+  @override
+  void operator []=(K key, V value) => throw UnsupportedError('immutable');
+  @override
+  void clear() => throw UnsupportedError('immutable');
+  @override
+  Iterable<K> get keys => const Iterable.empty();
+  @override
+  V? remove(Object? key) => null;
 }
 
 const _appearanceChange = ObjectReplacementChangeCategories(
