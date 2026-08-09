@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import 'dart:async';
-
 import 'package:flutter/services.dart';
 
 import '../../core/geometry/geometry_values.dart';
@@ -30,53 +28,6 @@ import 'phase6_diagnostics.dart';
 abstract interface class Phase6DebugClipboard {
   /// Copies bounded diagnostic [text] and returns only structured evidence.
   Future<Result<void, StructuredFailure>> copyText(String text);
-}
-
-/// Injected, exception-contained boundary for cooperative Canvas work.
-///
-/// Implementations must schedule [task] on the event queue, never as a
-/// synchronous callback or microtask.
-abstract interface class Phase6CooperativeTaskScheduler {
-  /// Schedules one bounded task and returns fixed structured evidence.
-  Result<Phase6CooperativeTaskHandle, StructuredFailure> schedule(
-    void Function() task,
-  );
-}
-
-/// Owned cancellation authority for one scheduled cooperative task.
-abstract interface class Phase6CooperativeTaskHandle {
-  /// Cancels the task if it has not begun; repeated cancellation is harmless.
-  void cancel();
-}
-
-/// Production cooperative scheduler backed by the Dart event queue.
-final class Phase6EventLoopTaskScheduler
-    implements Phase6CooperativeTaskScheduler {
-  /// Creates the stateless production scheduler.
-  const Phase6EventLoopTaskScheduler();
-
-  @override
-  Result<Phase6CooperativeTaskHandle, StructuredFailure> schedule(
-    void Function() task,
-  ) {
-    try {
-      return Ok(_Phase6TimerTaskHandle(Timer(Duration.zero, task)));
-    } on Object {
-      return Err(_failure('cooperative_schedule_failed'));
-    }
-  }
-}
-
-final class _Phase6TimerTaskHandle implements Phase6CooperativeTaskHandle {
-  _Phase6TimerTaskHandle(this._timer);
-
-  Timer? _timer;
-
-  @override
-  void cancel() {
-    _timer?.cancel();
-    _timer = null;
-  }
 }
 
 /// Injectable accounting evidence for Canvas-owned native pictures.
@@ -196,19 +147,6 @@ final class Phase6CanvasRuntime {
     required this.maximumListeners,
     required this.maximumPenSamples,
     required this.maximumEraserPoints,
-    required this.maximumEraserIntersections,
-    required this.maximumEraserFragments,
-    required this.maximumEraserOutputSamples,
-    required this.maximumEraserClassificationChecks,
-    required this.maximumEraserBatchCandidateSegments,
-    required this.maximumEraserBatchClassifications,
-    required this.maximumEraserBatchClassificationChecks,
-    required this.maximumEraserBatchRootIsolationAdvances,
-    required this.maximumEraserBatchFeatureTransitions,
-    required this.maximumEraserExactSliceMicros,
-    required this.maximumEraserActiveExactSliceMicros,
-    required this.cooperativeTaskScheduler,
-    required this.maximumEraserVisualPictures,
     required this.diagnosticTrace,
     required this.debugClipboard,
     required this.nativePictureObserver,
@@ -236,19 +174,6 @@ final class Phase6CanvasRuntime {
     required int maximumListeners,
     required int maximumPenSamples,
     required int maximumEraserPoints,
-    required int maximumEraserIntersections,
-    required int maximumEraserFragments,
-    required int maximumEraserOutputSamples,
-    required int maximumEraserClassificationChecks,
-    required int maximumEraserBatchCandidateSegments,
-    required int maximumEraserBatchClassifications,
-    required int maximumEraserBatchClassificationChecks,
-    required int maximumEraserBatchRootIsolationAdvances,
-    required int maximumEraserBatchFeatureTransitions,
-    required int maximumEraserExactSliceMicros,
-    required int maximumEraserActiveExactSliceMicros,
-    required Phase6CooperativeTaskScheduler cooperativeTaskScheduler,
-    required int maximumEraserVisualPictures,
     required Phase6DiagnosticTrace diagnosticTrace,
     required Phase6DebugClipboard debugClipboard,
     required Phase6NativePictureObserver nativePictureObserver,
@@ -268,18 +193,6 @@ final class Phase6CanvasRuntime {
       maximumListeners,
       maximumPenSamples,
       maximumEraserPoints,
-      maximumEraserIntersections,
-      maximumEraserFragments,
-      maximumEraserOutputSamples,
-      maximumEraserClassificationChecks,
-      maximumEraserBatchCandidateSegments,
-      maximumEraserBatchClassifications,
-      maximumEraserBatchClassificationChecks,
-      maximumEraserBatchRootIsolationAdvances,
-      maximumEraserBatchFeatureTransitions,
-      maximumEraserExactSliceMicros,
-      maximumEraserActiveExactSliceMicros,
-      maximumEraserVisualPictures,
     ];
     final requiredElements = _multiplyCost(
       maximumPenSamples,
@@ -307,21 +220,16 @@ final class Phase6CanvasRuntime {
     if (ceilings.any((value) => value <= 0 || value > Revision.maximumValue) ||
         maximumRenderingDefinitions < 1 ||
         maximumHitTestingDefinitions < 1 ||
-        maximumTools < 4 ||
-        maximumActions < 4 ||
-        maximumBindings < 9 ||
+        maximumTools < 3 ||
+        maximumActions < 3 ||
+        maximumBindings < 7 ||
         maximumPenSamples > handwritingLimits.maximumSamplesPerStroke ||
         requiredElements == null ||
         requiredElements - 1 > geometryLimits.maximumElements ||
         requiredVertices == null ||
         requiredVertices > geometryLimits.maximumVertices ||
         renderingLimits.maximumPointsPerPrimitive <
-            geometryLimits.ellipseVertexCount ||
-        maximumEraserBatchFeatureTransitions <
-            geometryLimits.ellipseVertexCount * 2 ||
-        maximumEraserVisualPictures > maximumEraserPoints ||
-        maximumEraserVisualPictures <
-            _requiredVisualPictureLevels(maximumEraserPoints)) {
+            geometryLimits.ellipseVertexCount) {
       return Err(_failure('invalid_limits'));
     }
     final geometry = StrokeGeometryResolver(geometryLimits);
@@ -483,24 +391,6 @@ final class Phase6CanvasRuntime {
         maximumListeners: maximumListeners,
         maximumPenSamples: maximumPenSamples,
         maximumEraserPoints: maximumEraserPoints,
-        maximumEraserIntersections: maximumEraserIntersections,
-        maximumEraserFragments: maximumEraserFragments,
-        maximumEraserOutputSamples: maximumEraserOutputSamples,
-        maximumEraserClassificationChecks: maximumEraserClassificationChecks,
-        maximumEraserBatchCandidateSegments:
-            maximumEraserBatchCandidateSegments,
-        maximumEraserBatchClassifications: maximumEraserBatchClassifications,
-        maximumEraserBatchClassificationChecks:
-            maximumEraserBatchClassificationChecks,
-        maximumEraserBatchRootIsolationAdvances:
-            maximumEraserBatchRootIsolationAdvances,
-        maximumEraserBatchFeatureTransitions:
-            maximumEraserBatchFeatureTransitions,
-        maximumEraserExactSliceMicros: maximumEraserExactSliceMicros,
-        maximumEraserActiveExactSliceMicros:
-            maximumEraserActiveExactSliceMicros,
-        cooperativeTaskScheduler: cooperativeTaskScheduler,
-        maximumEraserVisualPictures: maximumEraserVisualPictures,
         diagnosticTrace: diagnosticTrace,
         debugClipboard: debugClipboard,
         nativePictureObserver: nativePictureObserver,
@@ -538,44 +428,6 @@ final class Phase6CanvasRuntime {
   final int maximumListeners;
   final int maximumPenSamples;
   final int maximumEraserPoints;
-  final int maximumEraserIntersections;
-  final int maximumEraserFragments;
-  final int maximumEraserOutputSamples;
-  final int maximumEraserClassificationChecks;
-
-  /// Candidate source-segment work allowed in one UI processing batch.
-  final int maximumEraserBatchCandidateSegments;
-
-  /// Interval classifications allowed in one UI processing batch.
-  final int maximumEraserBatchClassifications;
-
-  /// Direct classification checks allowed in one UI processing batch.
-  final int maximumEraserBatchClassificationChecks;
-
-  /// Root-isolation brackets that one exact-finalization frame may advance.
-  final int maximumEraserBatchRootIsolationAdvances;
-
-  /// Fixed-size geometry features one exact-finalization frame may traverse.
-  final int maximumEraserBatchFeatureTransitions;
-
-  /// Soft responsiveness budget for one exact-finalization callback.
-  ///
-  /// Correctness never depends on elapsed time: reaching this budget only
-  /// yields owned resumable state to a later frame. Deterministic primitive
-  /// ceilings remain the hard work boundary.
-  final int maximumEraserExactSliceMicros;
-
-  /// Soft low-priority exact-work budget while a gesture remains active.
-  ///
-  /// Work runs only from a separately scheduled post-frame callback after
-  /// cursor and transparent-mask painting have no pending requests.
-  final int maximumEraserActiveExactSliceMicros;
-
-  /// Event-queue boundary used to cooperatively drain post-release exact work.
-  final Phase6CooperativeTaskScheduler cooperativeTaskScheduler;
-
-  /// Maximum retained native visual-mask pictures during one Eraser gesture.
-  final int maximumEraserVisualPictures;
 
   /// Injected bounded debug/test diagnostic trace.
   final Phase6DiagnosticTrace diagnosticTrace;
@@ -597,16 +449,6 @@ final class Phase6CanvasRuntime {
     retainedCostEstimator: historyCostEstimator,
     maximumListeners: maximumListeners,
   );
-}
-
-int _requiredVisualPictureLevels(int maximumPoints) {
-  const chunkSize = 64;
-  final chunks = maximumPoints ~/ chunkSize;
-  var levels = 0;
-  for (var remaining = chunks; remaining > 0; remaining >>= 1) {
-    levels += 1;
-  }
-  return levels == 0 ? 1 : levels;
 }
 
 final class _DefaultPhase6ReopenGateway implements Phase6ReopenGateway {
@@ -715,7 +557,7 @@ _RuntimeComponents? _createRuntimeComponents({
     maximumDefinitions: maximumHitTestingDefinitions,
     maximumBehaviorResults: maximumHitBehaviorResults,
   ).fold<HitTestingRegistry?>(onOk: (value) => value, onErr: (_) => null);
-  const toolNames = ['pen', 'wholeeraser', 'partialeraser', 'selection'];
+  const toolNames = ['pen', 'wholeeraser', 'selection'];
   final tools = <ToolDefinition>[];
   final actions = <InteractionActionDefinition>[];
   final bindings = <InteractionBinding>[];
@@ -976,7 +818,6 @@ int? _multiplyCost(int left, int right, int maximum) {
 
 String _displayToolName(String stable) => switch (stable) {
   'wholeeraser' => 'wholeEraser',
-  'partialeraser' => 'partialEraser',
   _ => stable,
 };
 

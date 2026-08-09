@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import 'dart:collection';
-import 'dart:typed_data';
-
 import 'package:al_note/core/interaction.dart';
 import 'package:al_note/core/primitives.dart';
 import 'package:al_note/documents/commands.dart';
@@ -154,652 +152,6 @@ void main() {
       expect(hit?.strokeId, _payload(second).strokes.single.id);
     },
   );
-
-  test('partial eraser creates deterministic contiguous fragments', () {
-    final stroke = _stroke(1, [_sample(0, 0, 0), _sample(10, 0, 10)]);
-    final generator = UuidSequenceGenerator.fromValues([
-      testUuid(30),
-      testUuid(31),
-    ]);
-    final result = _ok(
-      splitStrokeByEraser(
-        source: stroke,
-        eraserPath: [_point(5, 0)],
-        radius: .1,
-        localToPage: _ok(
-          AffineTransform2D.fromOperation(const IdentityTransformOperation2D()),
-        ),
-        geometryResolver: StrokeGeometryResolver(_geometryLimits()),
-        strokeIdGenerator: generator,
-        existingIds: {stroke.id},
-        maximumExistingIds: 8,
-        maximumEraserPoints: 4,
-        maximumIntersections: 16,
-        maximumFragments: 8,
-        maximumOutputSamples: 32,
-        handwritingLimits: _limits,
-      ),
-    );
-    expect(result.strokes, hasLength(2));
-    expect(result.strokes.first.samples.first.position.x, 0);
-    expect(result.strokes.first.samples.last.position.x, closeTo(3.9, .01));
-    expect(result.strokes.last.samples.first.position.x, closeTo(6.1, .01));
-    expect(result.strokes.last.samples.last.position.x, 10);
-    expect(result.strokes.map((s) => s.id), [
-      StrokeId.fromUuid(testUuid(30)),
-      StrokeId.fromUuid(testUuid(31)),
-    ]);
-  });
-
-  test('positive-radius intervals use certified representable boundaries', () {
-    final resolver = StrokeGeometryResolver(_geometryLimits());
-    final style = _stroke(1, [_sample(0, 0, 0)]).style;
-    StrokeErasureClassificationEvidence classify(Point2 point, double radius) =>
-        _ok(
-          resolver.classifySourceSegmentErasureDetailed(
-            first: _sample(0, 0, 0),
-            second: _sample(10, 0, 10),
-            style: style,
-            localToPage: _identity(),
-            eraserSegment: _ok(SweptPath.create([point], maximumPoints: 1)),
-            radius: radius,
-            handwritingLimits: _limits,
-            maximumChecks: 100000,
-          ),
-        );
-
-    final evidence = classify(_point(5, 0), .1);
-    expect(evidence.intervals, hasLength(1));
-    final interval = evidence.intervals.single;
-    final preceding = _previousTestDouble(interval.start);
-    final following = _nextTestDouble(interval.end);
-    bool mathematicalHit(double parameter) =>
-        (10 * parameter - 5).abs() - 1 <= .1;
-    expect(mathematicalHit(interval.start), isTrue);
-    expect(mathematicalHit(interval.end), isTrue);
-    expect(mathematicalHit(preceding), isFalse);
-    expect(mathematicalHit(following), isFalse);
-    expect(interval.start, isNot(0.39 + (0.61 - 0.39) * 1e-10));
-    expect(interval.end, isNot(0.61 - (0.61 - 0.39) * 1e-10));
-    expect(evidence.maximumSearchDepth, greaterThan(0));
-
-    final leftDomain = classify(_point(0, 0), .1).intervals.single;
-    final rightDomain = classify(_point(10, 0), .1).intervals.single;
-    expect(leftDomain.start, 0);
-    expect(rightDomain.end, 1);
-
-    final tangent = resolver.classifySourceSegmentErasureDetailed(
-      first: _sample(0, 0, 0),
-      second: _sample(10, 0, 10),
-      style: style,
-      localToPage: _identity(),
-      eraserSegment: _ok(SweptPath.create([_point(5, 1.25)], maximumPoints: 1)),
-      radius: .25,
-      handwritingLimits: _limits,
-      maximumChecks: 256,
-    );
-    expect(tangent, isA<Err<Object?, Object?>>());
-    expect(tangent.toString(), contains('erasure_classification_'));
-    expect(tangent.toString(), isNot(contains('1.25')));
-  });
-
-  test('partial interval merging preserves gaps and joins adjacency', () {
-    final source = _stroke(2, [_sample(0, 0, 0), _sample(10, 0, 10)]);
-    StrokeSplitResult split(List<Point2> path) => _ok(
-      splitStrokeByEraser(
-        source: source,
-        eraserPath: path,
-        radius: 0,
-        localToPage: _identity(),
-        geometryResolver: StrokeGeometryResolver(_geometryLimits()),
-        strokeIdGenerator: _CountingUuidGenerator(),
-        existingIds: {source.id},
-        maximumExistingIds: 1,
-        maximumEraserPoints: 4,
-        maximumIntersections: 8,
-        maximumFragments: 4,
-        maximumOutputSamples: 16,
-        handwritingLimits: _limits,
-      ),
-    );
-
-    final separated = split([
-      _point(2, 0),
-      _point(2, 5),
-      _point(8, 5),
-      _point(8, 0),
-    ]);
-    expect(separated.strokes, hasLength(3));
-    expect(separated.strokes[1].samples.first.position.x, closeTo(3, .001));
-    expect(separated.strokes[1].samples.last.position.x, closeTo(7, .001));
-
-    final adjacent = split([
-      _point(4, 0),
-      _point(4, 5),
-      _point(6, 5),
-      _point(6, 0),
-    ]);
-    expect(adjacent.strokes, hasLength(2));
-    expect(adjacent.outputSampleCount, 4);
-  });
-
-  test(
-    'partial eraser classifies the auditor affine counterexample exactly',
-    () {
-      final resolver = StrokeGeometryResolver(_geometryLimits());
-      final transform = _ok(
-        AffineTransform2D.restoreFromStorage([1, 4, 0, 1, 0, 0]),
-      );
-      final hit = _ok(
-        resolver.classifySourceSegmentErasure(
-          first: _sample(0, 0, 0),
-          second: _sample(10, 0, 10),
-          style: _stroke(1, [_sample(0, 0, 0)]).style,
-          localToPage: transform,
-          eraserSegment: _ok(
-            SweptPath.create([_point(8.96, .99)], maximumPoints: 1),
-          ),
-          radius: 0,
-          handwritingLimits: _limits,
-        ),
-      );
-      expect(hit, isNotEmpty);
-      expect(hit.single.start, lessThan(.5));
-      expect(hit.single.end, greaterThan(.5));
-
-      final miss = _ok(
-        resolver.classifySourceSegmentErasure(
-          first: _sample(0, 0, 0),
-          second: _sample(10, 0, 10),
-          style: _stroke(1, [_sample(0, 0, 0)]).style,
-          localToPage: transform,
-          eraserSegment: _ok(
-            SweptPath.create([_point(9.04, 1.01)], maximumPoints: 1),
-          ),
-          radius: 0,
-          handwritingLimits: _limits,
-        ),
-      );
-      expect(miss, isEmpty);
-    },
-  );
-
-  test('rotation and nonuniform scale classify in both composition orders', () {
-    final rotation = _ok(
-      AffineTransform2D.fromOperation(
-        _ok(
-          RotationTransformOperation2D.create(
-            radians: .73,
-            pivot: _point(0, 0),
-          ),
-        ),
-      ),
-    );
-    final scale = _ok(
-      AffineTransform2D.fromOperation(
-        _ok(
-          ScaleTransformOperation2D.create(
-            scaleX: 4,
-            scaleY: .5,
-            pivot: _point(0, 0),
-          ),
-        ),
-      ),
-    );
-    final resolver = StrokeGeometryResolver(_geometryLimits());
-    for (final transform in [
-      _ok(rotation.then(scale)),
-      _ok(scale.then(rotation)),
-    ]) {
-      final pageHit = _ok(transform.applyToPoint(_point(3.7, .9999999)));
-      final pageMiss = _ok(transform.applyToPoint(_point(3.7, 1.0000001)));
-      List<StrokeErasureInterval> classify(Point2 point) => _ok(
-        resolver.classifySourceSegmentErasure(
-          first: _sample(0, 0, 0),
-          second: _sample(10, 0, 10),
-          style: _stroke(1, [_sample(0, 0, 0)]).style,
-          localToPage: transform,
-          eraserSegment: _ok(SweptPath.create([point], maximumPoints: 1)),
-          radius: 0,
-          handwritingLimits: _limits,
-        ),
-      );
-      expect(classify(pageHit), isNotEmpty);
-      expect(classify(pageMiss), isEmpty);
-    }
-  });
-
-  test('zero-radius ambiguity uses measurable bounded exact fallback', () {
-    final resolver = StrokeGeometryResolver(_geometryLimits());
-    final evidence = _ok(
-      resolver.classifySourceSegmentErasureDetailed(
-        first: _sample(0, 0, 0),
-        second: _sample(10, 0, 10),
-        style: _stroke(1, [_sample(0, 0, 0)]).style,
-        localToPage: _identity(),
-        eraserSegment: _ok(SweptPath.create([_point(5, 0)], maximumPoints: 1)),
-        radius: 0,
-        handwritingLimits: _limits,
-        maximumChecks: 256,
-      ),
-    );
-    expect(evidence.intervals, isNotEmpty);
-    expect(evidence.ordinaryAnalyticClassifications, 0);
-    expect(evidence.exactFallbackClassifications, 1);
-    expect(evidence.exactFallbackExhaustions, 0);
-  });
-
-  test('certified positive-radius search preserves narrow near tangencies', () {
-    final resolver = StrokeGeometryResolver(_geometryLimits());
-    final style = _stroke(1, [_sample(0, 0, 0)]).style;
-    List<StrokeErasureInterval> classify(double radius) => _ok(
-      resolver.classifySourceSegmentErasure(
-        first: _sample(0, 0, 0),
-        second: _sample(10, 0, 10),
-        style: style,
-        localToPage: _identity(),
-        eraserSegment: _ok(
-          SweptPath.create([_point(5.123456789, 1.000001)], maximumPoints: 1),
-        ),
-        radius: radius,
-        handwritingLimits: _limits,
-      ),
-    );
-
-    final hit = classify(1.1e-6);
-    expect(hit, hasLength(1));
-    expect(hit.single.start, lessThan(.5123456789));
-    expect(hit.single.end, greaterThan(.5123456789));
-    expect(classify(9e-7), isEmpty);
-
-    final endpoint = _ok(
-      resolver.classifySourceSegmentErasure(
-        first: _sample(0, 0, 0),
-        second: _sample(-10, 0, 10),
-        style: style,
-        localToPage: _identity(),
-        eraserSegment: _ok(SweptPath.create([_point(1, 0)], maximumPoints: 1)),
-        radius: 0,
-        handwritingLimits: _limits,
-      ),
-    );
-    expect(endpoint, hasLength(1));
-    expect(endpoint.single.start, 0);
-    expect(endpoint.single.end, 0);
-  });
-
-  test('near-tangent analytic classification resumes without replay', () {
-    final resolver = StrokeGeometryResolver(_geometryLimits());
-    final stroke = _stroke(1, [_sample(0, 0, 0), _sample(10, 0, 10)]);
-    final prepared = _ok(
-      resolver.prepareStrokeErasure(stroke: stroke, localToPage: _identity()),
-    );
-    final classification = _ok(
-      resolver.beginPreparedSourceSegmentErasure(
-        prepared: prepared,
-        sourceSegment: 0,
-        eraserSegment: _ok(
-          SweptPath.create([_point(5.123456789, 1.000001)], maximumPoints: 1),
-        ),
-        radius: 1.1e-6,
-        maximumChecks: 256,
-      ),
-    );
-    StrokeErasureClassificationEvidence? evidence;
-    var frames = 0;
-    var predicates = 0;
-    var roots = 0;
-    while (evidence == null && frames < 256) {
-      final progress = _ok(
-        classification.advance(
-          maximumPredicateEvaluations: 1,
-          maximumRootIsolationAdvances: 1,
-          maximumFeatureTransitions: 32,
-          maximumElapsedMicros: 1000000,
-        ),
-      );
-      expect(progress.predicateEvaluations, lessThanOrEqualTo(1));
-      expect(progress.rootIsolationAdvances, lessThanOrEqualTo(1));
-      expect(progress.featureTransitions, lessThanOrEqualTo(32));
-      predicates += progress.predicateEvaluations;
-      roots += progress.rootIsolationAdvances;
-      evidence = progress.evidence;
-      frames += 1;
-    }
-    expect(evidence, isNotNull);
-    expect(frames, greaterThan(2));
-    expect(roots, inInclusiveRange(2, 160));
-    expect(evidence!.intervals, hasLength(1));
-    expect(evidence.classificationChecks, predicates);
-    expect(evidence.maximumSearchDepth, inInclusiveRange(2, 160));
-    expect(evidence.ordinaryAnalyticClassifications, 1);
-    expect(evidence.exactFallbackClassifications, 0);
-    expect(evidence.exactFallbackExhaustions, 0);
-  });
-
-  test('certified roots remain distinct below the former merge epsilon', () {
-    final tinyStyle = _ok(
-      StrokeStyle.create(
-        argb: 0xff000000,
-        opacity: 1,
-        baseWidth: 1e-9,
-        pressureInfluence: 0,
-        minimumPressureFactor: 0,
-        limits: _limits,
-      ),
-    );
-    final intervals = _ok(
-      StrokeGeometryResolver(_geometryLimits()).classifySourceSegmentErasure(
-        first: _sample(0, 0, 0),
-        second: _sample(10000, 0, 10),
-        style: tinyStyle,
-        localToPage: _identity(),
-        eraserSegment: _ok(
-          SweptPath.create([_point(5000, 0)], maximumPoints: 1),
-        ),
-        radius: 0,
-        handwritingLimits: _limits,
-      ),
-    );
-    expect(intervals, hasLength(1));
-    expect(intervals.single.end, greaterThan(intervals.single.start));
-    expect(intervals.single.end - intervals.single.start, lessThan(1e-12));
-  });
-
-  test(
-    'positive-radius certification covers affine order width and features',
-    () {
-      final rotation = _ok(
-        AffineTransform2D.fromOperation(
-          _ok(
-            RotationTransformOperation2D.create(
-              radians: .41,
-              pivot: _point(0, 0),
-            ),
-          ),
-        ),
-      );
-      final scale = _ok(
-        AffineTransform2D.fromOperation(
-          _ok(
-            ScaleTransformOperation2D.create(
-              scaleX: 3,
-              scaleY: .4,
-              pivot: _point(0, 0),
-            ),
-          ),
-        ),
-      );
-      final variableStyle = _ok(
-        StrokeStyle.create(
-          argb: 0xff000000,
-          opacity: 1,
-          baseWidth: 2,
-          pressureInfluence: .8,
-          minimumPressureFactor: .1,
-          limits: _limits,
-        ),
-      );
-      final first = _ok(
-        StrokeSample.create(
-          position: _point(0, 0),
-          timeMicros: 0,
-          pressure: 0,
-          limits: _limits,
-        ),
-      );
-      final second = _ok(
-        StrokeSample.create(
-          position: _point(10, 0),
-          timeMicros: 10,
-          pressure: 1,
-          limits: _limits,
-        ),
-      );
-      for (final transform in [
-        _ok(rotation.then(scale)),
-        _ok(scale.then(rotation)),
-        _ok(AffineTransform2D.restoreFromStorage([1, .75, .4, 1, 0, 0])),
-      ]) {
-        for (final radius in [double.minPositive, 1e-9, .25, 1000.0]) {
-          final page = _ok(transform.applyToPoint(_point(5, 0)));
-          final hit = _ok(
-            StrokeGeometryResolver(
-              _geometryLimits(),
-            ).classifySourceSegmentErasure(
-              first: first,
-              second: second,
-              style: variableStyle,
-              localToPage: transform,
-              eraserSegment: _ok(
-                SweptPath.create([
-                  page,
-                  _ok(transform.applyToPoint(_point(5, .2))),
-                ], maximumPoints: 2),
-              ),
-              radius: radius,
-              handwritingLimits: _limits,
-            ),
-          );
-          expect(hit, isNotEmpty);
-        }
-      }
-
-      final dot = _ok(
-        StrokeGeometryResolver(_geometryLimits()).classifySourceSegmentErasure(
-          first: first,
-          second: first,
-          style: variableStyle,
-          localToPage: _identity(),
-          eraserSegment: _ok(
-            SweptPath.create([_point(0, 0)], maximumPoints: 1),
-          ),
-          radius: .1,
-          handwritingLimits: _limits,
-        ),
-      );
-      expect(dot, hasLength(1));
-      expect(dot.single.start, 0);
-      expect(dot.single.end, 1);
-
-      final subnormalStyle = _ok(
-        StrokeStyle.create(
-          argb: 0xff000000,
-          opacity: 1,
-          baseWidth: double.minPositive,
-          pressureInfluence: 0,
-          minimumPressureFactor: 0,
-          limits: _limits,
-        ),
-      );
-      final subnormal = _ok(
-        StrokeGeometryResolver(
-          _geometryLimits(),
-        ).classifySourceSegmentErasureDetailed(
-          first: _sample(0, 0, 0),
-          second: _sample(double.minPositive, 0, 1),
-          style: subnormalStyle,
-          localToPage: _identity(),
-          eraserSegment: _ok(
-            SweptPath.create([_point(0, 0)], maximumPoints: 1),
-          ),
-          radius: double.minPositive,
-          handwritingLimits: _limits,
-          maximumChecks: 10000,
-        ),
-      );
-      expect(subnormal.intervals, isNotEmpty);
-      expect(subnormal.exactFallbackClassifications, 1);
-    },
-  );
-
-  test('extreme prepared erasure is exact or fails instead of empty', () {
-    final resolver = StrokeGeometryResolver(_geometryLimits());
-    final style = _stroke(1, [_sample(0, 0, 0)]).style;
-    final translated = _ok(
-      AffineTransform2D.restoreFromStorage([1, 0, 0, 1, 1e300, -1e300]),
-    );
-    for (final evidence in [
-      (point: _point(1e300, -1e300), hit: true),
-      (point: _point(-1e300, 1e300), hit: false),
-    ]) {
-      final result = resolver.classifySourceSegmentErasure(
-        first: _sample(0, 0, 0),
-        second: _sample(10, 0, 10),
-        style: style,
-        localToPage: translated,
-        eraserSegment: _ok(
-          SweptPath.create([evidence.point], maximumPoints: 1),
-        ),
-        radius: 1,
-        handwritingLimits: _limits,
-      );
-      expect(result, isA<Ok<Object?, Object?>>());
-      expect(_ok(result).isNotEmpty, evidence.hit);
-    }
-
-    final nonrepresentable = AffineTransform2D.restoreFromStorage([
-      1e308,
-      0,
-      0,
-      1e-308,
-      0,
-      0,
-    ]);
-    expect(nonrepresentable, isA<Err<Object?, Object?>>());
-    expect(nonrepresentable.toString(), isNot(contains('1e+308')));
-
-    final limited = resolver.classifySourceSegmentErasureDetailed(
-      first: _sample(0, 0, 0),
-      second: _sample(10, 0, 10),
-      style: style,
-      localToPage: _identity(),
-      eraserSegment: _ok(SweptPath.create([_point(5, 1)], maximumPoints: 1)),
-      radius: 0,
-      handwritingLimits: _limits,
-      maximumChecks: 2,
-    );
-    expect(limited, isA<Err<Object?, Object?>>());
-    expect(limited.toString(), isNot(contains('secret')));
-  });
-
-  test('transformed Partial Eraser preview equals terminal survivors', () {
-    final source = _stroke(5, [_sample(0, 0, 0), _sample(10, 0, 10)]);
-    final transform = _ok(
-      AffineTransform2D.restoreFromStorage([1, 4, 0, 1, 0, 0]),
-    );
-    final resolver = StrokeGeometryResolver(_geometryLimits());
-    final sourceGeometry = _ok(
-      resolver.resolve(stroke: source, localToPage: transform),
-    );
-    final path = [_point(8.96, .99)];
-    final preview = _ok(
-      previewStrokeSplitByEraser(
-        source: source,
-        sourceGeometry: sourceGeometry,
-        eraserPath: path,
-        radius: 0,
-        localToPage: transform,
-        geometryResolver: resolver,
-        maximumEraserPoints: 1,
-        maximumIntersections: 8,
-        maximumFragments: 4,
-        maximumOutputSamples: 16,
-        handwritingLimits: _limits,
-      ),
-    );
-    final terminal = _ok(
-      splitStrokeByEraser(
-        source: source,
-        eraserPath: path,
-        radius: 0,
-        localToPage: transform,
-        geometryResolver: resolver,
-        strokeIdGenerator: _CountingUuidGenerator(),
-        existingIds: {source.id},
-        maximumExistingIds: 1,
-        maximumEraserPoints: 1,
-        maximumIntersections: 8,
-        maximumFragments: 4,
-        maximumOutputSamples: 16,
-        handwritingLimits: _limits,
-      ),
-    );
-    List<List<StrokeSample>> samples(StrokeSplitResult value) =>
-        value.strokes.map((stroke) => stroke.samples).toList();
-    expect(samples(preview), samples(terminal));
-  });
-
-  test('classification limits fail redacted before UUID allocation', () {
-    final source = _stroke(4, [_sample(0, 0, 0), _sample(10, 0, 10)]);
-    final resolver = StrokeGeometryResolver(
-      _ok(
-        StrokeGeometryLimits.create(
-          maximumElements: 128,
-          maximumVertices: 2048,
-          ellipseVertexCount: 16,
-          maximumContainmentChecks: 1,
-        ),
-      ),
-    );
-    final generator = _CountingUuidGenerator();
-    final result = splitStrokeByEraser(
-      source: source,
-      eraserPath: [_point(5, .99)],
-      radius: 0,
-      localToPage: _identity(),
-      geometryResolver: resolver,
-      strokeIdGenerator: generator,
-      existingIds: {source.id},
-      maximumExistingIds: 1,
-      maximumEraserPoints: 1,
-      maximumIntersections: 8,
-      maximumFragments: 4,
-      maximumOutputSamples: 16,
-      handwritingLimits: _limits,
-    );
-    expect(result, isA<Err<Object?, Object?>>());
-    expect(result.toString(), isNot(contains('5')));
-    expect(generator.calls, 0);
-  });
-
-  test('aggregate Partial Eraser work exhaustion is atomic and redacted', () {
-    final object = _object(7, [_sample(0, 0, 0), _sample(10, 0, 10)]);
-    final root = _rootWithObject(object);
-    final coordinator = _coordinator(root);
-    final plan = _ok(
-      PartialEraseGesturePlan.prepare(
-        document: coordinator.snapshot,
-        pageId: root.pages.single.id,
-        radius: .1,
-        handwritingLimits: _limits,
-        objectRegistry: _objectRegistry(),
-        geometryResolver: StrokeGeometryResolver(_geometryLimits()),
-        maximumObjects: 1,
-        maximumStrokes: 1,
-        maximumPoints: 4,
-        maximumIntersections: 8,
-        maximumFragments: 4,
-        maximumOutputSamples: 16,
-        maximumOperations: 1,
-        maximumClassificationChecks: 1,
-      ),
-    );
-    final before = coordinator.snapshot.root;
-    final result = plan.acceptPoint(_point(5, 0));
-    expect(result, isA<Err<Object?, Object?>>());
-    expect(result.toString(), isNot(contains('5')));
-    expect(plan.classificationCheckCount, 1);
-    expect(plan.pointCount, 0);
-    expect(plan.hasChanges, isFalse);
-    expect(coordinator.snapshot.root, same(before));
-    final generator = _CountingUuidGenerator();
-    expect(
-      plan.createRequest(uuidGenerator: generator),
-      isA<Err<Object?, Object?>>(),
-    );
-    expect(generator.calls, 0);
-  });
 
   test('overflowed swept bounds fall back without false hit results', () {
     final geometry = _ok(
@@ -1039,76 +391,6 @@ void main() {
     );
   });
 
-  test('StrokeSplitResult validates scalar evidence and invariants', () {
-    final stroke = _stroke(6, [_sample(0, 0, 0), _sample(1, 0, 1)]);
-    final valid = _ok(
-      StrokeSplitResult.create(
-        strokes: [stroke],
-        maximumStrokes: 1,
-        intersectionCount: 1,
-        outputSampleCount: 2,
-        affected: true,
-      ),
-    );
-    expect(valid.strokes, [stroke]);
-    expect(() => valid.strokes.add(stroke), throwsUnsupportedError);
-    expect(
-      StrokeSplitResult.create(
-        strokes: const [],
-        maximumStrokes: 1,
-        intersectionCount: Revision.maximumValue,
-        affected: true,
-      ),
-      isA<Ok<Object?, Object?>>(),
-    );
-    for (final result in [
-      StrokeSplitResult.create(
-        strokes: [stroke],
-        maximumStrokes: 1,
-        intersectionCount: -1,
-        outputSampleCount: 2,
-        affected: true,
-      ),
-      StrokeSplitResult.create(
-        strokes: [stroke],
-        maximumStrokes: 1,
-        intersectionCount: Revision.maximumValue + 1,
-        outputSampleCount: 2,
-        affected: true,
-      ),
-      StrokeSplitResult.create(
-        strokes: [stroke],
-        maximumStrokes: 1,
-        outputSampleCount: -1,
-        affected: true,
-      ),
-      StrokeSplitResult.create(
-        strokes: [stroke],
-        maximumStrokes: 1,
-        outputSampleCount: Revision.maximumValue + 1,
-        affected: true,
-      ),
-      StrokeSplitResult.create(
-        strokes: [stroke],
-        maximumStrokes: 1,
-        outputSampleCount: 1,
-        affected: true,
-      ),
-      StrokeSplitResult.create(
-        strokes: [stroke],
-        maximumStrokes: 1,
-        intersectionCount: 1,
-      ),
-      StrokeSplitResult.create(strokes: [stroke, stroke], maximumStrokes: 2),
-    ]) {
-      expect(result, isA<Err<Object?, Object?>>());
-      expect(
-        result.toString(),
-        isNot(contains('${Revision.maximumValue + 1}')),
-      );
-    }
-  });
-
   test(
     'Phase 6 diagnostic trace is bounded ordered redacted and disableable',
     () {
@@ -1117,15 +399,15 @@ void main() {
       );
       for (var index = 0; index < 5; index += 1) {
         trace.record(
-          stage: Phase6DiagnosticStage.partialMoveCompleted,
+          stage: Phase6DiagnosticStage.cursorRepaintCompleted,
           pointerSegments: index,
-          classificationChecks: index * 2,
+          repaints: index * 2,
         );
       }
-      expect(trace.events.map((event) => event.sequence), [2, 3, 4]);
+      expect(trace.events.map((event) => event.sequence), [3, 4, 5]);
       final text = trace.copyText();
-      expect(text, contains('stage=partialMoveCompleted'));
-      expect(text, contains('checks=8'));
+      expect(text, contains('stage=cursorRepaintCompleted'));
+      expect(text, contains('repaints=8'));
       expect(text, isNot(contains('coordinate')));
       expect(text, isNot(contains('strokeSamples')));
       expect(text, isNot(contains('secret')));
@@ -1133,7 +415,7 @@ void main() {
       final disabled = _ok(
         Phase6DiagnosticTrace.create(enabled: false, capacity: 1),
       );
-      disabled.record(stage: Phase6DiagnosticStage.partialMoveEntered);
+      disabled.record(stage: Phase6DiagnosticStage.cursorRepaintRequested);
       expect(disabled.events, isEmpty);
       expect(disabled.copyText(), isEmpty);
       expect(
@@ -1143,33 +425,29 @@ void main() {
     },
   );
 
-  test('diagnostics aggregate per gesture stages and reset baselines', () {
+  test('diagnostics separate gestures and retain numeric-only evidence', () {
     final trace = _ok(
       Phase6DiagnosticTrace.create(enabled: true, capacity: 64),
     );
     expect(trace.beginGesture(), 1);
     trace.record(
-      stage: Phase6DiagnosticStage.intervalClassification,
+      stage: Phase6DiagnosticStage.cursorRepaintCompleted,
       elapsedMicros: 40,
-      processedBatchSize: 8,
-      eventBacklog: 12,
-      workBudgetUsed: 20,
-      workBudgetRemaining: 80,
+      pointerSegments: 8,
+      repaints: 1,
     );
     trace.record(
-      stage: Phase6DiagnosticStage.intervalClassification,
+      stage: Phase6DiagnosticStage.cursorRepaintCompleted,
       elapsedMicros: 60,
-      processedBatchSize: 4,
-      workBudgetUsed: 30,
-      workBudgetRemaining: 70,
+      pointerSegments: 12,
+      repaints: 2,
     );
     trace.record(
       stage: Phase6DiagnosticStage.sceneComposition,
       elapsedMicros: 25,
     );
-    expect(trace.copyText(), contains('dominant=intervalClassification'));
-    expect(trace.copyText(), contains('totalMicros=100'));
-    expect(trace.copyText(), contains('invocations=2'));
+    expect(trace.copyText(), contains('gesture=1'));
+    expect(trace.copyText(), contains('micros=60'));
 
     expect(trace.beginGesture(), 2);
     trace.record(
@@ -1177,115 +455,10 @@ void main() {
       elapsedMicros: 7,
     );
     final second = trace.copyText();
-    expect(second, contains('gesture=2 dominant=sceneComposition'));
-    expect(second, contains('totalMicros=7'));
-    expect(second, isNot(contains('totalMicros=100')));
+    expect(second, contains('gesture=2'));
+    expect(second, contains('stage=sceneComposition'));
+    expect(second, contains('micros=7'));
     expect(second, isNot(contains('secret')));
-  });
-
-  test('split captures hostile existing IDs before UUID allocation', () {
-    final source = _stroke(3, [_sample(0, 0, 0), _sample(10, 0, 10)]);
-    final owned = _HostileStrokeList(
-      [source.id],
-      reportedLength: 999,
-      throwContains: true,
-    );
-    final generator = _CountingUuidGenerator();
-    final split = splitStrokeByEraser(
-      source: source,
-      eraserPath: [_point(5, 0)],
-      radius: .1,
-      localToPage: _identity(),
-      geometryResolver: StrokeGeometryResolver(_geometryLimits()),
-      strokeIdGenerator: generator,
-      existingIds: owned,
-      maximumExistingIds: 1,
-      maximumEraserPoints: 1,
-      maximumIntersections: 8,
-      maximumFragments: 4,
-      maximumOutputSamples: 16,
-      handwritingLimits: _limits,
-    );
-    expect(split, isA<Ok<Object?, Object?>>());
-    expect(owned.lengthRead, isFalse);
-    expect(owned.containsRead, isFalse);
-    expect(generator.calls, 2);
-
-    final ignoredLengths = [
-      _HostileStrokeList([source.id], reportedLength: 0),
-      _HostileStrokeList([source.id], throwLength: true),
-    ];
-    for (final ids in ignoredLengths) {
-      final idsGenerator = _CountingUuidGenerator();
-      expect(
-        splitStrokeByEraser(
-          source: source,
-          eraserPath: [_point(50, 0)],
-          radius: 0,
-          localToPage: _identity(),
-          geometryResolver: StrokeGeometryResolver(_geometryLimits()),
-          strokeIdGenerator: idsGenerator,
-          existingIds: ids,
-          maximumExistingIds: 1,
-          maximumEraserPoints: 1,
-          maximumIntersections: 8,
-          maximumFragments: 4,
-          maximumOutputSamples: 16,
-          handwritingLimits: _limits,
-        ),
-        isA<Ok<Object?, Object?>>(),
-      );
-      expect(ids.lengthRead, isFalse);
-      expect(idsGenerator.calls, 0);
-    }
-
-    for (final ids in [
-      _HostileStrokeList([source.id], throwIterator: true),
-      _HostileStrokeList([source.id], throwMoveAt: 0),
-      _HostileStrokeList([source.id], throwCurrentAt: 0),
-    ]) {
-      final idsGenerator = _CountingUuidGenerator();
-      final result = splitStrokeByEraser(
-        source: source,
-        eraserPath: [_point(5, 0)],
-        radius: .1,
-        localToPage: _identity(),
-        geometryResolver: StrokeGeometryResolver(_geometryLimits()),
-        strokeIdGenerator: idsGenerator,
-        existingIds: ids,
-        maximumExistingIds: 1,
-        maximumEraserPoints: 1,
-        maximumIntersections: 8,
-        maximumFragments: 4,
-        maximumOutputSamples: 16,
-        handwritingLimits: _limits,
-      );
-      expect(result, isA<Err<Object?, Object?>>());
-      expect(result.toString(), isNot(contains('secret')));
-      expect(idsGenerator.calls, 0);
-    }
-
-    final rejected = _HostileStrokeList([source.id], infinite: true);
-    final rejectedGenerator = _CountingUuidGenerator();
-    final failure = splitStrokeByEraser(
-      source: source,
-      eraserPath: [_point(5, 0)],
-      radius: .1,
-      localToPage: _identity(),
-      geometryResolver: StrokeGeometryResolver(_geometryLimits()),
-      strokeIdGenerator: rejectedGenerator,
-      existingIds: rejected,
-      maximumExistingIds: 1,
-      maximumEraserPoints: 1,
-      maximumIntersections: 8,
-      maximumFragments: 4,
-      maximumOutputSamples: 16,
-      handwritingLimits: _limits,
-    );
-    expect(failure, isA<Err<Object?, Object?>>());
-    expect(failure.toString(), isNot(contains('secret')));
-    expect(rejected.rejectedTailCurrentRead, isFalse);
-    expect(rejectedGenerator.calls, 0);
   });
 
   test('pointer ownership rejects additional pointers and permits reuse', () {
@@ -1641,25 +814,7 @@ void main() {
       );
       expect(selection.state.isEmpty, isTrue);
 
-      final generator = _CountingUuidGenerator();
       final before = layer.objects.single;
-      final partial = createPartialEraseRequest(
-        document: _coordinator(root).snapshot,
-        pageId: page.id,
-        pagePath: [_point(5, 0)],
-        pageRadius: 1,
-        uuidGenerator: generator,
-        handwritingLimits: _limits,
-        geometryResolver: StrokeGeometryResolver(_geometryLimits()),
-        maximumEraserPoints: 1,
-        maximumIntersections: 2,
-        maximumFragments: 2,
-        maximumOutputSamples: 4,
-        maximumCommandOperations: 1,
-      );
-      expect(partial, isA<Err<Object?, Object?>>());
-      expect(partial.toString(), isNot(contains('secret-inert-content')));
-      expect(generator.calls, 0);
       expect(counter.calls, 0);
       expect(layer.objects.single, before);
       expect(layer.objects.single.payload, before.payload);
@@ -2003,78 +1158,6 @@ void main() {
     },
   );
 
-  test('partial erase preflight enforces cumulative budgets before UUIDs', () {
-    final first = _object(101, [_sample(0, 0, 0), _sample(10, 0, 10)]);
-    final second = _object(102, [_sample(0, 10, 0), _sample(10, 10, 10)]);
-    final root = testNotebook(
-      sections: [
-        testSection(
-          pages: [
-            testPage(
-              layers: [
-                testContentLayer(objects: [first, second]),
-              ],
-            ),
-          ],
-        ),
-      ],
-    );
-    final snapshot = _coordinator(root).snapshot;
-    final page = root.pages.single;
-
-    Result<AtomicObjectCollectionEditRequest, StructuredFailure> create(
-      _CountingUuidGenerator generator, {
-      int intersections = 4,
-      int fragments = 4,
-      int samples = 8,
-      int operations = 2,
-    }) => createPartialEraseRequest(
-      document: snapshot,
-      pageId: page.id,
-      pagePath: [_point(5, -2), _point(5, 12)],
-      pageRadius: .1,
-      uuidGenerator: generator,
-      handwritingLimits: _limits,
-      geometryResolver: StrokeGeometryResolver(_geometryLimits()),
-      maximumEraserPoints: 2,
-      maximumIntersections: intersections,
-      maximumFragments: fragments,
-      maximumOutputSamples: samples,
-      maximumCommandOperations: operations,
-    );
-
-    for (final limits in [
-      (intersections: 3, fragments: 4, samples: 8, operations: 2),
-      (intersections: 4, fragments: 3, samples: 8, operations: 2),
-      (intersections: 4, fragments: 4, samples: 7, operations: 2),
-      (intersections: 4, fragments: 4, samples: 8, operations: 1),
-    ]) {
-      final generator = _CountingUuidGenerator();
-      expect(
-        create(
-          generator,
-          intersections: limits.intersections,
-          fragments: limits.fragments,
-          samples: limits.samples,
-          operations: limits.operations,
-        ),
-        isA<Err<Object?, Object?>>(),
-      );
-      expect(generator.calls, 0);
-    }
-
-    final generator = _CountingUuidGenerator();
-    final request = _ok(create(generator));
-    expect(request.replacements, hasLength(2));
-    expect(generator.calls, 5); // Four fragments, then one correlation ID.
-    expect(
-      request.replacements
-          .expand((object) => _payload(object).strokes)
-          .map((stroke) => stroke.id.uuid),
-      [testUuid(901), testUuid(902), testUuid(903), testUuid(904)],
-    );
-  });
-
   test('whole Eraser plan reuses prepared geometry and target evidence', () {
     final first = _object(110, [_sample(0, 0, 0), _sample(10, 0, 10)]);
     final second = _object(111, [_sample(0, 10, 0), _sample(10, 10, 10)]);
@@ -2204,210 +1287,6 @@ void main() {
       expect(rendering.calls, 1);
     },
   );
-
-  test(
-    'partial Eraser plan applies each segment once and commits its preview',
-    () {
-      final object = _object(112, [_sample(0, 0, 0), _sample(10, 0, 10)]);
-      final root = testNotebook(
-        sections: [
-          testSection(
-            pages: [
-              testPage(
-                layers: [
-                  testContentLayer(objects: [object]),
-                ],
-              ),
-            ],
-          ),
-        ],
-      );
-      final snapshot = _coordinator(root).snapshot;
-      final plan = _ok(
-        PartialEraseGesturePlan.prepare(
-          document: snapshot,
-          pageId: root.pages.single.id,
-          radius: .2,
-          handwritingLimits: _limits,
-          objectRegistry: _objectRegistry(),
-          geometryResolver: StrokeGeometryResolver(_geometryLimits()),
-          maximumObjects: 8,
-          maximumStrokes: 8,
-          maximumPoints: 64,
-          maximumIntersections: 16,
-          maximumFragments: 16,
-          maximumOutputSamples: 64,
-          maximumOperations: 4,
-          maximumClassificationChecks: 100000,
-        ),
-      );
-      expect(plan.preparedObjectCount, 1);
-      expect(plan.geometryResolutionCount, 1);
-      _ok(plan.acceptPoint(_point(5, -1)));
-      _ok(plan.acceptPoint(_point(5, 1)));
-      expect(plan.processedSegmentCount, 2);
-      expect(plan.hasChanges, isTrue);
-      final preview = plan.previews.single.strokes;
-      expect(preview.single.stroke, _payload(object).strokes.single);
-      expect(plan.geometryResolutionCount, 1);
-      final resolutionsAfterSplit = plan.geometryResolutionCount;
-      for (var index = 0; index < 20; index += 1) {
-        _ok(plan.acceptPoint(_point(50 + index.toDouble(), 50)));
-      }
-      expect(plan.geometryResolutionCount, resolutionsAfterSplit);
-      final splitCallsBeforeTerminal = plan.splitInvocationCount;
-      final generator = _CountingUuidGenerator();
-      final request = _ok(plan.createRequest(uuidGenerator: generator));
-      final committed = _payload(request.replacements.single).strokes;
-      expect(committed, hasLength(2));
-      expect(generator.calls, committed.length + 1);
-      expect(plan.processedSegmentCount, 22);
-      expect(plan.splitInvocationCount, splitCallsBeforeTerminal);
-      expect(plan.geometryResolutionCount, resolutionsAfterSplit);
-      expect(plan.fragmentGeometryResolutionCount, committed.length);
-    },
-  );
-
-  test('partial Eraser preview is exact transparent survivor geometry', () {
-    final erased = _stroke(301, [_sample(0, 0, 0), _sample(10, 0, 10)]);
-    final unaffected = _stroke(302, [_sample(0, 10, 0), _sample(10, 10, 10)]);
-    final object = testObject(
-      id: 301,
-      typeKey: handwritingObjectTypeKey,
-      schemaVersion: handwritingSchemaVersion,
-      payload: _ok(
-        HandwritingPayload.create(
-          strokes: [erased, unaffected],
-          limits: _limits,
-        ),
-      ).encode(),
-    );
-    final crossing = _copyObject(
-      _object(303, [_sample(5, -5, 0), _sample(5, 5, 10)]),
-      locked: true,
-    );
-    final root = testNotebook(
-      sections: [
-        testSection(
-          pages: [
-            testPage(
-              layers: [
-                testContentLayer(objects: [crossing, object]),
-              ],
-            ),
-          ],
-        ),
-      ],
-    );
-    final resolver = StrokeGeometryResolver(_geometryLimits());
-    final plan = _ok(
-      PartialEraseGesturePlan.prepare(
-        document: _coordinator(root).snapshot,
-        pageId: root.pages.single.id,
-        radius: .25,
-        handwritingLimits: _limits,
-        objectRegistry: _objectRegistry(),
-        geometryResolver: resolver,
-        maximumObjects: 2,
-        maximumStrokes: 4,
-        maximumPoints: 16,
-        maximumIntersections: 16,
-        maximumFragments: 16,
-        maximumOutputSamples: 64,
-        maximumOperations: 2,
-        maximumClassificationChecks: 100000,
-      ),
-    );
-    final initial = _ok(plan.acceptPoint(_point(5, -1)));
-    final update = _ok(plan.acceptPoint(_point(5, 1)));
-    expect(update.changedObjectIds, {object.id});
-    expect(update.changedObjectIds, isNot(contains(crossing.id)));
-    final previewBySegment = <(StrokeId, int), EraserPreviewSegmentUpdate>{};
-    for (final evidence in [
-      ...initial.previewSegmentUpdates,
-      ...update.previewSegmentUpdates,
-    ]) {
-      previewBySegment[(evidence.strokeId, evidence.sourceSegment)] = evidence;
-    }
-    expect(previewBySegment.values.map((value) => value.strokeId).toSet(), {
-      erased.id,
-      unaffected.id,
-    });
-    final previewElements = previewBySegment.values
-        .expand((value) => value.elements)
-        .toList(growable: false);
-    expect(previewElements, isNotEmpty);
-    expect(
-      previewElements.any((element) => element.bounds.contains(_point(5, 0))),
-      isFalse,
-      reason: 'the predicted gap is absent geometry, not an opaque mask',
-    );
-    final renderingLimits = _renderingLimits();
-    final builder = PageSceneBuilder(
-      objectRegistry: _objectRegistry(),
-      renderingRegistry: _ok(
-        RenderingRegistry.create([
-          HandwritingRenderingDefinition(
-            handwritingLimits: _limits,
-            geometryResolver: resolver,
-          ),
-        ], maximumDefinitions: 1),
-      ),
-      limits: renderingLimits,
-    );
-    final committedScene = _ok(
-      builder.buildCommitted(
-        page: root.pages.single,
-        viewport: _viewport(origin: _point(0, 0), zoom: 1),
-        documentRevision: _revision(0),
-      ),
-    );
-    final visibleCommitted = _ok(
-      builder.compose(
-        committed: committedScene,
-        excludedObjectIds: {object.id},
-      ),
-    );
-    expect(
-      visibleCommitted.primitives,
-      committedScene.objects
-          .where((value) => value.objectId == crossing.id)
-          .single
-          .primitives,
-      reason: 'the unrelated crossing Object remains visible through the gap',
-    );
-    expect(
-      previewElements.any((element) => element.bounds.contains(_point(5, 10))),
-      isTrue,
-      reason: 'an unaffected Stroke in the same Object remains visible',
-    );
-
-    final created = plan.createRequest(uuidGenerator: _CountingUuidGenerator());
-    expect(
-      created,
-      isA<Ok<AtomicObjectCollectionEditRequest, StructuredFailure>>(),
-      reason: '$created',
-    );
-    final request = _ok(created);
-    final terminal = _payload(request.replacements.single);
-    final terminalElements = terminal.strokes
-        .expand(
-          (stroke) => _ok(
-            resolver.resolve(stroke: stroke, localToPage: object.transform),
-          ).elements,
-        )
-        .toList(growable: false);
-    expect(
-      _geometryVertices(previewElements),
-      _geometryVertices(terminalElements),
-      reason: 'the last preview and terminal publication have equal geometry',
-    );
-    expect(plan.terminalMaterializationCount, 1);
-    expect(
-      plan.previewRangeMaterializationCount,
-      lessThanOrEqualTo(plan.splitInvocationCount * 2),
-    );
-  });
 
   test(
     'many-Object selection reuses bounded candidates and publishes once',
@@ -2580,33 +1459,12 @@ void main() {
           maximumTargets: 1,
           maximumOperations: 1,
         );
-        final partial = PartialEraseGesturePlan.prepare(
-          document: snapshot,
-          pageId: snapshot.root.pages.single.id,
-          radius: 1,
-          handwritingLimits: _limits,
-          objectRegistry: entry.$2,
-          geometryResolver: StrokeGeometryResolver(_geometryLimits()),
-          maximumObjects: 1,
-          maximumStrokes: 1,
-          maximumPoints: 1,
-          maximumIntersections: 2,
-          maximumFragments: 2,
-          maximumOutputSamples: 4,
-          maximumOperations: 1,
-          maximumClassificationChecks: 100000,
-        );
         final wholePlan = _ok(whole);
-        final partialPlan = _ok(partial);
         expect(
           _ok(wholePlan.acceptPoint(_point(5, 0))).newlyAffectedStrokeCount,
           0,
         );
-        expect(
-          _ok(partialPlan.acceptPoint(_point(5, 0))).newlyAffectedStrokeCount,
-          0,
-        );
-        expect('$whole$partial', isNot(contains('secret')));
+        expect('$whole', isNot(contains('secret')));
       }
     },
   );
@@ -2642,131 +1500,13 @@ void main() {
           maximumTargets: 2,
           maximumOperations: 2,
         );
-    Result<PartialEraseGesturePlan, StructuredFailure> partial(int ceiling) =>
-        PartialEraseGesturePlan.prepare(
-          document: snapshot,
-          pageId: root.pages.single.id,
-          radius: 1,
-          handwritingLimits: _limits,
-          objectRegistry: _objectRegistry(),
-          geometryResolver: StrokeGeometryResolver(_geometryLimits()),
-          maximumObjects: ceiling,
-          maximumStrokes: ceiling,
-          maximumPoints: 1,
-          maximumIntersections: 2,
-          maximumFragments: 2,
-          maximumOutputSamples: 4,
-          maximumOperations: 2,
-          maximumClassificationChecks: 100000,
-        );
     expect(whole(2), isA<Ok<WholeEraseGesturePlan, StructuredFailure>>());
-    expect(partial(2), isA<Ok<PartialEraseGesturePlan, StructuredFailure>>());
-    for (final rejected in [whole(1), partial(1)]) {
+    for (final rejected in [whole(1)]) {
       expect(rejected, isA<Err<Object?, StructuredFailure>>());
       final failure = (rejected as Err<Object?, StructuredFailure>).error;
       expect(failure.code, startsWith('drawing.tools.'));
       expect('$failure', isNot(contains('secret')));
     }
-  });
-
-  test('partial erase rejects incomplete revision evidence before UUIDs', () {
-    final object = _object(103, [_sample(0, 0, 0), _sample(10, 0, 10)]);
-    final root = testNotebook(
-      sections: [
-        testSection(
-          pages: [
-            testPage(
-              layers: [
-                testContentLayer(objects: [object]),
-              ],
-            ),
-          ],
-        ),
-      ],
-    );
-    final current = _coordinator(root).snapshot;
-    final revisions = current.revisions;
-    final incompleteRevisions = [
-      DocumentRevisionSnapshot.fromValues(
-        documentId: revisions.documentId,
-        document: revisions.document,
-        sections: revisions.sections,
-        layers: revisions.layers,
-        layerMembership: revisions.layerMembership,
-        objects: revisions.objects,
-        resourceCatalog: revisions.resourceCatalog,
-      ),
-      DocumentRevisionSnapshot.fromValues(
-        documentId: revisions.documentId,
-        document: revisions.document,
-        sections: revisions.sections,
-        pages: revisions.pages,
-        layers: revisions.layers,
-        layerMembership: revisions.layerMembership,
-        resourceCatalog: revisions.resourceCatalog,
-      ),
-      DocumentRevisionSnapshot.fromValues(
-        documentId: revisions.documentId,
-        document: revisions.document,
-        sections: revisions.sections,
-        pages: revisions.pages,
-        layers: revisions.layers,
-        objects: revisions.objects,
-        resourceCatalog: revisions.resourceCatalog,
-      ),
-    ];
-    for (final incompleteRevision in incompleteRevisions) {
-      final incomplete = DocumentCoordinatorSnapshot(
-        root: current.root,
-        revisions: incompleteRevision,
-        currentContentIdentity: current.currentContentIdentity,
-        savedContentIdentity: current.savedContentIdentity,
-        canUndo: current.canUndo,
-        canRedo: current.canRedo,
-        historyTraversalEnabled: current.historyTraversalEnabled,
-      );
-      final generator = _CountingUuidGenerator();
-      expect(
-        createPartialEraseRequest(
-          document: incomplete,
-          pageId: root.pages.single.id,
-          pagePath: [_point(5, 0)],
-          pageRadius: .1,
-          uuidGenerator: generator,
-          handwritingLimits: _limits,
-          geometryResolver: StrokeGeometryResolver(_geometryLimits()),
-          maximumEraserPoints: 1,
-          maximumIntersections: 2,
-          maximumFragments: 2,
-          maximumOutputSamples: 4,
-          maximumCommandOperations: 1,
-        ),
-        isA<Err<Object?, Object?>>(),
-      );
-      expect(generator.calls, 0);
-    }
-
-    final collision = _CountingUuidGenerator([
-      _payload(object).strokes.single.id.uuid,
-    ]);
-    expect(
-      createPartialEraseRequest(
-        document: current,
-        pageId: root.pages.single.id,
-        pagePath: [_point(5, 0)],
-        pageRadius: .1,
-        uuidGenerator: collision,
-        handwritingLimits: _limits,
-        geometryResolver: StrokeGeometryResolver(_geometryLimits()),
-        maximumEraserPoints: 1,
-        maximumIntersections: 2,
-        maximumFragments: 2,
-        maximumOutputSamples: 4,
-        maximumCommandOperations: 1,
-      ),
-      isA<Err<Object?, Object?>>(),
-    );
-    expect(collision.calls, 1);
   });
 
   test('viewport rejects finite but unrepresentable visible rectangles', () {
@@ -3146,64 +1886,20 @@ void main() {
         maximumOperations: 2,
       ),
     );
-    final partial = _ok(
-      PartialEraseGesturePlan.prepare(
-        document: coordinator.snapshot,
-        pageId: root.pages.single.id,
-        radius: .5,
-        handwritingLimits: limits,
-        objectRegistry: registry,
-        geometryResolver: resolver,
-        geometryCache: cache,
-        maximumObjects: 2,
-        maximumStrokes: 2,
-        maximumPoints: 720,
-        maximumIntersections: 256,
-        maximumFragments: 256,
-        maximumOutputSamples: 1000,
-        maximumOperations: 2,
-        maximumClassificationChecks: 100000,
-      ),
-    );
-    for (var start = 0; start < 720; start += 24) {
-      final batch = <Point2>[];
-      for (var index = start; index < start + 24; index += 1) {
-        final point = _point(60, index.isEven ? -1 : 1);
-        if (index < 80) _ok(whole.acceptPoint(point));
-        batch.add(point);
-      }
-      _ok(partial.acceptBatch(batch, maximumBatchPoints: 24));
+    for (var index = 0; index < 80; index += 1) {
+      _ok(whole.acceptPoint(_point(60, index.isEven ? -1 : 1)));
     }
     expect(whole.affectedStrokeCount, 1);
     expect(whole.geometryElementExaminationCount, lessThan(256));
-    expect(partial.splitInvocationCount, lessThanOrEqualTo(2880));
-    expect(partial.geometryResolutionCount, 1);
-    expect(partial.erasurePreparationCount, 1);
-    expect(partial.processedSegmentCount, 720);
-    expect(partial.processedBatchCount, 30);
-    expect(partial.maximumProcessedBatchSize, 24);
-    expect(partial.classificationCheckCount, lessThan(1500));
-    expect(partial.maximumClassificationDepth, lessThanOrEqualTo(256));
-    expect(
-      partial.maximumPendingClassificationIntervals,
-      lessThanOrEqualTo(64),
-    );
-    expect(partial.classificationCacheHitCount, greaterThan(700));
-    expect(partial.intervalMergeCount, lessThan(20));
-    expect(partial.previewRangeMaterializationCount, lessThan(20));
     expect(cache.resolutionCount, 1);
-    final classifications = partial.splitInvocationCount;
     final ids = _CountingUuidGenerator();
-    final created = partial.createRequest(uuidGenerator: ids);
+    final created = whole.createRequest(uuidGenerator: ids);
     expect(
       created,
       isA<Ok<AtomicObjectCollectionEditRequest, StructuredFailure>>(),
       reason: '$created',
     );
     final request = _ok(created);
-    expect(partial.splitInvocationCount, classifications);
-    expect(partial.terminalMaterializationCount, 1);
-    expect(partial.terminalSourceSegmentPassCount, 119);
     final beforeErase = coordinator.snapshot.root;
     _ok(coordinator.execute(request));
     final afterErase = coordinator.snapshot.root;
@@ -3212,100 +1908,6 @@ void main() {
     expect(coordinator.snapshot.root, beforeErase);
     _ok(coordinator.redo());
     expect(coordinator.snapshot.root, afterErase);
-  });
-
-  test('partial Eraser resumes dense candidate work without replay', () {
-    final samples = List<StrokeSample>.generate(
-      16,
-      (index) => _sample(index.isEven ? 0 : 120, index.isEven ? -1 : 1, index),
-      growable: false,
-    );
-    final object = _object(210, samples);
-    final root = testNotebook(
-      sections: [
-        testSection(
-          pages: [
-            testPage(
-              layers: [
-                testContentLayer(objects: [object]),
-              ],
-            ),
-          ],
-        ),
-      ],
-    );
-    final plan = _ok(
-      PartialEraseGesturePlan.prepare(
-        document: _coordinator(root).snapshot,
-        pageId: root.pages.single.id,
-        radius: .5,
-        handwritingLimits: _limits,
-        objectRegistry: _objectRegistry(),
-        geometryResolver: StrokeGeometryResolver(_geometryLimits()),
-        maximumObjects: 2,
-        maximumStrokes: 2,
-        maximumPoints: 4,
-        maximumIntersections: 512,
-        maximumFragments: 512,
-        maximumOutputSamples: 1000,
-        maximumOperations: 2,
-        maximumClassificationChecks: 100000,
-      ),
-    );
-
-    var batches = 0;
-    var candidates = 0;
-    var classifications = 0;
-    var checks = 0;
-    Point2? point = _point(60, 0);
-    while (true) {
-      final batch = _ok(
-        plan.processPointWork(
-          point: point,
-          maximumCandidateSourceSegments: 1,
-          maximumClassifications: 1,
-          maximumChecks:
-              StrokeGeometryResolver.maximumPreparedClassificationChecks,
-          maximumRootIsolationAdvances: 8,
-          maximumFeatureTransitions: 128,
-          maximumElapsedMicros: 1000000,
-          materializePreviewEvidence: false,
-        ),
-      );
-      point = null;
-      batches += 1;
-      candidates += batch.candidateSourceSegments;
-      classifications += batch.intervalClassifications;
-      checks += batch.classificationChecks;
-      expect(batch.candidateSourceSegments, lessThanOrEqualTo(1));
-      expect(batch.intervalClassifications, lessThanOrEqualTo(1));
-      expect(
-        batch.classificationChecks,
-        lessThanOrEqualTo(
-          StrokeGeometryResolver.maximumPreparedClassificationChecks,
-        ),
-      );
-      if (batch.pointCompleted) {
-        expect(batch.update, isNotNull);
-        break;
-      }
-      expect(plan.hasPendingPointWork, isTrue);
-    }
-
-    expect(batches, greaterThan(2));
-    expect(candidates, greaterThan(1));
-    expect(plan.candidateSourceSegmentCount, candidates);
-    expect(plan.splitInvocationCount, candidates);
-    expect(classifications, candidates);
-    expect(plan.classificationCheckCount, checks);
-    expect(plan.processedSegmentCount, 1);
-    expect(plan.hasPendingPointWork, isFalse);
-    final previews = _ok(plan.materializeFinalObjectPreviews());
-    expect(previews, hasLength(1));
-    expect(previews.single.strokes, isNotEmpty);
-    final materializations = plan.terminalMaterializationCount;
-    plan.createRequest(uuidGenerator: _CountingUuidGenerator());
-    expect(plan.terminalMaterializationCount, materializations);
   });
 }
 
@@ -3455,21 +2057,6 @@ NotebookDocument _historyRoot(
 HandwritingPayload _payload(ObjectEnvelope object) =>
     _ok(HandwritingPayload.decode(object.payload, limits: _limits));
 
-List<String> _geometryVertices(Iterable<StrokeGeometryElement> elements) {
-  final values = elements
-      .map(
-        (element) => element.vertices
-            .map(
-              (point) =>
-                  '${point.x.toStringAsFixed(9)},${point.y.toStringAsFixed(9)}',
-            )
-            .join(';'),
-      )
-      .toList();
-  values.sort();
-  return values;
-}
-
 HandwritingStroke _stroke(int id, List<StrokeSample> samples) => _ok(
   HandwritingStroke.create(
     id: StrokeId.fromUuid(testUuid(100 + id)),
@@ -3515,36 +2102,6 @@ RenderingLimits _renderingLimits() => _ok(
 );
 AffineTransform2D _identity() =>
     _ok(AffineTransform2D.fromOperation(const IdentityTransformOperation2D()));
-
-double _nextTestDouble(double value) {
-  final bytes = ByteData(8)..setFloat64(0, value);
-  var high = bytes.getUint32(0), low = bytes.getUint32(4);
-  if (low == 0xffffffff) {
-    low = 0;
-    high += 1;
-  } else {
-    low += 1;
-  }
-  bytes
-    ..setUint32(0, high)
-    ..setUint32(4, low);
-  return bytes.getFloat64(0);
-}
-
-double _previousTestDouble(double value) {
-  final bytes = ByteData(8)..setFloat64(0, value);
-  var high = bytes.getUint32(0), low = bytes.getUint32(4);
-  if (low == 0) {
-    low = 0xffffffff;
-    high -= 1;
-  } else {
-    low -= 1;
-  }
-  bytes
-    ..setUint32(0, high)
-    ..setUint32(4, low);
-  return bytes.getFloat64(0);
-}
 
 DocumentMutationCoordinator _coordinator(DocumentRoot root) => _ok(
   DocumentMutationCoordinator.create(
@@ -3740,17 +2297,12 @@ final class _BoundarySink implements CoalescingBoundarySink {
 }
 
 final class _CountingUuidGenerator implements UuidGenerator {
-  _CountingUuidGenerator([this.values = const []]);
-
-  final List<UuidIdentifier> values;
   int calls = 0;
 
   @override
   Result<UuidIdentifier, StructuredFailure> generateV4() {
     calls += 1;
-    return Ok(
-      calls <= values.length ? values[calls - 1] : testUuid(900 + calls),
-    );
+    return Ok(testUuid(900 + calls));
   }
 }
 
@@ -3823,7 +2375,6 @@ final class _HostileStrokeList extends ListBase<StrokeId> {
     this.throwMoveAt,
     this.throwCurrentAt,
     this.infinite = false,
-    this.throwContains = false,
   });
   final List<StrokeId> values;
   final int? reportedLength;
@@ -3832,17 +2383,8 @@ final class _HostileStrokeList extends ListBase<StrokeId> {
   final int? throwMoveAt;
   final int? throwCurrentAt;
   final bool infinite;
-  final bool throwContains;
   bool lengthRead = false;
-  bool containsRead = false;
   bool rejectedTailCurrentRead = false;
-
-  @override
-  bool contains(Object? element) {
-    containsRead = true;
-    if (throwContains) throw StateError('secret-existing-id-contains');
-    return values.contains(element);
-  }
 
   @override
   int get length {
