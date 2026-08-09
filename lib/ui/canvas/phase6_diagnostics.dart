@@ -36,10 +36,29 @@ enum Phase6DiagnosticStage {
   sceneComposition,
   repaintScheduled,
   gestureCancelled,
+  historyRequestDuringFinalization,
+  historyRequestExecuted,
 }
 
 /// Closed redaction-safe diagnostic failure categories.
 enum Phase6DiagnosticFailure { none, workLimit, geometry, preview, terminal }
+
+/// Closed redaction-safe reasons for abandoning one active gesture.
+enum Phase6DiagnosticCancellationReason {
+  none,
+  explicitUserRequest,
+  pointerCancelled,
+  focusLost,
+  lifecycleSuspended,
+  inputRejected,
+  geometryRejected,
+  terminalFailed,
+  schedulerRejected,
+  disposed,
+}
+
+/// Closed outcomes for history requests received during finalization.
+enum Phase6DiagnosticHistoryDisposition { none, queued, blocked, executed }
 
 /// One immutable numeric-only Phase 6 diagnostic event.
 final class Phase6DiagnosticEvent {
@@ -85,6 +104,47 @@ final class Phase6DiagnosticEvent {
     required this.visualObjectLayers,
     required this.maximumVisualBacklog,
     required this.exactProcessingBacklog,
+    required this.predicateStepsPerFrame,
+    required this.rootIsolationStepsPerFrame,
+    required this.resumedClassifierOrdinal,
+    required this.pendingFeatureRoots,
+    required this.exactFinalizationFrames,
+    required this.longestExactProcessingMicros,
+    required this.uncertaintyExitedEarly,
+    required this.pointerMoveExactClassifications,
+    required this.cancellationReason,
+    required this.historyDisposition,
+    required this.historyRequestsDuringFinalization,
+    required this.terminalMaterializations,
+    required this.publications,
+    required this.historyDepthBeforePublication,
+    required this.historyDepthAfterPublication,
+    required this.callbackWork,
+    required this.maximumCallbackWork,
+    required this.totalCallbackWork,
+    required this.aggregateRootIsolationSteps,
+    required this.aggregateFeatureTransitions,
+    required this.responsivenessBudgetOverruns,
+    required this.maximumInnerOperationMicros,
+    required this.ordinaryAnalyticClassifications,
+    required this.exactFallbackClassifications,
+    required this.exactFallbackExhaustions,
+    required this.rawVisualPoints,
+    required this.authoritativeExactPoints,
+    required this.activeExactCallbacks,
+    required this.activeExactWork,
+    required this.backlogAtPointerUp,
+    required this.postReleaseExactWork,
+    required this.activeExactPauses,
+    required this.activeBudgetOverruns,
+    required this.finalizationBudgetOverruns,
+    required this.postReleaseCooperativeTasks,
+    required this.postReleaseEventLoopYields,
+    required this.postReleaseAnimationFrameWaits,
+    required this.cooperativeSchedulerWaitMicros,
+    required this.indexPreparations,
+    required this.candidateIndexScans,
+    required this.replayedExactWork,
   });
 
   final int sequence;
@@ -169,10 +229,135 @@ final class Phase6DiagnosticEvent {
   /// Exact pointer points waiting for bounded processing.
   final int exactProcessingBacklog;
 
+  /// Primitive classification predicates evaluated by this frame callback.
+  final int predicateStepsPerFrame;
+
+  /// Root-isolation brackets advanced by this frame callback.
+  final int rootIsolationStepsPerFrame;
+
+  /// One-based classifier ordinal resumed by this callback.
+  final int resumedClassifierOrdinal;
+
+  /// Pending feature/root evidence retained for resumption.
+  final int pendingFeatureRoots;
+
+  /// Frame callbacks used by exact terminal finalization.
+  final int exactFinalizationFrames;
+
+  /// Longest observed exact-processing callback in microseconds.
+  final int longestExactProcessingMicros;
+
+  /// Whether structured uncertainty stopped work without exhaustive search.
+  final int uncertaintyExitedEarly;
+
+  /// Exact classifications performed from Pointer Move handling.
+  final int pointerMoveExactClassifications;
+
+  /// Closed reason accompanying [Phase6DiagnosticStage.gestureCancelled].
+  final Phase6DiagnosticCancellationReason cancellationReason;
+
+  /// Closed outcome of a history request received during finalization.
+  final Phase6DiagnosticHistoryDisposition historyDisposition;
+
+  /// Bounded history requests received while exact finalization was active.
+  final int historyRequestsDuringFinalization;
+
+  /// Terminal materializations completed by this gesture.
+  final int terminalMaterializations;
+
+  /// Atomic command publications completed by this gesture.
+  final int publications;
+
+  /// Retained history depth immediately before publication.
+  final int historyDepthBeforePublication;
+
+  /// Retained history depth immediately after publication.
+  final int historyDepthAfterPublication;
+
+  /// Deterministic primitive work completed by this exact callback.
+  final int callbackWork;
+
+  /// Maximum deterministic exact work observed in one callback.
+  final int maximumCallbackWork;
+
+  /// Total deterministic exact callback work for the gesture.
+  final int totalCallbackWork;
+
+  /// Aggregate root-isolation advances for the gesture.
+  final int aggregateRootIsolationSteps;
+
+  /// Aggregate fixed-size feature transitions for the gesture.
+  final int aggregateFeatureTransitions;
+
+  /// Exact callbacks that exceeded their injected responsiveness slice.
+  final int responsivenessBudgetOverruns;
+
+  /// Largest measured indivisible classifier operation in microseconds.
+  final int maximumInnerOperationMicros;
+
+  /// Classifications completed entirely by the analytic hot path.
+  final int ordinaryAnalyticClassifications;
+
+  /// Classifications that required certified exact fallback work.
+  final int exactFallbackClassifications;
+
+  /// Exact fallbacks stopped by their deterministic aggregate ceiling.
+  final int exactFallbackExhaustions;
+
+  /// Raw view-local points retained by the transparent visual path.
+  final int rawVisualPoints;
+
+  /// Authoritative exact points remaining after safe exact compaction.
+  final int authoritativeExactPoints;
+
+  /// Separately scheduled exact callbacks completed before Pointer Up.
+  final int activeExactCallbacks;
+
+  /// Deterministic exact work amortized before Pointer Up.
+  final int activeExactWork;
+
+  /// Authoritative point backlog captured when Pointer Up was admitted.
+  final int backlogAtPointerUp;
+
+  /// Deterministic exact work completed after Pointer Up.
+  final int postReleaseExactWork;
+
+  /// Active exact callbacks deferred for pending cursor or visual painting.
+  final int activeExactPauses;
+
+  /// Active-stage responsiveness-slice overruns.
+  final int activeBudgetOverruns;
+
+  /// Post-release responsiveness-slice overruns.
+  final int finalizationBudgetOverruns;
+
+  /// Cooperative event-loop tasks that performed post-release exact work.
+  final int postReleaseCooperativeTasks;
+
+  /// Event-loop yields requested between bounded post-release tasks.
+  final int postReleaseEventLoopYields;
+
+  /// Animation-frame waits used before post-release exact draining began.
+  final int postReleaseAnimationFrameWaits;
+
+  /// Aggregate time waiting for scheduled cooperative tasks to start.
+  final int cooperativeSchedulerWaitMicros;
+
+  /// Stroke geometry/spatial-index preparations retained by the gesture plan.
+  final int indexPreparations;
+
+  /// Bounded prepared-index queries performed for accepted pointer segments.
+  final int candidateIndexScans;
+
+  /// Completed exact point, candidate, or classifier work replayed.
+  final int replayedExactWork;
+
   /// Fixed-label representation containing no document or pointer data.
   String toSafeText() =>
       'phase6_diag seq=$sequence gesture=$gestureOrdinal '
-      'stage=${stage.name} failure=${failure.name} micros=$elapsedMicros '
+      'stage=${stage.name} failure=${failure.name} '
+      'cancel=${cancellationReason.name} history=${historyDisposition.name} '
+      'micros=$elapsedMicros '
       'backlog=$eventBacklog batch=$processedBatchSize '
       'budgetUsed=$workBudgetUsed budgetRemaining=$workBudgetRemaining '
       'rawPointers=$rawPointerEvents cursorRequests=$cursorRepaintRequests '
@@ -185,6 +370,39 @@ final class Phase6DiagnosticEvent {
       'visualLayers=$visualObjectLayers '
       'maxVisualBacklog=$maximumVisualBacklog '
       'exactBacklog=$exactProcessingBacklog '
+      'predicateSteps=$predicateStepsPerFrame rootSteps=$rootIsolationStepsPerFrame '
+      'classifier=$resumedClassifierOrdinal pendingRoots=$pendingFeatureRoots '
+      'finalizationFrames=$exactFinalizationFrames '
+      'longestExactMicros=$longestExactProcessingMicros '
+      'uncertaintyEarly=$uncertaintyExitedEarly '
+      'moveExact=$pointerMoveExactClassifications '
+      'historyRequests=$historyRequestsDuringFinalization '
+      'materializations=$terminalMaterializations publications=$publications '
+      'historyBefore=$historyDepthBeforePublication '
+      'historyAfter=$historyDepthAfterPublication '
+      'callbackWork=$callbackWork maxCallbackWork=$maximumCallbackWork '
+      'totalCallbackWork=$totalCallbackWork '
+      'totalRootSteps=$aggregateRootIsolationSteps '
+      'totalFeatureTransitions=$aggregateFeatureTransitions '
+      'rootsPerClassification=${classifications == 0 ? 0 : aggregateRootIsolationSteps ~/ classifications} '
+      'featuresPerClassification=${classifications == 0 ? 0 : aggregateFeatureTransitions ~/ classifications} '
+      'budgetOverruns=$responsivenessBudgetOverruns '
+      'maxInnerMicros=$maximumInnerOperationMicros '
+      'analytic=$ordinaryAnalyticClassifications '
+      'exactFallback=$exactFallbackClassifications '
+      'fallbackExhaustions=$exactFallbackExhaustions '
+      'rawVisualPoints=$rawVisualPoints exactPoints=$authoritativeExactPoints '
+      'activeCallbacks=$activeExactCallbacks activeWork=$activeExactWork '
+      'backlogAtUp=$backlogAtPointerUp postReleaseWork=$postReleaseExactWork '
+      'activePauses=$activeExactPauses '
+      'activeOverruns=$activeBudgetOverruns '
+      'finalizationOverruns=$finalizationBudgetOverruns '
+      'cooperativeTasks=$postReleaseCooperativeTasks '
+      'eventLoopYields=$postReleaseEventLoopYields '
+      'frameWaits=$postReleaseAnimationFrameWaits '
+      'schedulerWaitMicros=$cooperativeSchedulerWaitMicros '
+      'indexPreparations=$indexPreparations indexScans=$candidateIndexScans '
+      'replayedWork=$replayedExactWork '
       'segments=$pointerSegments objects=$candidateObjects '
       'strokes=$candidateStrokes sourceSegments=$candidateSourceSegments '
       'spatial=$spatialElements classifications=$classifications '
@@ -281,6 +499,49 @@ final class Phase6DiagnosticTrace {
     int visualObjectLayers = 0,
     int maximumVisualBacklog = 0,
     int exactProcessingBacklog = 0,
+    int predicateStepsPerFrame = 0,
+    int rootIsolationStepsPerFrame = 0,
+    int resumedClassifierOrdinal = 0,
+    int pendingFeatureRoots = 0,
+    int exactFinalizationFrames = 0,
+    int longestExactProcessingMicros = 0,
+    int uncertaintyExitedEarly = 0,
+    int pointerMoveExactClassifications = 0,
+    Phase6DiagnosticCancellationReason cancellationReason =
+        Phase6DiagnosticCancellationReason.none,
+    Phase6DiagnosticHistoryDisposition historyDisposition =
+        Phase6DiagnosticHistoryDisposition.none,
+    int historyRequestsDuringFinalization = 0,
+    int terminalMaterializations = 0,
+    int publications = 0,
+    int historyDepthBeforePublication = 0,
+    int historyDepthAfterPublication = 0,
+    int callbackWork = 0,
+    int maximumCallbackWork = 0,
+    int totalCallbackWork = 0,
+    int aggregateRootIsolationSteps = 0,
+    int aggregateFeatureTransitions = 0,
+    int responsivenessBudgetOverruns = 0,
+    int maximumInnerOperationMicros = 0,
+    int ordinaryAnalyticClassifications = 0,
+    int exactFallbackClassifications = 0,
+    int exactFallbackExhaustions = 0,
+    int rawVisualPoints = 0,
+    int authoritativeExactPoints = 0,
+    int activeExactCallbacks = 0,
+    int activeExactWork = 0,
+    int backlogAtPointerUp = 0,
+    int postReleaseExactWork = 0,
+    int activeExactPauses = 0,
+    int activeBudgetOverruns = 0,
+    int finalizationBudgetOverruns = 0,
+    int postReleaseCooperativeTasks = 0,
+    int postReleaseEventLoopYields = 0,
+    int postReleaseAnimationFrameWaits = 0,
+    int cooperativeSchedulerWaitMicros = 0,
+    int indexPreparations = 0,
+    int candidateIndexScans = 0,
+    int replayedExactWork = 0,
   }) {
     if (!enabled) return;
     final counts = [
@@ -321,6 +582,45 @@ final class Phase6DiagnosticTrace {
       visualObjectLayers,
       maximumVisualBacklog,
       exactProcessingBacklog,
+      predicateStepsPerFrame,
+      rootIsolationStepsPerFrame,
+      resumedClassifierOrdinal,
+      pendingFeatureRoots,
+      exactFinalizationFrames,
+      longestExactProcessingMicros,
+      uncertaintyExitedEarly,
+      pointerMoveExactClassifications,
+      historyRequestsDuringFinalization,
+      terminalMaterializations,
+      publications,
+      historyDepthBeforePublication,
+      historyDepthAfterPublication,
+      callbackWork,
+      maximumCallbackWork,
+      totalCallbackWork,
+      aggregateRootIsolationSteps,
+      aggregateFeatureTransitions,
+      responsivenessBudgetOverruns,
+      maximumInnerOperationMicros,
+      ordinaryAnalyticClassifications,
+      exactFallbackClassifications,
+      exactFallbackExhaustions,
+      rawVisualPoints,
+      authoritativeExactPoints,
+      activeExactCallbacks,
+      activeExactWork,
+      backlogAtPointerUp,
+      postReleaseExactWork,
+      activeExactPauses,
+      activeBudgetOverruns,
+      finalizationBudgetOverruns,
+      postReleaseCooperativeTasks,
+      postReleaseEventLoopYields,
+      postReleaseAnimationFrameWaits,
+      cooperativeSchedulerWaitMicros,
+      indexPreparations,
+      candidateIndexScans,
+      replayedExactWork,
     ];
     if (counts.any((value) => value < 0 || value > Revision.maximumValue)) {
       return;
@@ -367,6 +667,47 @@ final class Phase6DiagnosticTrace {
       visualObjectLayers: visualObjectLayers,
       maximumVisualBacklog: maximumVisualBacklog,
       exactProcessingBacklog: exactProcessingBacklog,
+      predicateStepsPerFrame: predicateStepsPerFrame,
+      rootIsolationStepsPerFrame: rootIsolationStepsPerFrame,
+      resumedClassifierOrdinal: resumedClassifierOrdinal,
+      pendingFeatureRoots: pendingFeatureRoots,
+      exactFinalizationFrames: exactFinalizationFrames,
+      longestExactProcessingMicros: longestExactProcessingMicros,
+      uncertaintyExitedEarly: uncertaintyExitedEarly,
+      pointerMoveExactClassifications: pointerMoveExactClassifications,
+      cancellationReason: cancellationReason,
+      historyDisposition: historyDisposition,
+      historyRequestsDuringFinalization: historyRequestsDuringFinalization,
+      terminalMaterializations: terminalMaterializations,
+      publications: publications,
+      historyDepthBeforePublication: historyDepthBeforePublication,
+      historyDepthAfterPublication: historyDepthAfterPublication,
+      callbackWork: callbackWork,
+      maximumCallbackWork: maximumCallbackWork,
+      totalCallbackWork: totalCallbackWork,
+      aggregateRootIsolationSteps: aggregateRootIsolationSteps,
+      aggregateFeatureTransitions: aggregateFeatureTransitions,
+      responsivenessBudgetOverruns: responsivenessBudgetOverruns,
+      maximumInnerOperationMicros: maximumInnerOperationMicros,
+      ordinaryAnalyticClassifications: ordinaryAnalyticClassifications,
+      exactFallbackClassifications: exactFallbackClassifications,
+      exactFallbackExhaustions: exactFallbackExhaustions,
+      rawVisualPoints: rawVisualPoints,
+      authoritativeExactPoints: authoritativeExactPoints,
+      activeExactCallbacks: activeExactCallbacks,
+      activeExactWork: activeExactWork,
+      backlogAtPointerUp: backlogAtPointerUp,
+      postReleaseExactWork: postReleaseExactWork,
+      activeExactPauses: activeExactPauses,
+      activeBudgetOverruns: activeBudgetOverruns,
+      finalizationBudgetOverruns: finalizationBudgetOverruns,
+      postReleaseCooperativeTasks: postReleaseCooperativeTasks,
+      postReleaseEventLoopYields: postReleaseEventLoopYields,
+      postReleaseAnimationFrameWaits: postReleaseAnimationFrameWaits,
+      cooperativeSchedulerWaitMicros: cooperativeSchedulerWaitMicros,
+      indexPreparations: indexPreparations,
+      candidateIndexScans: candidateIndexScans,
+      replayedExactWork: replayedExactWork,
     );
     if (_events.length == capacity) _events.removeAt(0);
     _events.add(event);

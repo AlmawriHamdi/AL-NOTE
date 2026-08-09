@@ -135,7 +135,10 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   WholeEraseGesturePlan? _wholeEraserPlan;
   PartialEraseGesturePlan? _partialEraserPlan;
   final List<Point2> _partialPendingPoints = [];
+  Point2? _partialProcessedExactPoint;
+  int _partialExactPointCount = 0;
   bool _partialBatchScheduled = false;
+  Phase6CooperativeTaskHandle? _partialCooperativeTask;
   bool _partialTerminalPending = false;
   int? _partialTerminalPointer;
   int _partialBatchGeneration = 0;
@@ -150,18 +153,74 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   int _rawPartialPointerEvents = 0;
   int _cursorRepaintRequests = 0;
   int _cursorRepaints = 0;
+  bool _cursorPaintPending = false;
   int _processingBatches = 0;
   int _maximumProcessingBacklog = 0;
   int _candidateResumptions = 0;
   int _visualRepaintRequests = 0;
   int _visualRepaints = 0;
+  bool _visualPaintPending = false;
   int _visualObjectLayers = 0;
   int _maximumVisualBacklog = 0;
+  int _exactFinalizationFrames = 0;
+  int _longestExactProcessingMicros = 0;
+  int _uncertaintyExitedEarly = 0;
+  int _pointerMoveExactClassifications = 0;
+  bool _pendingUndoAfterPartialFinalization = false;
+  int _historyRequestsDuringFinalization = 0;
+  int _terminalMaterializations = 0;
+  int _partialPublications = 0;
+  int _historyDepthBeforePublication = 0;
+  int _historyDepthAfterPublication = 0;
+  int _totalExactCallbackWork = 0;
+  int _maximumExactCallbackWork = 0;
+  int _totalExactRootAdvances = 0;
+  int _totalExactFeatureTransitions = 0;
+  int _responsivenessBudgetOverruns = 0;
+  int _activeExactCallbacks = 0;
+  int _activeExactWork = 0;
+  int _postReleaseExactWork = 0;
+  int _activeExactPauses = 0;
+  int _activeBudgetOverruns = 0;
+  int _finalizationBudgetOverruns = 0;
+  int _backlogAtPointerUp = 0;
+  int _postReleaseCooperativeTasks = 0;
+  int _postReleaseEventLoopYields = 0;
+  int _postReleaseAnimationFrameWaits = 0;
+  int _cooperativeSchedulerWaitMicros = 0;
   Stopwatch? _partialUpClock;
 
   HandwritingLimits get _limits => widget.runtime.handwritingLimits;
   UuidGenerator get _uuid => widget.runtime.uuidGenerator;
   Phase6DiagnosticTrace get _diagnostics => widget.runtime.diagnosticTrace;
+  bool get _isPartialFinalizing =>
+      _partialEraserPlan != null && _partialUpClock != null;
+
+  void _pictureCreated() {
+    try {
+      widget.runtime.nativePictureObserver.pictureCreated();
+    } on Object {
+      // Accounting observers cannot affect Canvas ownership.
+    }
+  }
+
+  void _pictureDisposed() {
+    try {
+      widget.runtime.nativePictureObserver.pictureDisposed();
+    } on Object {
+      // Accounting observers cannot affect Canvas ownership.
+    }
+  }
+
+  void _disposePicture(ui.Picture picture) {
+    try {
+      picture.dispose();
+    } on Object {
+      // Native cleanup is best-effort and must not interrupt other cleanup.
+    } finally {
+      _pictureDisposed();
+    }
+  }
 
   bool _diagnosticMilestone(int value) =>
       value <= 4 || (value > 0 && value & (value - 1) == 0);
@@ -172,6 +231,15 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     int elapsedMicros = 0,
     int processedBatchSize = 0,
     int eventBacklog = 0,
+    int predicateStepsPerFrame = 0,
+    int rootIsolationStepsPerFrame = 0,
+    int resumedClassifierOrdinal = 0,
+    int pendingFeatureRoots = 0,
+    Phase6DiagnosticCancellationReason cancellationReason =
+        Phase6DiagnosticCancellationReason.none,
+    Phase6DiagnosticHistoryDisposition historyDisposition =
+        Phase6DiagnosticHistoryDisposition.none,
+    int callbackWork = 0,
   }) {
     final plan = _partialEraserPlan;
     _diagnostics.record(
@@ -218,23 +286,93 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       visualObjectLayers: _visualObjectLayers,
       maximumVisualBacklog: _maximumVisualBacklog,
       exactProcessingBacklog: _partialPendingPoints.length,
+      predicateStepsPerFrame: predicateStepsPerFrame,
+      rootIsolationStepsPerFrame: rootIsolationStepsPerFrame,
+      resumedClassifierOrdinal: resumedClassifierOrdinal,
+      pendingFeatureRoots: pendingFeatureRoots,
+      exactFinalizationFrames: _exactFinalizationFrames,
+      longestExactProcessingMicros: _longestExactProcessingMicros,
+      uncertaintyExitedEarly: _uncertaintyExitedEarly,
+      pointerMoveExactClassifications: _pointerMoveExactClassifications,
+      cancellationReason: cancellationReason,
+      historyDisposition: historyDisposition,
+      historyRequestsDuringFinalization: _historyRequestsDuringFinalization,
+      terminalMaterializations: _terminalMaterializations,
+      publications: _partialPublications,
+      historyDepthBeforePublication: _historyDepthBeforePublication,
+      historyDepthAfterPublication: _historyDepthAfterPublication,
+      callbackWork: callbackWork,
+      maximumCallbackWork: _maximumExactCallbackWork,
+      totalCallbackWork: _totalExactCallbackWork,
+      aggregateRootIsolationSteps: _totalExactRootAdvances,
+      aggregateFeatureTransitions: _totalExactFeatureTransitions,
+      responsivenessBudgetOverruns: _responsivenessBudgetOverruns,
+      maximumInnerOperationMicros: plan?.maximumInnerOperationMicros ?? 0,
+      ordinaryAnalyticClassifications:
+          plan?.ordinaryAnalyticClassificationCount ?? 0,
+      exactFallbackClassifications: plan?.exactFallbackClassificationCount ?? 0,
+      exactFallbackExhaustions: plan?.exactFallbackExhaustionCount ?? 0,
+      rawVisualPoints: _partialEraserPath.length,
+      authoritativeExactPoints: _partialExactPointCount,
+      activeExactCallbacks: _activeExactCallbacks,
+      activeExactWork: _activeExactWork,
+      backlogAtPointerUp: _backlogAtPointerUp,
+      postReleaseExactWork: _postReleaseExactWork,
+      activeExactPauses: _activeExactPauses,
+      activeBudgetOverruns: _activeBudgetOverruns,
+      finalizationBudgetOverruns: _finalizationBudgetOverruns,
+      postReleaseCooperativeTasks: _postReleaseCooperativeTasks,
+      postReleaseEventLoopYields: _postReleaseEventLoopYields,
+      postReleaseAnimationFrameWaits: _postReleaseAnimationFrameWaits,
+      cooperativeSchedulerWaitMicros: _cooperativeSchedulerWaitMicros,
+      indexPreparations: plan?.erasurePreparationCount ?? 0,
+      candidateIndexScans: plan?.spatialQueryCount ?? 0,
+      replayedExactWork: plan?.replayedWorkCount ?? 0,
     );
   }
 
   Future<void> _copyDiagnostics() async {
-    if (mounted) setState(() => _status = 'Diagnostics copied');
-    await Clipboard.setData(ClipboardData(text: _diagnostics.copyText()));
+    Result<void, StructuredFailure>? copied;
+    try {
+      copied = await widget.runtime.debugClipboard.copyText(
+        _diagnostics.copyText(),
+      );
+    } on Object {
+      copied = null;
+    }
+    if (!mounted) return;
+    setState(
+      () => _status = copied is Ok<void, StructuredFailure>
+          ? 'Diagnostics copied'
+          : 'Diagnostics copy failed',
+    );
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    if (_partialEraserPlan != null) {
+      _tracePartial(
+        Phase6DiagnosticStage.gestureCancelled,
+        cancellationReason: Phase6DiagnosticCancellationReason.disposed,
+      );
+    }
+    _partialBatchGeneration += 1;
+    try {
+      _pen?.cancel();
+    } on Object {
+      // Cleanup remains best-effort and idempotent at platform boundaries.
+    }
+    _pen = null;
     _router.cancel();
+    _clearEraserTransient();
+    _clearPenPreview();
     _eraserCursor.dispose();
     _partialVisualEraser.dispose();
     for (final evidence in _objectPictures.values) {
-      evidence.picture.dispose();
+      _disposePicture(evidence.picture);
     }
+    _objectPictures = const {};
     super.dispose();
   }
 
@@ -242,9 +380,13 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   void initState() {
     super.initState();
     _eraserCursor = _EraserCursorController(
-      onRequest: () => _cursorRepaintRequests += 1,
+      onRequest: () {
+        _cursorRepaintRequests += 1;
+        _cursorPaintPending = true;
+      },
       onRepaint: (elapsedMicros) {
         _cursorRepaints += 1;
+        _cursorPaintPending = false;
         _tracePartial(
           Phase6DiagnosticStage.cursorRepaintCompleted,
           elapsedMicros: elapsedMicros,
@@ -252,12 +394,17 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       },
     );
     _partialVisualEraser = _PartialVisualEraserController(
+      maximumPictures: widget.runtime.maximumEraserVisualPictures,
+      onPictureCreated: _pictureCreated,
+      onPictureDisposed: _pictureDisposed,
       onRequest: (backlog) {
         _visualRepaintRequests += 1;
+        _visualPaintPending = true;
         _maximumVisualBacklog = math.max(_maximumVisualBacklog, backlog);
       },
       onPainted: (elapsedMicros, objectLayers) {
         _visualRepaints += 1;
+        _visualPaintPending = false;
         _visualObjectLayers = objectLayers;
         _tracePartial(
           Phase6DiagnosticStage.visualPreviewCompleted,
@@ -316,7 +463,10 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed && _router.ownership.owner != null) {
-      _cancelGesture('Gesture cancelled');
+      _cancelGesture(
+        'Gesture cancelled',
+        reason: Phase6DiagnosticCancellationReason.lifecycleSuspended,
+      );
     }
   }
 
@@ -324,6 +474,10 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   LayerId get _layerId => _page.layers.whereType<ContentLayer>().first.id;
 
   void _setTool(_CanvasTool value) {
+    if (_isPartialFinalizing) {
+      setState(() => _status = 'Finishing partial erase');
+      return;
+    }
     if (!_toolRegistry.definitions.containsKey(_toolId(value))) return;
     _pen?.cancel();
     _router.cancel();
@@ -347,6 +501,24 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   }
 
   void _undo() {
+    if (_isPartialFinalizing) {
+      _historyRequestsDuringFinalization += 1;
+      if (!_pendingUndoAfterPartialFinalization) {
+        _pendingUndoAfterPartialFinalization = true;
+        _tracePartial(
+          Phase6DiagnosticStage.historyRequestDuringFinalization,
+          historyDisposition: Phase6DiagnosticHistoryDisposition.queued,
+        );
+        setState(() => _status = 'Undo queued after partial erase');
+      } else {
+        _tracePartial(
+          Phase6DiagnosticStage.historyRequestDuringFinalization,
+          historyDisposition: Phase6DiagnosticHistoryDisposition.blocked,
+        );
+        setState(() => _status = 'Undo already queued');
+      }
+      return;
+    }
     final result = _coordinator.undo();
     _selection.reconcile(_coordinator.snapshot.root);
     setState(() {
@@ -355,6 +527,15 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   }
 
   void _redo() {
+    if (_isPartialFinalizing) {
+      _historyRequestsDuringFinalization += 1;
+      _tracePartial(
+        Phase6DiagnosticStage.historyRequestDuringFinalization,
+        historyDisposition: Phase6DiagnosticHistoryDisposition.blocked,
+      );
+      setState(() => _status = 'Redo blocked while finishing partial erase');
+      return;
+    }
     final result = _coordinator.redo();
     _selection.reconcile(_coordinator.snapshot.root);
     setState(() {
@@ -363,6 +544,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   }
 
   void _pointer(PointerEvent raw) {
+    if (_isPartialFinalizing) return;
     final normalized = widget.runtime.pointerAdapter.normalize(raw);
     if (normalized is! Ok<NormalizedPointerEvent, StructuredFailure>) {
       if (_router.ownership.owner == raw.pointer) {
@@ -454,8 +636,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     } else if (routedTool == _CanvasTool.partialEraser &&
         event.phase == PointerPhase.move) {
       _acceptPartialCursor(event.viewPosition);
-      _partialVisualEraser.append(event.viewPosition);
-      _queuePartialEraserPoint(pagePoint);
+      if (!_admitPartialEraserPoint(pagePoint, event.viewPosition)) return;
     } else if (routedTool == _CanvasTool.wholeEraser &&
         event.phase == PointerPhase.move) {
       if (!_appendWholeEraserPoint(pagePoint)) return;
@@ -490,14 +671,16 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     } else if (routedTool == _CanvasTool.partialEraser &&
         event.phase == PointerPhase.up) {
       _rawPartialPointerEvents += 1;
-      _partialVisualEraser.append(event.viewPosition);
       _eraserCursor.clear();
       _partialUpClock = Stopwatch()..start();
-      _queuePartialEraserPoint(
+      if (!_admitPartialEraserPoint(
         pagePoint,
+        event.viewPosition,
         terminal: true,
         pointerId: event.pointerId,
-      );
+      )) {
+        return;
+      }
     } else if (routedTool == _CanvasTool.wholeEraser &&
         event.phase == PointerPhase.up) {
       if (!_appendWholeEraserPoint(pagePoint, publish: false)) return;
@@ -510,7 +693,10 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     } else if (event.phase == PointerPhase.up) {
       _router.completeTerminal(event.pointerId);
     } else if (event.phase == PointerPhase.cancel) {
-      _cancelGesture('Gesture cancelled');
+      _cancelGesture(
+        'Gesture cancelled',
+        reason: Phase6DiagnosticCancellationReason.pointerCancelled,
+      );
     }
   }
 
@@ -521,13 +707,43 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     _rawPartialPointerEvents = 0;
     _cursorRepaintRequests = 0;
     _cursorRepaints = 0;
+    _cursorPaintPending = false;
     _processingBatches = 0;
     _maximumProcessingBacklog = 0;
     _candidateResumptions = 0;
     _visualRepaintRequests = 0;
     _visualRepaints = 0;
+    _visualPaintPending = false;
     _visualObjectLayers = 0;
     _maximumVisualBacklog = 0;
+    _exactFinalizationFrames = 0;
+    _longestExactProcessingMicros = 0;
+    _uncertaintyExitedEarly = 0;
+    _pointerMoveExactClassifications = 0;
+    _pendingUndoAfterPartialFinalization = false;
+    _historyRequestsDuringFinalization = 0;
+    _terminalMaterializations = 0;
+    _partialPublications = 0;
+    _historyDepthBeforePublication = 0;
+    _historyDepthAfterPublication = 0;
+    _totalExactCallbackWork = 0;
+    _maximumExactCallbackWork = 0;
+    _totalExactRootAdvances = 0;
+    _totalExactFeatureTransitions = 0;
+    _responsivenessBudgetOverruns = 0;
+    _activeExactCallbacks = 0;
+    _activeExactWork = 0;
+    _postReleaseExactWork = 0;
+    _activeExactPauses = 0;
+    _activeBudgetOverruns = 0;
+    _finalizationBudgetOverruns = 0;
+    _backlogAtPointerUp = 0;
+    _postReleaseCooperativeTasks = 0;
+    _postReleaseEventLoopYields = 0;
+    _postReleaseAnimationFrameWaits = 0;
+    _cooperativeSchedulerWaitMicros = 0;
+    _partialProcessedExactPoint = null;
+    _partialExactPointCount = 0;
     _partialUpClock = null;
     _diagnostics.beginGesture();
     _tracePartial(Phase6DiagnosticStage.partialPrepareEntered);
@@ -557,19 +773,28 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
         Phase6DiagnosticStage.partialMoveFailed,
         failure: Phase6DiagnosticFailure.geometry,
       );
-      _cancelGesture('Partial erase rejected');
+      _cancelGesture(
+        'Partial erase rejected',
+        reason: Phase6DiagnosticCancellationReason.geometryRejected,
+      );
       return;
     }
     _partialEraserPlan = prepared.value;
+    final down = _viewport
+        .pageToView(point)
+        .fold<ViewPoint?>(onOk: (value) => value, onErr: (_) => null);
     if (!_partialVisualEraser.begin(
-      objects: prepared.value.visualObjectEvidence,
-      viewport: _viewport,
-      down: _viewport
-          .pageToView(point)
-          .fold<ViewPoint?>(onOk: (value) => value, onErr: (_) => null),
-      radius: prepared.value.radius * _viewport.zoom,
-    )) {
-      _cancelGesture('Partial erase rejected');
+          objects: prepared.value.visualObjectEvidence,
+          viewport: _viewport,
+          down: down,
+          radius: prepared.value.radius * _viewport.zoom,
+        ) ||
+        down == null ||
+        !_admitPartialEraserPoint(point, down)) {
+      _cancelGesture(
+        'Partial erase rejected',
+        reason: Phase6DiagnosticCancellationReason.geometryRejected,
+      );
       return;
     }
     preparationClock?.stop();
@@ -577,8 +802,33 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       Phase6DiagnosticStage.partialPrepareCompleted,
       elapsedMicros: preparationClock?.elapsedMicroseconds ?? 0,
     );
-    _queuePartialEraserPoint(point);
     setState(() => _status = 'Partial erasing');
+  }
+
+  bool _admitPartialEraserPoint(
+    Point2 point,
+    ViewPoint viewPoint, {
+    bool terminal = false,
+    int? pointerId,
+  }) {
+    final plan = _partialEraserPlan;
+    if (plan == null) {
+      _cancelGesture(
+        'Partial erase rejected',
+        reason: Phase6DiagnosticCancellationReason.geometryRejected,
+      );
+      return false;
+    }
+    if (_partialEraserPath.length >= widget.runtime.maximumEraserPoints ||
+        !_partialVisualEraser.append(viewPoint)) {
+      _cancelGesture(
+        'Partial erase rejected',
+        reason: Phase6DiagnosticCancellationReason.geometryRejected,
+      );
+      return false;
+    }
+    _queuePartialEraserPoint(point, terminal: terminal, pointerId: pointerId);
+    return true;
   }
 
   void _queuePartialEraserPoint(
@@ -586,7 +836,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     bool terminal = false,
     int? pointerId,
   }) {
-    _partialPendingPoints.add(point);
+    _partialEraserPath.add(point);
+    _appendAuthoritativePartialPoint(point);
     _maximumProcessingBacklog = math.max(
       _maximumProcessingBacklog,
       _partialPendingPoints.length,
@@ -594,50 +845,179 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     if (terminal) {
       _partialTerminalPending = true;
       _partialTerminalPointer = pointerId;
+      _backlogAtPointerUp = _partialPendingPoints.length;
       if (mounted) setState(() => _status = 'Finishing partial erase');
     }
+    _schedulePartialEraserBatch();
+  }
+
+  void _appendAuthoritativePartialPoint(Point2 point) {
+    final plan = _partialEraserPlan;
+    if (_partialPendingPoints.isEmpty) {
+      if (_partialProcessedExactPoint == point) return;
+      _partialPendingPoints.add(point);
+      _partialExactPointCount += 1;
+      return;
+    }
+    final latest = _partialPendingPoints.last;
+    if (latest == point) return;
+    Point2? predecessor;
+    if (_partialPendingPoints.length >= 2) {
+      predecessor = _partialPendingPoints[_partialPendingPoints.length - 2];
+    } else if (plan?.hasPendingPointWork != true) {
+      predecessor = _partialProcessedExactPoint;
+    }
+    if (predecessor != null) {
+      final redundant = SweptPath.isRedundantMiddle(
+        first: predecessor,
+        middle: latest,
+        last: point,
+      );
+      if (redundant is Ok<bool, StructuredFailure> && redundant.value) {
+        _partialPendingPoints[_partialPendingPoints.length - 1] = point;
+        return;
+      }
+    }
+    _partialPendingPoints.add(point);
+    _partialExactPointCount += 1;
+  }
+
+  void _schedulePartialEraserBatch({bool cooperative = false}) {
     if (_partialBatchScheduled) return;
     _partialBatchScheduled = true;
     final generation = _partialBatchGeneration;
+    if (cooperative) {
+      final waitClock = Stopwatch()..start();
+      var scheduleReturned = false;
+      var invokedSynchronously = false;
+      Result<Phase6CooperativeTaskHandle, StructuredFailure>? scheduled;
+      try {
+        scheduled = widget.runtime.cooperativeTaskScheduler.schedule(() {
+          if (!scheduleReturned) {
+            invokedSynchronously = true;
+            return;
+          }
+          _partialCooperativeTask = null;
+          waitClock.stop();
+          if (!mounted || generation != _partialBatchGeneration) return;
+          _cooperativeSchedulerWaitMicros += waitClock.elapsedMicroseconds;
+          try {
+            _processPartialEraserBatch(generation, cooperative: true);
+          } on Object {
+            _partialBatchScheduled = false;
+            _cancelGesture(
+              'Partial erase rejected',
+              reason: Phase6DiagnosticCancellationReason.schedulerRejected,
+            );
+          }
+        });
+      } on Object {
+        scheduled = null;
+      }
+      scheduleReturned = true;
+      if (invokedSynchronously ||
+          scheduled is! Ok<Phase6CooperativeTaskHandle, StructuredFailure>) {
+        waitClock.stop();
+        _partialBatchScheduled = false;
+        _cancelGesture(
+          'Partial erase rejected',
+          reason: Phase6DiagnosticCancellationReason.schedulerRejected,
+        );
+      } else {
+        _partialCooperativeTask = scheduled.value;
+      }
+      return;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _processPartialEraserBatch(generation);
+      _processPartialEraserBatch(generation, cooperative: false);
     });
     WidgetsBinding.instance.scheduleFrame();
   }
 
-  void _processPartialEraserBatch(int generation) {
+  void _processPartialEraserBatch(int generation, {required bool cooperative}) {
     if (!mounted || generation != _partialBatchGeneration) return;
     _partialBatchScheduled = false;
     if (_partialPendingPoints.isEmpty) return;
     final plan = _partialEraserPlan;
     if (plan == null || !plan.isCurrent(_coordinator.snapshot)) {
-      _cancelGesture('Partial erase rejected');
+      _cancelGesture(
+        'Partial erase rejected',
+        reason: Phase6DiagnosticCancellationReason.geometryRejected,
+      );
       return;
     }
-    _tracePartial(Phase6DiagnosticStage.partialMoveEntered);
+    final finalizing = _partialTerminalPending;
+    final visualWorkPending = _cursorPaintPending || _visualPaintPending;
+    if (!finalizing && visualWorkPending) {
+      _activeExactPauses += 1;
+      _schedulePartialEraserBatch();
+      return;
+    }
+    if (!finalizing &&
+        !plan.hasPendingPointWork &&
+        _partialPendingPoints.length <= 1) {
+      return;
+    }
+    final sliceMicros = finalizing
+        ? widget.runtime.maximumEraserExactSliceMicros
+        : widget.runtime.maximumEraserActiveExactSliceMicros;
     var remainingCandidates =
         widget.runtime.maximumEraserBatchCandidateSegments;
     var remainingClassifications =
         widget.runtime.maximumEraserBatchClassifications;
     var remainingChecks = widget.runtime.maximumEraserBatchClassificationChecks;
+    var remainingRootAdvances =
+        widget.runtime.maximumEraserBatchRootIsolationAdvances;
+    var remainingFeatureTransitions =
+        widget.runtime.maximumEraserBatchFeatureTransitions;
     var completedPoints = 0;
-    final classificationClock = _diagnostics.enabled
-        ? (Stopwatch()..start())
-        : null;
+    var framePredicates = 0;
+    var frameRoots = 0;
+    var frameFeatures = 0;
+    var frameClassifications = 0;
+    var frameCandidates = 0;
+    var resumedClassifier = 0;
+    var pendingFeatureRoots = 0;
+    if (finalizing) {
+      if (cooperative) {
+        _postReleaseCooperativeTasks += 1;
+      } else {
+        _exactFinalizationFrames += 1;
+        _postReleaseAnimationFrameWaits += 1;
+      }
+    } else {
+      _activeExactCallbacks += 1;
+    }
+    final classificationClock = Stopwatch()..start();
     while (_partialPendingPoints.isNotEmpty &&
         completedPoints < _partialEraserUiBatchLimit &&
         remainingCandidates > 0 &&
         remainingClassifications > 0 &&
-        remainingChecks >=
-            StrokeGeometryResolver.maximumPreparedClassificationChecks) {
+        remainingChecks > 0 &&
+        remainingRootAdvances > 0 &&
+        remainingFeatureTransitions >=
+            _geometry.limits.ellipseVertexCount * 2 &&
+        (finalizing ||
+            plan.hasPendingPointWork ||
+            _partialPendingPoints.length > 1) &&
+        classificationClock.elapsedMicroseconds < sliceMicros) {
       final update = plan.processPointWork(
         point: plan.hasPendingPointWork ? null : _partialPendingPoints.first,
         maximumCandidateSourceSegments: remainingCandidates,
         maximumClassifications: remainingClassifications,
         maximumChecks: remainingChecks,
+        maximumRootIsolationAdvances: remainingRootAdvances,
+        maximumFeatureTransitions: remainingFeatureTransitions,
+        maximumElapsedMicros: math.max(
+          1,
+          sliceMicros - classificationClock.elapsedMicroseconds,
+        ),
         materializePreviewEvidence: false,
       );
       if (update is! Ok<PartialEraseWorkBatch, StructuredFailure>) {
+        if (plan.classificationUncertaintyExitedEarly) {
+          _uncertaintyExitedEarly = 1;
+        }
         _tracePartial(
           Phase6DiagnosticStage.partialMoveFailed,
           failure:
@@ -645,41 +1025,79 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
               ? Phase6DiagnosticFailure.workLimit
               : Phase6DiagnosticFailure.geometry,
         );
-        _cancelGesture('Partial erase rejected');
+        _cancelGesture(
+          'Partial erase rejected',
+          reason: Phase6DiagnosticCancellationReason.geometryRejected,
+        );
         return;
       }
       remainingCandidates -= update.value.candidateSourceSegments;
       remainingClassifications -= update.value.intervalClassifications;
       remainingChecks -= update.value.classificationChecks;
+      remainingRootAdvances -= update.value.rootIsolationAdvances;
+      remainingFeatureTransitions -= update.value.featureTransitions;
+      framePredicates += update.value.classificationChecks;
+      frameRoots += update.value.rootIsolationAdvances;
+      frameFeatures += update.value.featureTransitions;
+      frameClassifications += update.value.intervalClassifications;
+      frameCandidates += update.value.candidateSourceSegments;
+      resumedClassifier = update.value.resumedClassifierOrdinal;
+      pendingFeatureRoots = update.value.pendingClassificationIntervals;
       if (!update.value.pointCompleted) {
         _candidateResumptions += 1;
         break;
       }
-      final point = _partialPendingPoints.removeAt(0);
-      _partialEraserPath.add(point);
+      _partialProcessedExactPoint = _partialPendingPoints.removeAt(0);
       completedPoints += 1;
     }
-    classificationClock?.stop();
+    classificationClock.stop();
+    if (classificationClock.elapsedMicroseconds > sliceMicros) {
+      _responsivenessBudgetOverruns += 1;
+      if (finalizing) {
+        _finalizationBudgetOverruns += 1;
+      } else {
+        _activeBudgetOverruns += 1;
+      }
+    }
+    final frameWork =
+        framePredicates +
+        frameRoots +
+        frameFeatures +
+        frameClassifications +
+        frameCandidates;
+    _totalExactCallbackWork += frameWork;
+    if (finalizing) {
+      _postReleaseExactWork += frameWork;
+    } else {
+      _activeExactWork += frameWork;
+    }
+    _maximumExactCallbackWork = math.max(_maximumExactCallbackWork, frameWork);
+    _totalExactRootAdvances += frameRoots;
+    _totalExactFeatureTransitions += frameFeatures;
+    _longestExactProcessingMicros = math.max(
+      _longestExactProcessingMicros,
+      classificationClock.elapsedMicroseconds,
+    );
     _tracePartial(
       Phase6DiagnosticStage.intervalClassification,
-      elapsedMicros: classificationClock?.elapsedMicroseconds ?? 0,
+      elapsedMicros: classificationClock.elapsedMicroseconds,
       processedBatchSize: completedPoints,
+      predicateStepsPerFrame: framePredicates,
+      rootIsolationStepsPerFrame: frameRoots,
+      resumedClassifierOrdinal: resumedClassifier,
+      pendingFeatureRoots: pendingFeatureRoots,
+      callbackWork: frameWork,
     );
     _processingBatches += 1;
-    _tracePartial(Phase6DiagnosticStage.partialMoveCompleted);
-    if (mounted && completedPoints > 0) {
-      _repaintEvidenceCount += 1;
-      setState(() {});
-    }
-    if (_partialPendingPoints.isNotEmpty || plan.hasPendingPointWork) {
-      _partialBatchScheduled = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _processPartialEraserBatch(generation);
-      });
-      WidgetsBinding.instance.scheduleFrame();
+    final hasProcessableWork = finalizing
+        ? _partialPendingPoints.isNotEmpty || plan.hasPendingPointWork
+        : plan.hasPendingPointWork || _partialPendingPoints.length > 1;
+    if (hasProcessableWork) {
+      if (finalizing) _postReleaseEventLoopYields += 1;
+      _schedulePartialEraserBatch(cooperative: finalizing);
       return;
     }
-    if (_partialTerminalPending) {
+    if (finalizing && _partialTerminalPending) {
       final pointer = _partialTerminalPointer;
       _partialTerminalPending = false;
       _partialTerminalPointer = null;
@@ -696,7 +1114,10 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
           preview.value,
           preview.value.map((value) => value.objectId).toSet(),
         )) {
-      _cancelGesture('Partial erase rejected');
+      _cancelGesture(
+        'Partial erase rejected',
+        reason: Phase6DiagnosticCancellationReason.geometryRejected,
+      );
       return;
     }
     clock?.stop();
@@ -708,6 +1129,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     _sceneCompositionCount += 1;
     _partialTerminalPreviewActive = true;
     _partialVisualEraser.clear();
+    _cursorPaintPending = false;
+    _visualPaintPending = false;
     setState(() {});
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || generation != _partialBatchGeneration) return;
@@ -955,12 +1378,14 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   void _finishPartialErase() {
     final plan = _partialEraserPlan;
     _tracePartial(Phase6DiagnosticStage.partialTerminalEntered);
+    _historyDepthBeforePublication = _coordinator.retainedHistoryCount;
     final materializationClock = _diagnostics.enabled
         ? (Stopwatch()..start())
         : null;
     final request = plan != null && plan.isCurrent(_coordinator.snapshot)
         ? plan.createRequest(uuidGenerator: _uuid)
         : null;
+    _terminalMaterializations = plan?.terminalMaterializationCount ?? 0;
     materializationClock?.stop();
     _tracePartial(
       Phase6DiagnosticStage.terminalMaterialization,
@@ -973,6 +1398,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
         request is Ok<AtomicObjectCollectionEditRequest, StructuredFailure>
         ? _coordinator.execute(request.value)
         : null;
+    if (commit is Ok) _partialPublications = 1;
+    _historyDepthAfterPublication = _coordinator.retainedHistoryCount;
     publicationClock?.stop();
     _tracePartial(
       Phase6DiagnosticStage.commandPublication,
@@ -998,18 +1425,40 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
           ? Phase6DiagnosticFailure.none
           : Phase6DiagnosticFailure.terminal,
     );
+    Result<CommandCommit, CommandFailure>? queuedUndo;
+    if (commit is Ok && _pendingUndoAfterPartialFinalization) {
+      queuedUndo = _coordinator.undo();
+      _tracePartial(
+        Phase6DiagnosticStage.historyRequestExecuted,
+        historyDisposition: queuedUndo is Ok
+            ? Phase6DiagnosticHistoryDisposition.executed
+            : Phase6DiagnosticHistoryDisposition.blocked,
+      );
+    }
+    final queuedUndoRequested = _pendingUndoAfterPartialFinalization;
     _clearEraserTransient();
     _selection.reconcile(_coordinator.snapshot.root);
-    setState(
-      () => _status = commit is Ok
+    setState(() {
+      _status = commit is! Ok
+          ? 'Partial erase rejected'
+          : !queuedUndoRequested
           ? 'Stroke partially erased'
-          : 'Partial erase rejected',
-    );
+          : queuedUndo is Ok
+          ? 'Partial erase completed and undone'
+          : 'Partial erase completed; Undo blocked';
+    });
   }
 
-  void _cancelGesture(String status) {
+  void _cancelGesture(
+    String status, {
+    Phase6DiagnosticCancellationReason reason =
+        Phase6DiagnosticCancellationReason.inputRejected,
+  }) {
     if (_partialEraserPlan != null) {
-      _tracePartial(Phase6DiagnosticStage.gestureCancelled);
+      _tracePartial(
+        Phase6DiagnosticStage.gestureCancelled,
+        cancellationReason: reason,
+      );
     }
     _pen?.cancel();
     _router.cancel();
@@ -1024,14 +1473,23 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   }
 
   void _clearEraserTransient() {
+    try {
+      _partialCooperativeTask?.cancel();
+    } on Object {
+      // A scheduler adapter cannot escape Canvas cleanup.
+    }
+    _partialCooperativeTask = null;
     _eraserCursor.clear();
     _partialVisualEraser.clear();
     _partialUpClock = null;
     _partialBatchGeneration += 1;
     _partialPendingPoints.clear();
+    _partialProcessedExactPoint = null;
+    _partialExactPointCount = 0;
     _partialBatchScheduled = false;
     _partialTerminalPending = false;
     _partialTerminalPointer = null;
+    _pendingUndoAfterPartialFinalization = false;
     _partialEraserPath.clear();
     _wholeEraserPath.clear();
     _eraserObjectPreviews.clear();
@@ -1143,6 +1601,10 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       ).fold<ViewportSnapshot?>(onOk: (result) => result, onErr: (_) => null);
 
   void _save() {
+    if (_isPartialFinalizing) {
+      setState(() => _status = 'Save blocked while finishing partial erase');
+      return;
+    }
     final capture = _coordinator.captureForSave();
     final snapshot = AlnotePackageSnapshot.create(
       document: capture.root,
@@ -1176,6 +1638,10 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   }
 
   void _reopen() {
+    if (_isPartialFinalizing) {
+      setState(() => _status = 'Reopen blocked while finishing partial erase');
+      return;
+    }
     final bytes = _savedBytes;
     final savedRoot = _savedRoot;
     if (bytes == null || savedRoot == null) {
@@ -1234,13 +1700,15 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
           child: ChoiceChip(
             label: Text(tool.name),
             selected: _tool == tool,
-            onSelected: (_) => _setTool(tool),
+            onSelected: _isPartialFinalizing ? null : (_) => _setTool(tool),
           ),
         ),
       Tooltip(
         message: 'Undo',
         child: TextButton.icon(
-          onPressed: _coordinator.snapshot.canUndo ? _undo : null,
+          onPressed: _isPartialFinalizing || _coordinator.snapshot.canUndo
+              ? _undo
+              : null,
           icon: const Icon(Icons.undo),
           label: const Text('Undo'),
         ),
@@ -1248,14 +1716,19 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       Tooltip(
         message: 'Redo',
         child: TextButton.icon(
-          onPressed: _coordinator.snapshot.canRedo ? _redo : null,
+          onPressed: !_isPartialFinalizing && _coordinator.snapshot.canRedo
+              ? _redo
+              : null,
           icon: const Icon(Icons.redo),
           label: const Text('Redo'),
         ),
       ),
-      TextButton(onPressed: _save, child: const Text('Save in memory')),
       TextButton(
-        onPressed: _savedBytes == null ? null : _reopen,
+        onPressed: _isPartialFinalizing ? null : _save,
+        child: const Text('Save in memory'),
+      ),
+      TextButton(
+        onPressed: _isPartialFinalizing || _savedBytes == null ? null : _reopen,
         child: const Text('Reopen saved'),
       ),
       Tooltip(
@@ -1537,7 +2010,10 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
           ),
           _CancelIntent: CallbackAction<_CancelIntent>(
             onInvoke: (_) {
-              _cancelGesture('Cancelled');
+              _cancelGesture(
+                'Cancelled',
+                reason: Phase6DiagnosticCancellationReason.explicitUserRequest,
+              );
               return null;
             },
           ),
@@ -1563,8 +2039,13 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
         child: Focus(
           autofocus: true,
           onFocusChange: (focused) {
-            if (!focused && _router.ownership.owner != null) {
-              _cancelGesture('Gesture cancelled');
+            if (!focused &&
+                _router.ownership.owner != null &&
+                !_isPartialFinalizing) {
+              _cancelGesture(
+                'Gesture cancelled',
+                reason: Phase6DiagnosticCancellationReason.focusLost,
+              );
             }
           },
           child: scaffold,
@@ -1644,9 +2125,9 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     if (_penActivePreviewPrimitives.isNotEmpty &&
         _penActivePreviewPrimitives.length + result.length >
             _penPreviewChunkPrimitiveLimit) {
-      _penFrozenPreviewChunks.add(
-        _recordPenPicture(_penActivePreviewPrimitives),
-      );
+      final picture = _recordPenPicture(_penActivePreviewPrimitives);
+      _pictureCreated();
+      _penFrozenPreviewChunks.add(picture);
       _penActivePreviewPrimitives.clear();
     }
     _penActivePreviewPrimitives.addAll(result);
@@ -1656,7 +2137,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
 
   void _clearPenPreview() {
     for (final picture in _penFrozenPreviewChunks) {
-      picture.dispose();
+      _disposePicture(picture);
     }
     _penFrozenPreviewChunks.clear();
     _penActivePreviewPrimitives.clear();
@@ -1710,7 +2191,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   ) {
     if (identical(_objectPictureScene, committed)) return _objectPictures;
     for (final evidence in _objectPictures.values) {
-      evidence.picture.dispose();
+      _disposePicture(evidence.picture);
     }
     final pictures = <ObjectId, _CommittedObjectPicture>{};
     for (final object in committed.objects) {
@@ -1728,12 +2209,16 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
         bounds = bounds?.expandToInclude(next) ?? next;
       }
       if (bounds != null) {
+        final picture = recorder.endRecording();
+        _pictureCreated();
         pictures[object.objectId] = _CommittedObjectPicture(
-          picture: recorder.endRecording(),
+          picture: picture,
           bounds: bounds,
         );
       } else {
-        recorder.endRecording().dispose();
+        final picture = recorder.endRecording();
+        _pictureCreated();
+        _disposePicture(picture);
       }
     }
     _objectPictureScene = committed;
@@ -1811,6 +2296,13 @@ final class _VisualEraserSegment {
   final Offset second;
 }
 
+final class _VisualPictureChunk {
+  const _VisualPictureChunk({required this.picture, required this.segments});
+
+  final ui.Picture picture;
+  final List<_VisualEraserSegment> segments;
+}
+
 final class _VisualEraserFrame {
   const _VisualEraserFrame({
     required this.frozen,
@@ -1829,14 +2321,20 @@ final class _VisualEraserFrame {
 
 final class _PartialVisualEraserController {
   _PartialVisualEraserController({
+    required this.maximumPictures,
+    required this.onPictureCreated,
+    required this.onPictureDisposed,
     required this.onRequest,
     required this.onPainted,
   });
 
+  final int maximumPictures;
+  final VoidCallback onPictureCreated;
+  final VoidCallback onPictureDisposed;
   final ValueChanged<int> onRequest;
   final void Function(int elapsedMicros, int objectLayers) onPainted;
   final ValueNotifier<_VisualEraserFrame?> frame = ValueNotifier(null);
-  final List<ui.Picture> _frozen = [];
+  final List<_VisualPictureChunk?> _levels = [];
   List<ui.Picture> _frozenEvidence = const [];
   final List<_VisualEraserSegment> _active = [];
   final List<_VisualEligibleObject> _eligible = [];
@@ -1850,7 +2348,7 @@ final class _PartialVisualEraserController {
   bool _scheduled = false;
 
   int get segmentCount => _segmentCount;
-  int get chunkCount => _frozen.length;
+  int get chunkCount => _levels.whereType<_VisualPictureChunk>().length;
 
   bool begin({
     required List<EraserVisualObjectEvidence> objects,
@@ -1885,65 +2383,122 @@ final class _PartialVisualEraserController {
     }
     _radius = radius;
     _last = Offset(down.x, down.y);
-    _appendSegment(_last!, _last!);
     return true;
   }
 
-  void append(ViewPoint point) {
+  bool append(ViewPoint point) {
     final previous = _last;
-    if (previous == null) return;
+    if (previous == null) return false;
     final next = Offset(point.x, point.y);
     _last = next;
-    _appendSegment(previous, next);
+    return _appendSegment(previous, next);
   }
 
-  void _appendSegment(Offset first, Offset second) {
-    final segment = _VisualEraserSegment(first, second);
-    _active.add(segment);
-    _segmentCount += 1;
-    _pendingSincePaint += 1;
-    final bounds = Rect.fromLTRB(
-      math.min(first.dx, second.dx) - _radius,
-      math.min(first.dy, second.dy) - _radius,
-      math.max(first.dx, second.dx) + _radius,
-      math.max(first.dy, second.dy) + _radius,
-    );
-    var affectedChanged = false;
-    for (final object in _eligible) {
-      if (bounds.overlaps(object.bounds) && _affected.add(object.objectId)) {
-        affectedChanged = true;
-      }
-    }
-    if (affectedChanged) {
-      _affectedEvidence = Set.unmodifiable(_affected);
-    }
-    if (_active.length == _visualEraserChunkSegmentLimit) {
-      final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder);
-      for (final value in _active) {
-        _paintVisualEraserSegment(canvas, value, _radius);
-      }
-      _frozen.add(recorder.endRecording());
-      _frozenEvidence = List.unmodifiable(_frozen);
-      _active.clear();
-    }
-    onRequest(_pendingSincePaint);
-    if (_scheduled) return;
-    _scheduled = true;
-    final generation = _generation;
-    SchedulerBinding.instance.scheduleFrameCallback((_) {
-      if (generation != _generation) return;
-      _scheduled = false;
-      frame.value = _VisualEraserFrame(
-        frozen: _frozenEvidence,
-        active: List.unmodifiable(_active),
-        affectedObjectIds: _affectedEvidence,
-        radius: _radius,
-        segmentCount: _segmentCount,
+  bool _appendSegment(Offset first, Offset second) {
+    try {
+      final segment = _VisualEraserSegment(first, second);
+      _active.add(segment);
+      _segmentCount += 1;
+      _pendingSincePaint += 1;
+      final bounds = Rect.fromLTRB(
+        math.min(first.dx, second.dx) - _radius,
+        math.min(first.dy, second.dy) - _radius,
+        math.max(first.dx, second.dx) + _radius,
+        math.max(first.dy, second.dy) + _radius,
       );
-      _pendingSincePaint = 0;
-    });
-    SchedulerBinding.instance.scheduleFrame();
+      var affectedChanged = false;
+      for (final object in _eligible) {
+        if (bounds.overlaps(object.bounds) && _affected.add(object.objectId)) {
+          affectedChanged = true;
+        }
+      }
+      if (affectedChanged) {
+        _affectedEvidence = Set.unmodifiable(_affected);
+      }
+      if (_active.length == _visualEraserChunkSegmentLimit) {
+        final segments = List<_VisualEraserSegment>.unmodifiable(_active);
+        final picture = _recordVisualSegments(segments);
+        onPictureCreated();
+        if (!_storeChunk(
+          _VisualPictureChunk(picture: picture, segments: segments),
+        )) {
+          return false;
+        }
+        _active.clear();
+      }
+      onRequest(_pendingSincePaint);
+      if (_scheduled) return true;
+      _scheduled = true;
+      final generation = _generation;
+      SchedulerBinding.instance.scheduleFrameCallback((_) {
+        if (generation != _generation) return;
+        _scheduled = false;
+        frame.value = _VisualEraserFrame(
+          frozen: _frozenEvidence,
+          active: List.unmodifiable(_active),
+          affectedObjectIds: _affectedEvidence,
+          radius: _radius,
+          segmentCount: _segmentCount,
+        );
+        _pendingSincePaint = 0;
+      });
+      SchedulerBinding.instance.scheduleFrame();
+      return true;
+    } on Object {
+      return false;
+    }
+  }
+
+  ui.Picture _recordVisualSegments(List<_VisualEraserSegment> segments) {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    for (final value in segments) {
+      _paintVisualEraserSegment(canvas, value, _radius);
+    }
+    return recorder.endRecording();
+  }
+
+  bool _storeChunk(_VisualPictureChunk chunk) {
+    var level = 0;
+    var current = chunk;
+    while (level < _levels.length && _levels[level] != null) {
+      final older = _levels[level]!;
+      final segments = List<_VisualEraserSegment>.unmodifiable([
+        ...older.segments,
+        ...current.segments,
+      ]);
+      final merged = _recordVisualSegments(segments);
+      onPictureCreated();
+      _disposePicture(older.picture);
+      _disposePicture(current.picture);
+      _levels[level] = null;
+      current = _VisualPictureChunk(picture: merged, segments: segments);
+      level += 1;
+    }
+    if (level >= maximumPictures) {
+      _disposePicture(current.picture);
+      return false;
+    }
+    while (_levels.length <= level) {
+      _levels.add(null);
+    }
+    _levels[level] = current;
+    _frozenEvidence = List.unmodifiable(
+      _levels.reversed.whereType<_VisualPictureChunk>().map(
+        (value) => value.picture,
+      ),
+    );
+    return chunkCount <= maximumPictures;
+  }
+
+  void _disposePicture(ui.Picture picture) {
+    try {
+      picture.dispose();
+    } on Object {
+      // Continue releasing all remaining native resources.
+    } finally {
+      onPictureDisposed();
+    }
   }
 
   void didPaint(int elapsedMicros, int objectLayers) =>
@@ -1960,10 +2515,10 @@ final class _PartialVisualEraserController {
     _eligible.clear();
     _affected.clear();
     _affectedEvidence = const {};
-    for (final picture in _frozen) {
-      picture.dispose();
+    for (final chunk in _levels.whereType<_VisualPictureChunk>()) {
+      _disposePicture(chunk.picture);
     }
-    _frozen.clear();
+    _levels.clear();
     _frozenEvidence = const [];
     frame.value = null;
   }

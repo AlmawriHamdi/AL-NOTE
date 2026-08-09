@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import 'dart:async';
+
+import 'package:flutter/services.dart';
+
 import '../../core/geometry/geometry_values.dart';
 import '../../core/identity/uuid_generator.dart';
 import '../../core/identity/uuid_identifier.dart';
@@ -21,6 +25,97 @@ import '../../drawing/renderer.dart';
 import '../../drawing/tools.dart';
 import 'flutter_pointer_adapter.dart';
 import 'phase6_diagnostics.dart';
+
+/// Injected, exception-contained boundary for the debug diagnostics clipboard.
+abstract interface class Phase6DebugClipboard {
+  /// Copies bounded diagnostic [text] and returns only structured evidence.
+  Future<Result<void, StructuredFailure>> copyText(String text);
+}
+
+/// Injected, exception-contained boundary for cooperative Canvas work.
+///
+/// Implementations must schedule [task] on the event queue, never as a
+/// synchronous callback or microtask.
+abstract interface class Phase6CooperativeTaskScheduler {
+  /// Schedules one bounded task and returns fixed structured evidence.
+  Result<Phase6CooperativeTaskHandle, StructuredFailure> schedule(
+    void Function() task,
+  );
+}
+
+/// Owned cancellation authority for one scheduled cooperative task.
+abstract interface class Phase6CooperativeTaskHandle {
+  /// Cancels the task if it has not begun; repeated cancellation is harmless.
+  void cancel();
+}
+
+/// Production cooperative scheduler backed by the Dart event queue.
+final class Phase6EventLoopTaskScheduler
+    implements Phase6CooperativeTaskScheduler {
+  /// Creates the stateless production scheduler.
+  const Phase6EventLoopTaskScheduler();
+
+  @override
+  Result<Phase6CooperativeTaskHandle, StructuredFailure> schedule(
+    void Function() task,
+  ) {
+    try {
+      return Ok(_Phase6TimerTaskHandle(Timer(Duration.zero, task)));
+    } on Object {
+      return Err(_failure('cooperative_schedule_failed'));
+    }
+  }
+}
+
+final class _Phase6TimerTaskHandle implements Phase6CooperativeTaskHandle {
+  _Phase6TimerTaskHandle(this._timer);
+
+  Timer? _timer;
+
+  @override
+  void cancel() {
+    _timer?.cancel();
+    _timer = null;
+  }
+}
+
+/// Injectable accounting evidence for Canvas-owned native pictures.
+abstract interface class Phase6NativePictureObserver {
+  /// Records creation of one owned native picture.
+  void pictureCreated();
+
+  /// Records disposal of one owned native picture.
+  void pictureDisposed();
+}
+
+/// Production observer that intentionally retains no accounting state.
+final class Phase6NoopNativePictureObserver
+    implements Phase6NativePictureObserver {
+  /// Creates the stateless observer.
+  const Phase6NoopNativePictureObserver();
+
+  @override
+  void pictureCreated() {}
+
+  @override
+  void pictureDisposed() {}
+}
+
+/// Flutter system-clipboard adapter used by the production Canvas runtime.
+final class Phase6SystemDebugClipboard implements Phase6DebugClipboard {
+  /// Creates the stateless system clipboard adapter.
+  const Phase6SystemDebugClipboard();
+
+  @override
+  Future<Result<void, StructuredFailure>> copyText(String text) async {
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+      return const Ok(null);
+    } on Object {
+      return Err(_failure('diagnostics_copy_failed'));
+    }
+  }
+}
 
 /// Fixed redaction-safe failure stages for an in-memory package reopen.
 enum Phase6ReopenFailureStage {
@@ -108,7 +203,15 @@ final class Phase6CanvasRuntime {
     required this.maximumEraserBatchCandidateSegments,
     required this.maximumEraserBatchClassifications,
     required this.maximumEraserBatchClassificationChecks,
+    required this.maximumEraserBatchRootIsolationAdvances,
+    required this.maximumEraserBatchFeatureTransitions,
+    required this.maximumEraserExactSliceMicros,
+    required this.maximumEraserActiveExactSliceMicros,
+    required this.cooperativeTaskScheduler,
+    required this.maximumEraserVisualPictures,
     required this.diagnosticTrace,
+    required this.debugClipboard,
+    required this.nativePictureObserver,
   });
 
   /// Creates the complete runtime and generates initial persistent identities.
@@ -140,7 +243,15 @@ final class Phase6CanvasRuntime {
     required int maximumEraserBatchCandidateSegments,
     required int maximumEraserBatchClassifications,
     required int maximumEraserBatchClassificationChecks,
+    required int maximumEraserBatchRootIsolationAdvances,
+    required int maximumEraserBatchFeatureTransitions,
+    required int maximumEraserExactSliceMicros,
+    required int maximumEraserActiveExactSliceMicros,
+    required Phase6CooperativeTaskScheduler cooperativeTaskScheduler,
+    required int maximumEraserVisualPictures,
     required Phase6DiagnosticTrace diagnosticTrace,
+    required Phase6DebugClipboard debugClipboard,
+    required Phase6NativePictureObserver nativePictureObserver,
     Phase6ReopenGateway? reopenGateway,
   }) {
     final ceilings = <int>[
@@ -164,6 +275,11 @@ final class Phase6CanvasRuntime {
       maximumEraserBatchCandidateSegments,
       maximumEraserBatchClassifications,
       maximumEraserBatchClassificationChecks,
+      maximumEraserBatchRootIsolationAdvances,
+      maximumEraserBatchFeatureTransitions,
+      maximumEraserExactSliceMicros,
+      maximumEraserActiveExactSliceMicros,
+      maximumEraserVisualPictures,
     ];
     final requiredElements = _multiplyCost(
       maximumPenSamples,
@@ -201,8 +317,11 @@ final class Phase6CanvasRuntime {
         requiredVertices > geometryLimits.maximumVertices ||
         renderingLimits.maximumPointsPerPrimitive <
             geometryLimits.ellipseVertexCount ||
-        maximumEraserBatchClassificationChecks <
-            StrokeGeometryResolver.maximumPreparedClassificationChecks) {
+        maximumEraserBatchFeatureTransitions <
+            geometryLimits.ellipseVertexCount * 2 ||
+        maximumEraserVisualPictures > maximumEraserPoints ||
+        maximumEraserVisualPictures <
+            _requiredVisualPictureLevels(maximumEraserPoints)) {
       return Err(_failure('invalid_limits'));
     }
     final geometry = StrokeGeometryResolver(geometryLimits);
@@ -373,7 +492,18 @@ final class Phase6CanvasRuntime {
         maximumEraserBatchClassifications: maximumEraserBatchClassifications,
         maximumEraserBatchClassificationChecks:
             maximumEraserBatchClassificationChecks,
+        maximumEraserBatchRootIsolationAdvances:
+            maximumEraserBatchRootIsolationAdvances,
+        maximumEraserBatchFeatureTransitions:
+            maximumEraserBatchFeatureTransitions,
+        maximumEraserExactSliceMicros: maximumEraserExactSliceMicros,
+        maximumEraserActiveExactSliceMicros:
+            maximumEraserActiveExactSliceMicros,
+        cooperativeTaskScheduler: cooperativeTaskScheduler,
+        maximumEraserVisualPictures: maximumEraserVisualPictures,
         diagnosticTrace: diagnosticTrace,
+        debugClipboard: debugClipboard,
+        nativePictureObserver: nativePictureObserver,
       ),
     );
   }
@@ -422,8 +552,39 @@ final class Phase6CanvasRuntime {
   /// Direct classification checks allowed in one UI processing batch.
   final int maximumEraserBatchClassificationChecks;
 
+  /// Root-isolation brackets that one exact-finalization frame may advance.
+  final int maximumEraserBatchRootIsolationAdvances;
+
+  /// Fixed-size geometry features one exact-finalization frame may traverse.
+  final int maximumEraserBatchFeatureTransitions;
+
+  /// Soft responsiveness budget for one exact-finalization callback.
+  ///
+  /// Correctness never depends on elapsed time: reaching this budget only
+  /// yields owned resumable state to a later frame. Deterministic primitive
+  /// ceilings remain the hard work boundary.
+  final int maximumEraserExactSliceMicros;
+
+  /// Soft low-priority exact-work budget while a gesture remains active.
+  ///
+  /// Work runs only from a separately scheduled post-frame callback after
+  /// cursor and transparent-mask painting have no pending requests.
+  final int maximumEraserActiveExactSliceMicros;
+
+  /// Event-queue boundary used to cooperatively drain post-release exact work.
+  final Phase6CooperativeTaskScheduler cooperativeTaskScheduler;
+
+  /// Maximum retained native visual-mask pictures during one Eraser gesture.
+  final int maximumEraserVisualPictures;
+
   /// Injected bounded debug/test diagnostic trace.
   final Phase6DiagnosticTrace diagnosticTrace;
+
+  /// Injected exception-contained debug clipboard boundary.
+  final Phase6DebugClipboard debugClipboard;
+
+  /// Injected accounting observer for every Canvas-owned native picture.
+  final Phase6NativePictureObserver nativePictureObserver;
 
   /// Creates a fresh coordinator for a successfully reopened exact root.
   Result<DocumentMutationCoordinator, CommandFailure> createCoordinator(
@@ -436,6 +597,16 @@ final class Phase6CanvasRuntime {
     retainedCostEstimator: historyCostEstimator,
     maximumListeners: maximumListeners,
   );
+}
+
+int _requiredVisualPictureLevels(int maximumPoints) {
+  const chunkSize = 64;
+  final chunks = maximumPoints ~/ chunkSize;
+  var levels = 0;
+  for (var remaining = chunks; remaining > 0; remaining >>= 1) {
+    levels += 1;
+  }
+  return levels == 0 ? 1 : levels;
 }
 
 final class _DefaultPhase6ReopenGateway implements Phase6ReopenGateway {

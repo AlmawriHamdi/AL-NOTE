@@ -276,6 +276,291 @@ void main() {
     }
   });
 
+  test('zero-radius ambiguity uses measurable bounded exact fallback', () {
+    final resolver = StrokeGeometryResolver(_geometryLimits());
+    final evidence = _ok(
+      resolver.classifySourceSegmentErasureDetailed(
+        first: _sample(0, 0, 0),
+        second: _sample(10, 0, 10),
+        style: _stroke(1, [_sample(0, 0, 0)]).style,
+        localToPage: _identity(),
+        eraserSegment: _ok(SweptPath.create([_point(5, 0)], maximumPoints: 1)),
+        radius: 0,
+        handwritingLimits: _limits,
+        maximumChecks: 256,
+      ),
+    );
+    expect(evidence.intervals, isNotEmpty);
+    expect(evidence.ordinaryAnalyticClassifications, 0);
+    expect(evidence.exactFallbackClassifications, 1);
+    expect(evidence.exactFallbackExhaustions, 0);
+  });
+
+  test('certified positive-radius search preserves narrow near tangencies', () {
+    final resolver = StrokeGeometryResolver(_geometryLimits());
+    final style = _stroke(1, [_sample(0, 0, 0)]).style;
+    List<StrokeErasureInterval> classify(double radius) => _ok(
+      resolver.classifySourceSegmentErasure(
+        first: _sample(0, 0, 0),
+        second: _sample(10, 0, 10),
+        style: style,
+        localToPage: _identity(),
+        eraserSegment: _ok(
+          SweptPath.create([_point(5.123456789, 1.000001)], maximumPoints: 1),
+        ),
+        radius: radius,
+        handwritingLimits: _limits,
+      ),
+    );
+
+    final hit = classify(1.1e-6);
+    expect(hit, hasLength(1));
+    expect(hit.single.start, lessThan(.5123456789));
+    expect(hit.single.end, greaterThan(.5123456789));
+    expect(classify(9e-7), isEmpty);
+
+    final endpoint = _ok(
+      resolver.classifySourceSegmentErasure(
+        first: _sample(0, 0, 0),
+        second: _sample(-10, 0, 10),
+        style: style,
+        localToPage: _identity(),
+        eraserSegment: _ok(SweptPath.create([_point(1, 0)], maximumPoints: 1)),
+        radius: 0,
+        handwritingLimits: _limits,
+      ),
+    );
+    expect(endpoint, hasLength(1));
+    expect(endpoint.single.start, 0);
+    expect(endpoint.single.end, 0);
+  });
+
+  test('near-tangent analytic classification resumes without replay', () {
+    final resolver = StrokeGeometryResolver(_geometryLimits());
+    final stroke = _stroke(1, [_sample(0, 0, 0), _sample(10, 0, 10)]);
+    final prepared = _ok(
+      resolver.prepareStrokeErasure(stroke: stroke, localToPage: _identity()),
+    );
+    final classification = _ok(
+      resolver.beginPreparedSourceSegmentErasure(
+        prepared: prepared,
+        sourceSegment: 0,
+        eraserSegment: _ok(
+          SweptPath.create([_point(5.123456789, 1.000001)], maximumPoints: 1),
+        ),
+        radius: 1.1e-6,
+        maximumChecks: 256,
+      ),
+    );
+    StrokeErasureClassificationEvidence? evidence;
+    var frames = 0;
+    var predicates = 0;
+    var roots = 0;
+    while (evidence == null && frames < 256) {
+      final progress = _ok(
+        classification.advance(
+          maximumPredicateEvaluations: 1,
+          maximumRootIsolationAdvances: 1,
+          maximumFeatureTransitions: 32,
+          maximumElapsedMicros: 1000000,
+        ),
+      );
+      expect(progress.predicateEvaluations, lessThanOrEqualTo(1));
+      expect(progress.rootIsolationAdvances, lessThanOrEqualTo(1));
+      expect(progress.featureTransitions, lessThanOrEqualTo(32));
+      predicates += progress.predicateEvaluations;
+      roots += progress.rootIsolationAdvances;
+      evidence = progress.evidence;
+      frames += 1;
+    }
+    expect(evidence, isNotNull);
+    expect(frames, greaterThan(2));
+    expect(roots, 0);
+    expect(evidence!.intervals, hasLength(1));
+    expect(evidence.classificationChecks, predicates);
+    expect(evidence.maximumSearchDepth, 0);
+    expect(evidence.ordinaryAnalyticClassifications, 1);
+    expect(evidence.exactFallbackClassifications, 0);
+    expect(evidence.exactFallbackExhaustions, 0);
+  });
+
+  test('certified roots remain distinct below the former merge epsilon', () {
+    final tinyStyle = _ok(
+      StrokeStyle.create(
+        argb: 0xff000000,
+        opacity: 1,
+        baseWidth: 1e-9,
+        pressureInfluence: 0,
+        minimumPressureFactor: 0,
+        limits: _limits,
+      ),
+    );
+    final intervals = _ok(
+      StrokeGeometryResolver(_geometryLimits()).classifySourceSegmentErasure(
+        first: _sample(0, 0, 0),
+        second: _sample(10000, 0, 10),
+        style: tinyStyle,
+        localToPage: _identity(),
+        eraserSegment: _ok(
+          SweptPath.create([_point(5000, 0)], maximumPoints: 1),
+        ),
+        radius: 0,
+        handwritingLimits: _limits,
+      ),
+    );
+    expect(intervals, hasLength(1));
+    expect(intervals.single.end, greaterThan(intervals.single.start));
+    expect(intervals.single.end - intervals.single.start, lessThan(1e-12));
+  });
+
+  test(
+    'positive-radius certification covers affine order width and features',
+    () {
+      final rotation = _ok(
+        AffineTransform2D.fromOperation(
+          _ok(
+            RotationTransformOperation2D.create(
+              radians: .41,
+              pivot: _point(0, 0),
+            ),
+          ),
+        ),
+      );
+      final scale = _ok(
+        AffineTransform2D.fromOperation(
+          _ok(
+            ScaleTransformOperation2D.create(
+              scaleX: 3,
+              scaleY: .4,
+              pivot: _point(0, 0),
+            ),
+          ),
+        ),
+      );
+      final variableStyle = _ok(
+        StrokeStyle.create(
+          argb: 0xff000000,
+          opacity: 1,
+          baseWidth: 2,
+          pressureInfluence: .8,
+          minimumPressureFactor: .1,
+          limits: _limits,
+        ),
+      );
+      final first = _ok(
+        StrokeSample.create(
+          position: _point(0, 0),
+          timeMicros: 0,
+          pressure: 0,
+          limits: _limits,
+        ),
+      );
+      final second = _ok(
+        StrokeSample.create(
+          position: _point(10, 0),
+          timeMicros: 10,
+          pressure: 1,
+          limits: _limits,
+        ),
+      );
+      for (final transform in [
+        _ok(rotation.then(scale)),
+        _ok(scale.then(rotation)),
+        _ok(AffineTransform2D.restoreFromStorage([1, .75, .4, 1, 0, 0])),
+      ]) {
+        for (final radius in [double.minPositive, 1e-9, .25, 1000.0]) {
+          final page = _ok(transform.applyToPoint(_point(5, 0)));
+          final hit = _ok(
+            StrokeGeometryResolver(
+              _geometryLimits(),
+            ).classifySourceSegmentErasure(
+              first: first,
+              second: second,
+              style: variableStyle,
+              localToPage: transform,
+              eraserSegment: _ok(
+                SweptPath.create([
+                  page,
+                  _ok(transform.applyToPoint(_point(5, .2))),
+                ], maximumPoints: 2),
+              ),
+              radius: radius,
+              handwritingLimits: _limits,
+            ),
+          );
+          expect(hit, isNotEmpty);
+        }
+      }
+
+      final dot = _ok(
+        StrokeGeometryResolver(_geometryLimits()).classifySourceSegmentErasure(
+          first: first,
+          second: first,
+          style: variableStyle,
+          localToPage: _identity(),
+          eraserSegment: _ok(
+            SweptPath.create([_point(0, 0)], maximumPoints: 1),
+          ),
+          radius: .1,
+          handwritingLimits: _limits,
+        ),
+      );
+      expect(dot, hasLength(1));
+      expect(dot.single.start, 0);
+      expect(dot.single.end, 1);
+    },
+  );
+
+  test('extreme prepared erasure is exact or fails instead of empty', () {
+    final resolver = StrokeGeometryResolver(_geometryLimits());
+    final style = _stroke(1, [_sample(0, 0, 0)]).style;
+    final translated = _ok(
+      AffineTransform2D.restoreFromStorage([1, 0, 0, 1, 1e300, -1e300]),
+    );
+    for (final evidence in [
+      (point: _point(1e300, -1e300), hit: true),
+      (point: _point(-1e300, 1e300), hit: false),
+    ]) {
+      final result = resolver.classifySourceSegmentErasure(
+        first: _sample(0, 0, 0),
+        second: _sample(10, 0, 10),
+        style: style,
+        localToPage: translated,
+        eraserSegment: _ok(
+          SweptPath.create([evidence.point], maximumPoints: 1),
+        ),
+        radius: 1,
+        handwritingLimits: _limits,
+      );
+      expect(result, isA<Ok<Object?, Object?>>());
+      expect(_ok(result).isNotEmpty, evidence.hit);
+    }
+
+    final nonrepresentable = AffineTransform2D.restoreFromStorage([
+      1e308,
+      0,
+      0,
+      1e-308,
+      0,
+      0,
+    ]);
+    expect(nonrepresentable, isA<Err<Object?, Object?>>());
+    expect(nonrepresentable.toString(), isNot(contains('1e+308')));
+
+    final limited = resolver.classifySourceSegmentErasureDetailed(
+      first: _sample(0, 0, 0),
+      second: _sample(10, 0, 10),
+      style: style,
+      localToPage: _identity(),
+      eraserSegment: _ok(SweptPath.create([_point(5, 1)], maximumPoints: 1)),
+      radius: 0,
+      handwritingLimits: _limits,
+      maximumChecks: 2,
+    );
+    expect(limited, isA<Err<Object?, Object?>>());
+    expect(limited.toString(), isNot(contains('secret')));
+  });
+
   test('transformed Partial Eraser preview equals terminal survivors', () {
     final source = _stroke(5, [_sample(0, 0, 0), _sample(10, 0, 10)]);
     final transform = _ok(
@@ -446,6 +731,59 @@ void main() {
     expect(
       SweptPath.create(points, maximumPoints: 0),
       isA<Err<Object?, Object?>>(),
+    );
+  });
+
+  test('SweptPath compacts only exact duplicate same-direction evidence', () {
+    expect(
+      _ok(
+        SweptPath.isRedundantMiddle(
+          first: _point(0, 0),
+          middle: _point(1, 0),
+          last: _point(2, 0),
+        ),
+      ),
+      isTrue,
+    );
+    expect(
+      _ok(
+        SweptPath.isRedundantMiddle(
+          first: _point(0, 0),
+          middle: _point(0, 0),
+          last: _point(1, 0),
+        ),
+      ),
+      isTrue,
+    );
+    expect(
+      _ok(
+        SweptPath.isRedundantMiddle(
+          first: _point(0, 0),
+          middle: _point(1, 0),
+          last: _point(.5, 0),
+        ),
+      ),
+      isFalse,
+    );
+    expect(
+      _ok(
+        SweptPath.isRedundantMiddle(
+          first: _point(0, 0),
+          middle: _point(1, double.minPositive),
+          last: _point(2, 0),
+        ),
+      ),
+      isFalse,
+    );
+    expect(
+      _ok(
+        SweptPath.isRedundantMiddle(
+          first: _point(0, 0),
+          middle: _point(1, 1),
+          last: _point(2, 0),
+        ),
+      ),
+      isFalse,
     );
   });
 
@@ -2723,8 +3061,11 @@ void main() {
     expect(partial.processedBatchCount, 30);
     expect(partial.maximumProcessedBatchSize, 24);
     expect(partial.classificationCheckCount, lessThan(1500));
-    expect(partial.maximumClassificationDepth, lessThanOrEqualTo(12));
-    expect(partial.maximumPendingClassificationIntervals, 1);
+    expect(partial.maximumClassificationDepth, lessThanOrEqualTo(256));
+    expect(
+      partial.maximumPendingClassificationIntervals,
+      lessThanOrEqualTo(64),
+    );
     expect(partial.classificationCacheHitCount, greaterThan(700));
     expect(partial.intervalMergeCount, lessThan(20));
     expect(partial.previewRangeMaterializationCount, lessThan(20));
@@ -2803,6 +3144,9 @@ void main() {
           maximumClassifications: 1,
           maximumChecks:
               StrokeGeometryResolver.maximumPreparedClassificationChecks,
+          maximumRootIsolationAdvances: 8,
+          maximumFeatureTransitions: 128,
+          maximumElapsedMicros: 1000000,
           materializePreviewEvidence: false,
         ),
       );

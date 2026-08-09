@@ -2,6 +2,7 @@
 
 import 'dart:collection';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import '../../core/geometry/affine_transform_2d.dart';
 import '../../core/geometry/geometry_values.dart';
@@ -107,6 +108,10 @@ final class StrokeErasureClassificationEvidence {
     required this.classificationChecks,
     required this.maximumSearchDepth,
     required this.maximumPendingIntervals,
+    required this.ordinaryAnalyticClassifications,
+    required this.exactFallbackClassifications,
+    required this.exactFallbackExhaustions,
+    required this.maximumInnerOperationMicros,
   }) : intervals = List.unmodifiable(intervals);
 
   /// Exact erased intervals in ascending source order.
@@ -121,11 +126,120 @@ final class StrokeErasureClassificationEvidence {
   /// Direct convex-distance evaluations performed.
   final int classificationChecks;
 
-  /// Fixed-depth convex minimization and boundary-search depth reached.
+  /// Deepest certified representable interval subdivision reached.
   final int maximumSearchDepth;
 
-  /// Maximum pending work items; direct search never queues subdivisions.
+  /// Maximum pending certified parameter intervals.
   final int maximumPendingIntervals;
+
+  /// Classifications completed by the bounded analytic hot path.
+  final int ordinaryAnalyticClassifications;
+
+  /// Ambiguous classifications or predicates requiring exact dyadic work.
+  final int exactFallbackClassifications;
+
+  /// Exact fallbacks stopped by their deterministic aggregate ceiling.
+  final int exactFallbackExhaustions;
+
+  /// Largest measured duration of one indivisible classifier operation.
+  final int maximumInnerOperationMicros;
+}
+
+/// One bounded resumable advance of a prepared erasure classification.
+final class StrokeErasureClassificationProgress {
+  const StrokeErasureClassificationProgress._({
+    required this.completed,
+    required this.evidence,
+    required this.predicateEvaluations,
+    required this.rootIsolationAdvances,
+    required this.featureTransitions,
+    required this.pendingIntervals,
+  });
+
+  /// Whether the classification produced final [evidence].
+  final bool completed;
+
+  /// Final certified evidence, present only when [completed] is true.
+  final StrokeErasureClassificationEvidence? evidence;
+
+  /// Primitive polygon/capsule predicates evaluated by this advance.
+  final int predicateEvaluations;
+
+  /// Search or boundary brackets advanced by this call.
+  final int rootIsolationAdvances;
+
+  /// Fixed-size polygon features traversed by this call.
+  final int featureTransitions;
+
+  /// Certified parameter intervals retained for later calls.
+  final int pendingIntervals;
+}
+
+/// Mutable-internal, caller-owned prepared classification state.
+///
+/// Each [advance] call performs no more than the explicitly supplied primitive
+/// ceilings. Search brackets, witnesses, and boundary state remain owned by
+/// this object, so no completed predicate or root-isolation step is replayed.
+final class PreparedStrokeErasureClassification {
+  PreparedStrokeErasureClassification._(
+    this._classifier, {
+    required this._countPreparation,
+  });
+
+  final _ResumableErasureClassifier _classifier;
+  final bool _countPreparation;
+
+  /// Advances certified work under independent primitive ceilings.
+  Result<StrokeErasureClassificationProgress, StructuredFailure> advance({
+    required int maximumPredicateEvaluations,
+    required int maximumRootIsolationAdvances,
+    required int maximumFeatureTransitions,
+    required int maximumElapsedMicros,
+  }) {
+    try {
+      final advanced = _classifier.advance(
+        maximumPredicateEvaluations: maximumPredicateEvaluations,
+        maximumRootIsolationAdvances: maximumRootIsolationAdvances,
+        maximumFeatureTransitions: maximumFeatureTransitions,
+        maximumElapsedMicros: maximumElapsedMicros,
+      );
+      if (advanced is! Ok<_ResumableAdvance, StructuredFailure>) {
+        return Err(
+          (advanced as Err<_ResumableAdvance, StructuredFailure>).error,
+        );
+      }
+      final value = advanced.value;
+      return Ok(
+        StrokeErasureClassificationProgress._(
+          completed: value.intervals != null,
+          evidence: value.intervals == null
+              ? null
+              : StrokeErasureClassificationEvidence._(
+                  intervals: value.intervals!,
+                  geometryResolutions: _countPreparation ? 1 : 0,
+                  spatialElementsExamined: 0,
+                  classificationChecks: _classifier.totalPredicates,
+                  maximumSearchDepth: _classifier.maximumDepth,
+                  maximumPendingIntervals: _classifier.maximumPending,
+                  ordinaryAnalyticClassifications:
+                      _classifier.ordinaryClassifications,
+                  exactFallbackClassifications:
+                      _classifier.exactFallbackClassifications,
+                  exactFallbackExhaustions:
+                      _classifier.exactFallbackExhaustions,
+                  maximumInnerOperationMicros:
+                      _classifier.maximumInnerOperationMicros,
+                ),
+          predicateEvaluations: value.predicateEvaluations,
+          rootIsolationAdvances: value.rootIsolationAdvances,
+          featureTransitions: value.featureTransitions,
+          pendingIntervals: _classifier.pendingCount,
+        ),
+      );
+    } on Object {
+      return Err(_failure('erasure_classification_unavailable'));
+    }
+  }
 }
 
 /// Stroke-owned transformed cross-section evidence prepared once for erasure.
@@ -149,6 +263,32 @@ final class SweptPath {
 
   /// Largest path ceiling accepted by [create].
   static const int maximumSupportedPoints = 1000000;
+
+  /// Whether [middle] is exactly redundant between [first] and [last].
+  ///
+  /// Only exact duplicates or exactly collinear same-direction evidence is
+  /// removable. Exact dyadic arithmetic prevents a rounded near-collinear
+  /// point from changing authoritative swept-capsule coverage.
+  static Result<bool, StructuredFailure> isRedundantMiddle({
+    required Point2 first,
+    required Point2 middle,
+    required Point2 last,
+  }) {
+    if (middle == first || middle == last) return const Ok(true);
+    try {
+      final exactFirst = _ExactPoint.fromPoint(first);
+      final exactMiddle = _ExactPoint.fromPoint(middle);
+      final exactLast = _ExactPoint.fromPoint(last);
+      final incoming = exactMiddle - exactFirst;
+      final outgoing = exactLast - exactMiddle;
+      return Ok(
+        _exactCross(incoming, outgoing).compareTo(_Dyadic._zero) == 0 &&
+            _exactDot(incoming, outgoing).compareTo(_Dyadic._zero) > 0,
+      );
+    } on Object {
+      return Err(_failure('swept_compaction_unavailable'));
+    }
+  }
 
   /// Safely captures [source] without trusting collection metadata or tails.
   static Result<SweptPath, StructuredFailure> create(
@@ -560,8 +700,21 @@ final class StrokeGeometryResolver {
   /// Creates a resolver with explicit geometry ceilings.
   const StrokeGeometryResolver(this.limits);
 
-  /// Maximum direct checks used by one prepared swept-segment classification.
-  static const int maximumPreparedClassificationChecks = 40;
+  /// Maximum point/envelope predicates used by one classification.
+  ///
+  /// Classification treats a prepared cross-section as a homothetic convex
+  /// polygon whose center and radius vary affinely with the source parameter.
+  /// The union over any parameter interval is therefore exactly the convex
+  /// hull of its endpoint polygons. Ordinary positive-radius predicates use
+  /// scale-normalized floating distance bounds. The error band is widened
+  /// outward by accumulated-operation ulps; only a lower bound above the
+  /// radius proves a miss and only an upper bound below it proves a hit.
+  /// Ambiguous boundary predicates use the exact dyadic fallback as one
+  /// resumable primitive, never an unbounded search inside one call.
+  /// A returned interval is bounded by representable hit witnesses. If a
+  /// tangent has no representable witness, ordering cannot progress, or this
+  /// proof budget is exhausted, classification fails instead of guessing.
+  static const int maximumPreparedClassificationChecks = 256;
 
   /// Geometry construction ceilings.
   final StrokeGeometryLimits limits;
@@ -584,10 +737,6 @@ final class StrokeGeometryResolver {
     required AffineTransform2D localToPage,
   }) {
     try {
-      final inverted = localToPage.inverse();
-      if (inverted is! Ok<AffineTransform2D, StructuredFailure>) {
-        return Err(_failure('erasure_preparation_unavailable'));
-      }
       final count = samples.length == 1 ? 1 : samples.length - 1;
       final segments = <_PreparedErasureSegment>[];
       for (var index = 0; index < count; index += 1) {
@@ -595,7 +744,7 @@ final class StrokeGeometryResolver {
         final second = samples.length == 1
             ? samples.single
             : samples[index + 1];
-        final start = <Point2>[], end = <Point2>[];
+        final startPolygon = <Point2>[];
         for (final point in _circle(
           first.position,
           style.widthFor(first.pressure) / 2,
@@ -605,8 +754,9 @@ final class StrokeGeometryResolver {
           if (transformed is! Ok<Point2, StructuredFailure>) {
             return Err(_failure('erasure_preparation_unavailable'));
           }
-          start.add(transformed.value);
+          startPolygon.add(transformed.value);
         }
+        final endPolygon = <Point2>[];
         for (final point in _circle(
           second.position,
           style.widthFor(second.pressure) / 2,
@@ -616,17 +766,18 @@ final class StrokeGeometryResolver {
           if (transformed is! Ok<Point2, StructuredFailure>) {
             return Err(_failure('erasure_preparation_unavailable'));
           }
-          end.add(transformed.value);
+          endPolygon.add(transformed.value);
         }
         segments.add(
           _PreparedErasureSegment(
-            start,
-            end,
-            first.position,
-            second.position,
-            style.widthFor(first.pressure) / 2,
-            style.widthFor(second.pressure) / 2,
-            inverted.value,
+            localStart: first.position,
+            localEnd: second.position,
+            startRadius: style.widthFor(first.pressure) / 2,
+            endRadius: style.widthFor(second.pressure) / 2,
+            transformCoefficients: localToPage.storageCoefficients,
+            vertexCount: limits.ellipseVertexCount,
+            startPolygon: startPolygon,
+            endPolygon: endPolygon,
           ),
         );
       }
@@ -708,126 +859,74 @@ final class StrokeGeometryResolver {
     if (maximumChecks <= 0 || maximumChecks > limits.maximumContainmentChecks) {
       return Err(_failure('erasure_classification_limit'));
     }
+    final begun = beginPreparedSourceSegmentErasure(
+      prepared: prepared,
+      sourceSegment: sourceSegment,
+      eraserSegment: eraserSegment,
+      radius: radius,
+      maximumChecks: maximumChecks,
+      countPreparation: countPreparation,
+    );
+    if (begun is! Ok<PreparedStrokeErasureClassification, StructuredFailure>) {
+      return Err(_failure('erasure_classification_unavailable'));
+    }
     try {
-      final section = prepared._segments[sourceSegment];
-      var checks = 0;
-      double? distance(double parameter) {
-        checks += 1;
-        if (checks > maximumChecks) return null;
-        final value = section.distanceTo(eraserSegment.points, parameter);
-        return value.isFinite ? value : null;
-      }
-
-      StrokeErasureClassificationEvidence evidence(
-        List<StrokeErasureInterval> intervals,
-      ) => StrokeErasureClassificationEvidence._(
-        intervals: intervals,
-        geometryResolutions: countPreparation ? 1 : 0,
-        spatialElementsExamined: 0,
-        classificationChecks: checks,
-        maximumSearchDepth: 12,
-        maximumPendingIntervals: 1,
-      );
-
-      if (eraserSegment.points.length == 1 && radius == 0) {
-        checks = section.start.length;
-        if (checks > maximumChecks) {
-          return Err(_failure('erasure_classification_limit'));
-        }
-        final intervals = section
-            .pointCircleIntervals(eraserSegment.points.single)
-            .map((value) => StrokeErasureInterval._(value.$1, value.$2))
-            .toList(growable: false);
-        return Ok(evidence(intervals));
-      }
-
-      if (section.isDot) {
-        final value = distance(0);
-        if (value == null) {
-          return Err(_failure('erasure_classification_limit'));
-        }
-        return Ok(
-          evidence(
-            value <= radius ? const [StrokeErasureInterval._(0, 1)] : const [],
-          ),
+      while (true) {
+        final advanced = begun.value.advance(
+          maximumPredicateEvaluations: maximumChecks,
+          maximumRootIsolationAdvances: maximumChecks,
+          maximumFeatureTransitions: limits.ellipseVertexCount * 2,
+          maximumElapsedMicros: 1000000,
         );
+        if (advanced
+            is! Ok<StrokeErasureClassificationProgress, StructuredFailure>) {
+          return Err(
+            (advanced
+                    as Err<
+                      StrokeErasureClassificationProgress,
+                      StructuredFailure
+                    >)
+                .error,
+          );
+        }
+        if (advanced.value.completed) return Ok(advanced.value.evidence!);
       }
+    } on Object {
+      return Err(_failure('erasure_classification_unavailable'));
+    }
+  }
 
-      const ratio = 0.6180339887498949;
-      var low = 0.0, high = 1.0;
-      var leftProbe = high - (high - low) * ratio;
-      var rightProbe = low + (high - low) * ratio;
-      var leftValue = distance(leftProbe);
-      var rightValue = distance(rightProbe);
-      if (leftValue == null || rightValue == null) {
-        return Err(_failure('erasure_classification_limit'));
-      }
-      for (var depth = 0; depth < 12; depth += 1) {
-        if (leftValue! <= rightValue!) {
-          high = rightProbe;
-          rightProbe = leftProbe;
-          rightValue = leftValue;
-          leftProbe = high - (high - low) * ratio;
-          leftValue = distance(leftProbe);
-          if (leftValue == null) {
-            return Err(_failure('erasure_classification_limit'));
-          }
-        } else {
-          low = leftProbe;
-          leftProbe = rightProbe;
-          leftValue = rightValue;
-          rightProbe = low + (high - low) * ratio;
-          rightValue = distance(rightProbe);
-          if (rightValue == null) {
-            return Err(_failure('erasure_classification_limit'));
-          }
-        }
-      }
-      final seed = leftValue! <= rightValue! ? leftProbe : rightProbe;
-      final best = math.min(leftValue, rightValue);
-      final zero = distance(0), one = distance(1);
-      if (zero == null || one == null) {
-        return Err(_failure('erasure_classification_limit'));
-      }
-      if (best > radius && zero > radius && one > radius) {
-        return Ok(evidence(const []));
-      }
-
-      var left = 0.0;
-      if (zero > radius) {
-        var miss = 0.0, hit = seed;
-        for (var depth = 0; depth < 12; depth += 1) {
-          final middle = (miss + hit) / 2;
-          final value = distance(middle);
-          if (value == null) {
-            return Err(_failure('erasure_classification_limit'));
-          }
-          if (value <= radius) {
-            hit = middle;
-          } else {
-            miss = middle;
-          }
-        }
-        left = hit;
-      }
-      var right = 1.0;
-      if (one > radius) {
-        var hit = seed, miss = 1.0;
-        for (var depth = 0; depth < 12; depth += 1) {
-          final middle = (hit + miss) / 2;
-          final value = distance(middle);
-          if (value == null) {
-            return Err(_failure('erasure_classification_limit'));
-          }
-          if (value <= radius) {
-            hit = middle;
-          } else {
-            miss = middle;
-          }
-        }
-        right = hit;
-      }
-      return Ok(evidence([StrokeErasureInterval._(left, right)]));
+  /// Begins one prepared source-segment classification for bounded resumption.
+  Result<PreparedStrokeErasureClassification, StructuredFailure>
+  beginPreparedSourceSegmentErasure({
+    required PreparedStrokeErasureGeometry prepared,
+    required int sourceSegment,
+    required SweptPath eraserSegment,
+    required double radius,
+    required int maximumChecks,
+    bool countPreparation = false,
+  }) {
+    if (eraserSegment.points.length > 2 ||
+        !radius.isFinite ||
+        radius < 0 ||
+        sourceSegment < 0 ||
+        sourceSegment >= prepared._segments.length ||
+        maximumChecks <= 0 ||
+        maximumChecks > limits.maximumContainmentChecks) {
+      return Err(_failure('invalid_erasure_segment'));
+    }
+    try {
+      return Ok(
+        PreparedStrokeErasureClassification._(
+          _ResumableErasureClassifier(
+            section: prepared._segments[sourceSegment],
+            path: eraserSegment.points,
+            radius: radius,
+            maximumChecks: maximumChecks,
+          ),
+          countPreparation: countPreparation,
+        ),
+      );
     } on Object {
       return Err(_failure('erasure_classification_unavailable'));
     }
@@ -1314,218 +1413,1209 @@ bool _pointInPolygon(Point2 point, List<Point2> polygon) {
 }
 
 final class _PreparedErasureSegment {
-  _PreparedErasureSegment(
-    List<Point2> start,
-    List<Point2> end,
-    this.localStart,
-    this.localEnd,
-    this.startRadius,
-    this.endRadius,
-    this.pageToLocal,
-  ) : start = List.unmodifiable(start),
-      end = List.unmodifiable(end);
+  _PreparedErasureSegment({
+    required this.localStart,
+    required this.localEnd,
+    required this.startRadius,
+    required this.endRadius,
+    required List<double> transformCoefficients,
+    required int vertexCount,
+    required List<Point2> startPolygon,
+    required List<Point2> endPolygon,
+  }) : transformCoefficients = List.unmodifiable(transformCoefficients),
+       startPolygon = List.unmodifiable(startPolygon),
+       endPolygon = List.unmodifiable(endPolygon),
+       envelopePolygon = _convexHull([...startPolygon, ...endPolygon]),
+       unitPolygon = List.unmodifiable(
+         List.generate(
+           vertexCount,
+           (index) => (
+             _Dyadic.fromDouble(math.cos(math.pi * 2 * index / vertexCount)),
+             _Dyadic.fromDouble(math.sin(math.pi * 2 * index / vertexCount)),
+           ),
+           growable: false,
+         ),
+       );
 
-  final List<Point2> start;
-  final List<Point2> end;
   final Point2 localStart;
   final Point2 localEnd;
   final double startRadius;
   final double endRadius;
-  final AffineTransform2D pageToLocal;
+  final List<double> transformCoefficients;
+  final List<Point2> startPolygon;
+  final List<Point2> endPolygon;
+  final List<Point2> envelopePolygon;
+  final List<(_Dyadic, _Dyadic)> unitPolygon;
 
-  bool get isDot {
-    for (var index = 0; index < start.length; index += 1) {
-      if (start[index] != end[index]) return false;
-    }
-    return true;
+  bool get isDot => localStart == localEnd && startRadius == endRadius;
+
+  Point2? vertexAtDouble(int index, double parameter) {
+    final first = startPolygon[index];
+    final second = endPolygon[index];
+    return Point2.create(
+      x: first.x + (second.x - first.x) * parameter,
+      y: first.y + (second.y - first.y) * parameter,
+    ).fold<Point2?>(onOk: (value) => value, onErr: (_) => null);
   }
 
-  double x(int index, double t) =>
-      start[index].x + (end[index].x - start[index].x) * t;
-  double y(int index, double t) =>
-      start[index].y + (end[index].y - start[index].y) * t;
-
-  double distanceTo(List<Point2> path, double t) {
-    var best = double.infinity;
-    for (final point in path) {
-      if (_contains(point.x, point.y, t)) return 0;
-      for (var edge = 0; edge < start.length; edge += 1) {
-        final next = (edge + 1) % start.length;
-        best = math.min(
-          best,
-          _rawPointSegmentDistance(
-            point.x,
-            point.y,
-            x(edge, t),
-            y(edge, t),
-            x(next, t),
-            y(next, t),
-          ),
-        );
-      }
+  List<Point2>? polygonAtDouble(double parameter) {
+    final result = <Point2>[];
+    for (var index = 0; index < startPolygon.length; index += 1) {
+      final vertex = vertexAtDouble(index, parameter);
+      if (vertex == null) return null;
+      result.add(vertex);
     }
-    if (path.length == 2) {
-      final a = path.first, b = path.last;
-      for (var edge = 0; edge < start.length; edge += 1) {
-        final next = (edge + 1) % start.length;
-        best = math.min(
-          best,
-          _rawSegmentDistance(
-            a.x,
-            a.y,
-            b.x,
-            b.y,
-            x(edge, t),
-            y(edge, t),
-            x(next, t),
-            y(next, t),
-          ),
-        );
-      }
-    }
-    return best;
+    return result;
   }
 
-  List<(double, double)> pointCircleIntervals(Point2 pagePoint) {
-    final transformed = pageToLocal.applyToPoint(pagePoint);
-    if (transformed is! Ok<Point2, StructuredFailure>) return const [];
-    final point = transformed.value;
-    final dx = localEnd.x - localStart.x;
-    final dy = localEnd.y - localStart.y;
-    final dr = endRadius - startRadius;
-    final px = localStart.x - point.x;
-    final py = localStart.y - point.y;
-    final a = dx * dx + dy * dy - dr * dr;
-    final b = 2 * (px * dx + py * dy - startRadius * dr);
-    final c = px * px + py * py - startRadius * startRadius;
-    final boundaries = <double>[0, 1];
-    if (a.abs() < 1e-14) {
-      if (b != 0) {
-        final root = -c / b;
-        if (root > 0 && root < 1 && root.isFinite) boundaries.add(root);
+  List<_ExactPoint> polygonAt(_Dyadic parameter) {
+    final center = _ExactPoint.lerp(
+      _ExactPoint.fromPoint(localStart),
+      _ExactPoint.fromPoint(localEnd),
+      parameter,
+    );
+    final firstRadius = _Dyadic.fromDouble(startRadius);
+    final radius =
+        firstRadius + (_Dyadic.fromDouble(endRadius) - firstRadius) * parameter;
+    final coefficients = transformCoefficients
+        .map(_Dyadic.fromDouble)
+        .toList(growable: false);
+    return List.generate(unitPolygon.length, (index) {
+      final unit = unitPolygon[index];
+      final localX = center.x + radius * unit.$1;
+      final localY = center.y + radius * unit.$2;
+      return _ExactPoint(
+        coefficients[0] * localX + coefficients[1] * localY + coefficients[4],
+        coefficients[2] * localX + coefficients[3] * localY + coefficients[5],
+      );
+    }, growable: false);
+  }
+}
+
+enum _ClassifierPhase {
+  endpointZero,
+  endpointOne,
+  rootEnvelope,
+  searchMidpoint,
+  searchLeftEnvelope,
+  searchRightEnvelope,
+  leftBoundary,
+  rightBoundary,
+  completed,
+}
+
+enum _PredicateRelation { hit, miss }
+
+final class _ResumableAdvance {
+  const _ResumableAdvance({
+    required this.intervals,
+    required this.predicateEvaluations,
+    required this.rootIsolationAdvances,
+    required this.featureTransitions,
+  });
+
+  final List<StrokeErasureInterval>? intervals;
+  final int predicateEvaluations;
+  final int rootIsolationAdvances;
+  final int featureTransitions;
+}
+
+enum _AnalyticPhase {
+  spatial,
+  features,
+  probes,
+  leftBoundary,
+  rightBoundary,
+  fallback,
+  completed,
+}
+
+final class _ResumableErasureClassifier {
+  _ResumableErasureClassifier({
+    required this.section,
+    required List<Point2> path,
+    required this.radius,
+    required this.maximumChecks,
+  }) : pagePath = List.unmodifiable(path);
+
+  final _PreparedErasureSegment section;
+  final List<Point2> pagePath;
+  final double radius;
+  final int maximumChecks;
+  int totalPredicates = 0;
+  int maximumDepth = 0;
+  int maximumPending = 1;
+  int ordinaryClassifications = 0;
+  int exactFallbackClassifications = 0;
+  int exactFallbackExhaustions = 0;
+  int maximumInnerOperationMicros = 0;
+  int responsivenessBudgetOverruns = 0;
+  _AnalyticPhase _phase = _AnalyticPhase.spatial;
+  int _feature = 0;
+  final List<double> _events = [];
+  List<double> _probes = const [];
+  int _probe = 0;
+  final List<double> _hits = [];
+  final List<double> _misses = [];
+  double? _leftMiss;
+  double? _leftHit;
+  double? _rightHit;
+  double? _rightMiss;
+  List<StrokeErasureInterval>? _result;
+  _SubdivisionErasureClassifier? _fallback;
+
+  int get pendingCount => _phase == _AnalyticPhase.completed ? 0 : 1;
+
+  Result<_ResumableAdvance, StructuredFailure> advance({
+    required int maximumPredicateEvaluations,
+    required int maximumRootIsolationAdvances,
+    required int maximumFeatureTransitions,
+    required int maximumElapsedMicros,
+  }) {
+    if (maximumPredicateEvaluations <= 0 ||
+        maximumRootIsolationAdvances <= 0 ||
+        maximumFeatureTransitions <= 0 ||
+        maximumElapsedMicros <= 0) {
+      return Err(_failure('invalid_erasure_work_limit'));
+    }
+    var predicates = 0;
+    var roots = 0;
+    var features = 0;
+    final budgetClock = Stopwatch()..start();
+    while (_phase != _AnalyticPhase.completed &&
+        budgetClock.elapsedMicroseconds < maximumElapsedMicros) {
+      final nextFeatureCost = switch (_phase) {
+        _AnalyticPhase.probes ||
+        _AnalyticPhase.leftBoundary ||
+        _AnalyticPhase.rightBoundary => section.startPolygon.length,
+        _AnalyticPhase.fallback => section.startPolygon.length * 2,
+        _ => 1,
+      };
+      if (predicates >= maximumPredicateEvaluations ||
+          roots >= maximumRootIsolationAdvances ||
+          features + nextFeatureCost > maximumFeatureTransitions) {
+        break;
       }
-    } else {
-      final discriminant = b * b - 4 * a * c;
-      if (discriminant >= 0 && discriminant.isFinite) {
-        final root = math.sqrt(discriminant);
-        for (final value in [(-b - root) / (2 * a), (-b + root) / (2 * a)]) {
-          if (value > 0 && value < 1 && value.isFinite) boundaries.add(value);
+      if (totalPredicates >= maximumChecks) {
+        exactFallbackExhaustions += 1;
+        return Err(_failure('erasure_classification_limit'));
+      }
+      final clock = Stopwatch()..start();
+      final step = _step(
+        maximumPredicateEvaluations: maximumPredicateEvaluations - predicates,
+        maximumRootIsolationAdvances: maximumRootIsolationAdvances - roots,
+        maximumFeatureTransitions: maximumFeatureTransitions - features,
+      );
+      clock.stop();
+      maximumInnerOperationMicros = math.max(
+        maximumInnerOperationMicros,
+        clock.elapsedMicroseconds,
+      );
+      if (step is! Ok<_ResumableAdvance, StructuredFailure>) {
+        return Err((step as Err<_ResumableAdvance, StructuredFailure>).error);
+      }
+      if (clock.elapsedMicroseconds > maximumElapsedMicros) {
+        responsivenessBudgetOverruns += 1;
+      }
+      predicates += step.value.predicateEvaluations;
+      roots += step.value.rootIsolationAdvances;
+      features += step.value.featureTransitions;
+      totalPredicates += step.value.predicateEvaluations;
+      if (step.value.predicateEvaluations == 0 &&
+          step.value.rootIsolationAdvances == 0 &&
+          step.value.featureTransitions == 0) {
+        break;
+      }
+    }
+    return Ok(
+      _ResumableAdvance(
+        intervals: _result,
+        predicateEvaluations: predicates,
+        rootIsolationAdvances: roots,
+        featureTransitions: features,
+      ),
+    );
+  }
+
+  Result<_ResumableAdvance, StructuredFailure> _step({
+    required int maximumPredicateEvaluations,
+    required int maximumRootIsolationAdvances,
+    required int maximumFeatureTransitions,
+  }) {
+    switch (_phase) {
+      case _AnalyticPhase.spatial:
+        if (radius == 0) {
+          _startFallback();
+          return const Ok(
+            _ResumableAdvance(
+              intervals: null,
+              predicateEvaluations: 0,
+              rootIsolationAdvances: 0,
+              featureTransitions: 1,
+            ),
+          );
+        }
+        final relation = _floatingRelation(section.envelopePolygon);
+        if (relation == _FloatingRelation.miss) {
+          ordinaryClassifications = 1;
+          _complete(const []);
+        } else {
+          _phase = _AnalyticPhase.features;
+        }
+        return const Ok(
+          _ResumableAdvance(
+            intervals: null,
+            predicateEvaluations: 1,
+            rootIsolationAdvances: 0,
+            featureTransitions: 1,
+          ),
+        );
+      case _AnalyticPhase.features:
+        if (_feature < section.startPolygon.length) {
+          _addFeatureEvents(_feature);
+          _feature += 1;
+          return const Ok(
+            _ResumableAdvance(
+              intervals: null,
+              predicateEvaluations: 0,
+              rootIsolationAdvances: 0,
+              featureTransitions: 1,
+            ),
+          );
+        }
+        _prepareProbes();
+        _phase = _AnalyticPhase.probes;
+        return const Ok(
+          _ResumableAdvance(
+            intervals: null,
+            predicateEvaluations: 0,
+            rootIsolationAdvances: 0,
+            featureTransitions: 1,
+          ),
+        );
+      case _AnalyticPhase.probes:
+        if (_probe < _probes.length) {
+          final parameter = _probes[_probe++];
+          final relation = _certifiedHitAt(parameter);
+          if (relation.$1) {
+            _hits.add(parameter);
+          } else {
+            _misses.add(parameter);
+          }
+          return Ok(
+            _ResumableAdvance(
+              intervals: null,
+              predicateEvaluations: 1,
+              rootIsolationAdvances: 0,
+              featureTransitions: section.startPolygon.length,
+            ),
+          );
+        }
+        if (_hits.isEmpty) {
+          _startFallback();
+        } else {
+          _hits.sort();
+          if (exactFallbackClassifications == 0) ordinaryClassifications = 1;
+          _complete([StrokeErasureInterval._(_hits.first, _hits.last)]);
+        }
+        return const Ok(
+          _ResumableAdvance(
+            intervals: null,
+            predicateEvaluations: 0,
+            rootIsolationAdvances: 0,
+            featureTransitions: 1,
+          ),
+        );
+      case _AnalyticPhase.leftBoundary:
+        final middle = _analyticBracketAdvance(_leftMiss!, _leftHit!);
+        if (middle == null) {
+          _phase = _AnalyticPhase.rightBoundary;
+          return const Ok(
+            _ResumableAdvance(
+              intervals: null,
+              predicateEvaluations: 0,
+              rootIsolationAdvances: 1,
+              featureTransitions: 1,
+            ),
+          );
+        }
+        final relation = _certifiedHitAt(middle);
+        if (relation.$1) {
+          _leftHit = middle;
+        } else {
+          _leftMiss = middle;
+        }
+        maximumDepth += 1;
+        return Ok(
+          _ResumableAdvance(
+            intervals: null,
+            predicateEvaluations: 1,
+            rootIsolationAdvances: 1,
+            featureTransitions: section.startPolygon.length,
+          ),
+        );
+      case _AnalyticPhase.rightBoundary:
+        if (_rightMiss == null) {
+          if (exactFallbackClassifications == 0) ordinaryClassifications = 1;
+          _complete([StrokeErasureInterval._(_leftHit!, _rightHit!)]);
+          return const Ok(
+            _ResumableAdvance(
+              intervals: null,
+              predicateEvaluations: 0,
+              rootIsolationAdvances: 1,
+              featureTransitions: 1,
+            ),
+          );
+        }
+        final middle = _analyticBracketAdvance(_rightMiss!, _rightHit!);
+        if (middle == null) {
+          if (exactFallbackClassifications == 0) ordinaryClassifications = 1;
+          _complete([StrokeErasureInterval._(_leftHit!, _rightHit!)]);
+          return const Ok(
+            _ResumableAdvance(
+              intervals: null,
+              predicateEvaluations: 0,
+              rootIsolationAdvances: 1,
+              featureTransitions: 1,
+            ),
+          );
+        }
+        final relation = _certifiedHitAt(middle);
+        if (relation.$1) {
+          _rightHit = middle;
+        } else {
+          _rightMiss = middle;
+        }
+        maximumDepth += 1;
+        return Ok(
+          _ResumableAdvance(
+            intervals: null,
+            predicateEvaluations: 1,
+            rootIsolationAdvances: 1,
+            featureTransitions: section.startPolygon.length,
+          ),
+        );
+      case _AnalyticPhase.fallback:
+        final advanced = _fallback!.advance(
+          maximumPredicateEvaluations: math.min(1, maximumPredicateEvaluations),
+          maximumRootIsolationAdvances: math.min(
+            1,
+            maximumRootIsolationAdvances,
+          ),
+          maximumFeatureTransitions: math.min(
+            section.startPolygon.length * 2,
+            maximumFeatureTransitions,
+          ),
+        );
+        if (advanced is! Ok<_ResumableAdvance, StructuredFailure>) {
+          exactFallbackExhaustions += 1;
+          return advanced;
+        }
+        maximumDepth = math.max(maximumDepth, _fallback!.maximumDepth);
+        maximumPending = math.max(maximumPending, _fallback!.maximumPending);
+        if (advanced.value.intervals != null) {
+          _complete(advanced.value.intervals!);
+        }
+        return advanced;
+      case _AnalyticPhase.completed:
+        return Ok(
+          _ResumableAdvance(
+            intervals: _result,
+            predicateEvaluations: 0,
+            rootIsolationAdvances: 0,
+            featureTransitions: 0,
+          ),
+        );
+    }
+  }
+
+  void _startFallback() {
+    exactFallbackClassifications = math.max(exactFallbackClassifications, 1);
+    _fallback ??= _SubdivisionErasureClassifier(
+      section: section,
+      path: pagePath,
+      radius: radius,
+      maximumChecks: maximumChecks - totalPredicates,
+    );
+    _phase = _AnalyticPhase.fallback;
+  }
+
+  void _addFeatureEvents(int index) {
+    final start = section.startPolygon[index];
+    final end = section.endPolygon[index];
+    final velocityX = end.x - start.x;
+    final velocityY = end.y - start.y;
+    for (final point in pagePath) {
+      final offsetX = start.x - point.x;
+      final offsetY = start.y - point.y;
+      _addQuadraticRoots(
+        velocityX * velocityX + velocityY * velocityY,
+        2 * (offsetX * velocityX + offsetY * velocityY),
+        offsetX * offsetX + offsetY * offsetY - radius * radius,
+      );
+    }
+    if (pagePath.length == 2) {
+      final first = pagePath.first;
+      final second = pagePath.last;
+      final dx = second.x - first.x;
+      final dy = second.y - first.y;
+      final length = math.sqrt(dx * dx + dy * dy);
+      if (length.isFinite && length > 0) {
+        final initial = (start.x - first.x) * dy - (start.y - first.y) * dx;
+        final change = velocityX * dy - velocityY * dx;
+        for (final signedRadius in [radius * length, -radius * length]) {
+          if (change != 0 && change.isFinite) {
+            final t = (signedRadius - initial) / change;
+            final vertex = t >= 0 && t <= 1
+                ? section.vertexAtDouble(index, t)
+                : null;
+            if (vertex != null) {
+              final projection =
+                  ((vertex.x - first.x) * dx + (vertex.y - first.y) * dy) /
+                  (length * length);
+              if (projection >= 0 && projection <= 1) _addEvent(t);
+            }
+          }
         }
       }
     }
-    boundaries.sort();
+    final next = (index + 1) % section.startPolygon.length;
+    final edgeStart = section.startPolygon[next];
+    final edgeX = edgeStart.x - start.x;
+    final edgeY = edgeStart.y - start.y;
+    final edgeLength = math.sqrt(edgeX * edgeX + edgeY * edgeY);
+    if (edgeLength.isFinite && edgeLength > 0) {
+      final normalX = -edgeY / edgeLength;
+      final normalY = edgeX / edgeLength;
+      final tangentX = edgeX / edgeLength;
+      final tangentY = edgeY / edgeLength;
+      for (final point in pagePath) {
+        final initial =
+            (point.x - start.x) * normalX + (point.y - start.y) * normalY;
+        final change = -(velocityX * normalX + velocityY * normalY);
+        for (final signedRadius in [radius, -radius]) {
+          if (change == 0 || !change.isFinite) continue;
+          final t = (signedRadius - initial) / change;
+          if (t < 0 || t > 1) continue;
+          final firstVertex = section.vertexAtDouble(index, t);
+          final secondVertex = section.vertexAtDouble(next, t);
+          if (firstVertex == null || secondVertex == null) continue;
+          final projection =
+              (point.x - firstVertex.x) * tangentX +
+              (point.y - firstVertex.y) * tangentY;
+          final lengthAt =
+              (secondVertex.x - firstVertex.x) * tangentX +
+              (secondVertex.y - firstVertex.y) * tangentY;
+          if (projection >= 0 && projection <= lengthAt) _addEvent(t);
+        }
+      }
+    }
+  }
+
+  void _addQuadraticRoots(double a, double b, double c) {
+    if (![a, b, c].every((value) => value.isFinite)) return;
+    if (a == 0) {
+      if (b != 0) _addEvent(-c / b);
+      return;
+    }
+    final discriminant = b * b - 4 * a * c;
+    if (!discriminant.isFinite || discriminant < 0) return;
+    final root = math.sqrt(discriminant);
+    final q = -.5 * (b + (b < 0 ? -root : root));
+    if (q == 0) {
+      _addEvent(-b / (2 * a));
+    } else {
+      _addEvent(q / a);
+      _addEvent(c / q);
+    }
+  }
+
+  void _addEvent(double value) {
+    if (value.isFinite && value >= 0 && value <= 1) _events.add(value);
+  }
+
+  void _prepareProbes() {
+    _events.sort();
     final unique = <double>[];
-    for (final value in boundaries) {
-      if (unique.isEmpty || (value - unique.last).abs() > 1e-12) {
-        unique.add(value);
-      }
+    for (final value in _events) {
+      if (unique.isEmpty || value != unique.last) unique.add(value);
     }
-    final result = <(double, double)>[];
-    for (var index = 1; index < unique.length; index += 1) {
-      final first = unique[index - 1], second = unique[index];
-      final middle = (first + second) / 2;
-      if (a * middle * middle + b * middle + c > 0) continue;
-      if (result.isNotEmpty && (result.last.$2 - first).abs() <= 1e-12) {
-        result[result.length - 1] = (result.last.$1, second);
-      } else {
-        result.add((first, second));
-      }
+    final probes = <double>{0, 1};
+    if (unique.isEmpty) {
+      probes.add(.5);
+    } else if (unique.length == 1) {
+      probes.add(unique.single);
+    } else {
+      final span = unique.last - unique.first;
+      final inset = math.max(span * 1e-10, double.minPositive);
+      probes
+        ..add(math.min(unique.last, unique.first + inset))
+        ..add(math.max(unique.first, unique.last - inset));
+      final middle = _representableMidpoint(unique.first, unique.last);
+      if (middle != null) probes.add(middle);
     }
-    return List.unmodifiable(result);
+    _probes = probes.toList()..sort();
   }
 
-  bool _contains(double px, double py, double t) {
-    double? sign;
-    for (var edge = 0; edge < start.length; edge += 1) {
-      final next = (edge + 1) % start.length;
-      final value = _rawOrientation(
-        x(edge, t),
-        y(edge, t),
-        x(next, t),
-        y(next, t),
-        px,
-        py,
+  (_FloatingRelation, double) _floatingDistanceAt(double parameter) {
+    final polygon = section.polygonAtDouble(parameter);
+    if (polygon == null) return (_FloatingRelation.ambiguous, double.nan);
+    final distance = _polygonPathDistance(polygon, pagePath);
+    final scale = <double>[
+      radius.abs(),
+      distance.abs(),
+      ...polygon.expand((point) => [point.x.abs(), point.y.abs()]),
+      ...pagePath.expand((point) => [point.x.abs(), point.y.abs()]),
+    ].reduce(math.max);
+    final error = scale * 2.842170943040401e-14;
+    if (!distance.isFinite || !error.isFinite) {
+      return (_FloatingRelation.ambiguous, distance);
+    }
+    if (distance + error < radius) return (_FloatingRelation.hit, distance);
+    if (distance - error > radius) return (_FloatingRelation.miss, distance);
+    return (_FloatingRelation.ambiguous, distance);
+  }
+
+  _FloatingRelation _floatingRelation(List<Point2> polygon) {
+    final distance = _polygonPathDistance(polygon, pagePath);
+    final scale = <double>[
+      radius.abs(),
+      distance.abs(),
+      ...polygon.expand((point) => [point.x.abs(), point.y.abs()]),
+      ...pagePath.expand((point) => [point.x.abs(), point.y.abs()]),
+    ].reduce(math.max);
+    final error = scale * 2.842170943040401e-14;
+    if (distance.isFinite && error.isFinite) {
+      if (distance + error < radius) return _FloatingRelation.hit;
+      if (distance - error > radius) return _FloatingRelation.miss;
+    }
+    return _FloatingRelation.ambiguous;
+  }
+
+  (bool, bool) _certifiedHitAt(double parameter) {
+    final floating = _floatingDistanceAt(parameter).$1;
+    if (floating != _FloatingRelation.ambiguous) {
+      return (floating == _FloatingRelation.hit, false);
+    }
+    final exact = _shapeWithinRadius(
+      section.polygonAt(_Dyadic.fromDouble(parameter)),
+      pagePath.map(_ExactPoint.fromPoint).toList(growable: false),
+      _Dyadic.fromDouble(radius) * _Dyadic.fromDouble(radius),
+    );
+    return (exact, true);
+  }
+
+  double? _analyticBracketAdvance(double miss, double hit) {
+    if (_representableMidpoint(math.min(miss, hit), math.max(miss, hit)) ==
+        null) {
+      return null;
+    }
+    final missGap = _floatingDistanceAt(miss).$2 - radius;
+    final hitGap = _floatingDistanceAt(hit).$2 - radius;
+    if (missGap.isFinite &&
+        hitGap.isFinite &&
+        missGap > 0 &&
+        hitGap <= 0 &&
+        missGap != hitGap) {
+      final candidate = miss + (hit - miss) * missGap / (missGap - hitGap);
+      final low = math.min(miss, hit);
+      final high = math.max(miss, hit);
+      if (candidate.isFinite && candidate > low && candidate < high) {
+        return candidate;
+      }
+      final adjacent = miss < hit
+          ? _previousDouble(hit)
+          : _nextPositiveDouble(hit);
+      if (adjacent > low && adjacent < high) return adjacent;
+    }
+    return _representableMidpoint(math.min(miss, hit), math.max(miss, hit));
+  }
+
+  void _complete(List<StrokeErasureInterval> intervals) {
+    _result = List.unmodifiable(intervals);
+    _phase = _AnalyticPhase.completed;
+  }
+}
+
+enum _FloatingRelation { hit, miss, ambiguous }
+
+final class _SubdivisionErasureClassifier {
+  _SubdivisionErasureClassifier({
+    required this.section,
+    required List<Point2> path,
+    required double radius,
+    required this.maximumChecks,
+  }) : pagePath = List.unmodifiable(path),
+       exactPath = List.unmodifiable(path.map(_ExactPoint.fromPoint)),
+       radius = radius,
+       radiusSquared = _Dyadic.fromDouble(radius) * _Dyadic.fromDouble(radius);
+
+  final _PreparedErasureSegment section;
+  final List<Point2> pagePath;
+  final List<_ExactPoint> exactPath;
+  final double radius;
+  final _Dyadic radiusSquared;
+  final int maximumChecks;
+  int totalPredicates = 0;
+  int maximumDepth = 0;
+  int maximumPending = 1;
+  _ClassifierPhase _phase = _ClassifierPhase.endpointZero;
+  bool _zeroHit = false;
+  bool _oneHit = false;
+  double? _witness;
+  final List<_ParameterInterval> _pending = [];
+  _ParameterInterval? _active;
+  double? _middle;
+  bool _leftPossible = false;
+  double _leftMiss = 0;
+  double _leftHit = 0;
+  double _rightHit = 0;
+  double _rightMiss = 1;
+  double? _leftResult;
+  double? _rightResult;
+  List<StrokeErasureInterval>? _result;
+
+  int get pendingCount => _pending.length + (_active == null ? 0 : 1);
+
+  Result<_ResumableAdvance, StructuredFailure> advance({
+    required int maximumPredicateEvaluations,
+    required int maximumRootIsolationAdvances,
+    required int maximumFeatureTransitions,
+  }) {
+    if (maximumPredicateEvaluations <= 0 ||
+        maximumRootIsolationAdvances <= 0 ||
+        maximumFeatureTransitions < section.unitPolygon.length) {
+      return Err(_failure('invalid_erasure_work_limit'));
+    }
+    var predicates = 0;
+    var roots = 0;
+    var features = 0;
+    while (_phase != _ClassifierPhase.completed) {
+      final envelope =
+          _phase == _ClassifierPhase.rootEnvelope ||
+          _phase == _ClassifierPhase.searchLeftEnvelope ||
+          _phase == _ClassifierPhase.searchRightEnvelope;
+      final featureCost = section.unitPolygon.length * (envelope ? 2 : 1);
+      final rootCost = switch (_phase) {
+        _ClassifierPhase.searchMidpoint ||
+        _ClassifierPhase.leftBoundary ||
+        _ClassifierPhase.rightBoundary => 1,
+        _ => 0,
+      };
+      if (predicates >= maximumPredicateEvaluations ||
+          roots + rootCost > maximumRootIsolationAdvances ||
+          features + featureCost > maximumFeatureTransitions) {
+        break;
+      }
+      if (totalPredicates >= maximumChecks) {
+        return Err(_failure('erasure_classification_limit'));
+      }
+      final step = _step();
+      if (step is Err<void, StructuredFailure>) return Err(step.error);
+      predicates += 1;
+      roots += rootCost;
+      features += featureCost;
+      totalPredicates += 1;
+    }
+    return Ok(
+      _ResumableAdvance(
+        intervals: _result,
+        predicateEvaluations: predicates,
+        rootIsolationAdvances: roots,
+        featureTransitions: features,
+      ),
+    );
+  }
+
+  Result<void, StructuredFailure> _step() {
+    switch (_phase) {
+      case _ClassifierPhase.endpointZero:
+        _zeroHit = _hitAt(0);
+        _phase = _ClassifierPhase.endpointOne;
+        return const Ok(null);
+      case _ClassifierPhase.endpointOne:
+        _oneHit = _hitAt(1);
+        if (section.isDot) {
+          _complete(
+            _zeroHit ? const [StrokeErasureInterval._(0, 1)] : const [],
+          );
+        } else if (_zeroHit || _oneHit) {
+          _witness = _zeroHit ? 0 : 1;
+          _startBoundaries();
+        } else {
+          _phase = _ClassifierPhase.rootEnvelope;
+        }
+        return const Ok(null);
+      case _ClassifierPhase.rootEnvelope:
+        if (!_envelopeMayHit(0, 1)) {
+          _complete(const []);
+        } else {
+          _pending.add(const _ParameterInterval(0, 1, 0));
+          maximumPending = math.max(maximumPending, _pending.length);
+          _phase = _ClassifierPhase.searchMidpoint;
+        }
+        return const Ok(null);
+      case _ClassifierPhase.searchMidpoint:
+        if (_active == null) {
+          if (_pending.isEmpty) {
+            return Err(_failure('erasure_classification_uncertain'));
+          }
+          _active = _pending.removeLast();
+          maximumDepth = math.max(maximumDepth, _active!.depth);
+          _middle = _representableMidpoint(_active!.low, _active!.high);
+          if (_middle == null) {
+            return Err(_failure('erasure_classification_uncertain'));
+          }
+        }
+        if (_hitAt(_middle!)) {
+          _witness = _middle;
+          _startBoundaries();
+        } else {
+          _phase = _ClassifierPhase.searchLeftEnvelope;
+        }
+        return const Ok(null);
+      case _ClassifierPhase.searchLeftEnvelope:
+        _leftPossible = _envelopeMayHit(_active!.low, _middle!);
+        _phase = _ClassifierPhase.searchRightEnvelope;
+        return const Ok(null);
+      case _ClassifierPhase.searchRightEnvelope:
+        final rightPossible = _envelopeMayHit(_middle!, _active!.high);
+        final depth = _active!.depth + 1;
+        if (rightPossible) {
+          _pending.add(_ParameterInterval(_middle!, _active!.high, depth));
+        }
+        if (_leftPossible) {
+          _pending.add(_ParameterInterval(_active!.low, _middle!, depth));
+        }
+        maximumPending = math.max(maximumPending, _pending.length);
+        _active = null;
+        _middle = null;
+        _phase = _ClassifierPhase.searchMidpoint;
+        return const Ok(null);
+      case _ClassifierPhase.leftBoundary:
+        final middle = _representableMidpoint(_leftMiss, _leftHit);
+        if (middle == null) {
+          _leftResult = _leftHit;
+          _phase = _ClassifierPhase.rightBoundary;
+        } else {
+          maximumDepth += 1;
+          if (_hitAt(middle)) {
+            _leftHit = middle;
+          } else {
+            _leftMiss = middle;
+          }
+        }
+        return const Ok(null);
+      case _ClassifierPhase.rightBoundary:
+        final middle = _representableMidpoint(_rightHit, _rightMiss);
+        if (middle == null) {
+          _rightResult = _rightHit;
+          _complete([StrokeErasureInterval._(_leftResult ?? 0, _rightResult!)]);
+        } else {
+          maximumDepth += 1;
+          if (_hitAt(middle)) {
+            _rightHit = middle;
+          } else {
+            _rightMiss = middle;
+          }
+        }
+        return const Ok(null);
+      case _ClassifierPhase.completed:
+        return const Ok(null);
+    }
+  }
+
+  void _startBoundaries() {
+    _leftMiss = 0;
+    _leftHit = _witness!;
+    _rightHit = _witness!;
+    _rightMiss = 1;
+    if (_zeroHit) _leftResult = 0;
+    if (_oneHit) _rightResult = 1;
+    _phase = _leftResult == null
+        ? _ClassifierPhase.leftBoundary
+        : _ClassifierPhase.rightBoundary;
+    if (_rightResult != null && _leftResult != null) {
+      _complete([StrokeErasureInterval._(_leftResult!, _rightResult!)]);
+    }
+  }
+
+  void _complete(List<StrokeErasureInterval> value) {
+    _result = List.unmodifiable(value);
+    _phase = _ClassifierPhase.completed;
+  }
+
+  bool _hitAt(double parameter) =>
+      _boundedRelation(
+        section.polygonAtDouble(parameter),
+        () => section.polygonAt(_Dyadic.fromDouble(parameter)),
+      ) ==
+      _PredicateRelation.hit;
+
+  bool _envelopeMayHit(double low, double high) =>
+      _boundedRelation(
+        _convexHull([
+          ...?section.polygonAtDouble(low),
+          ...?section.polygonAtDouble(high),
+        ]),
+        () => _exactConvexHull([
+          ...section.polygonAt(_Dyadic.fromDouble(low)),
+          ...section.polygonAt(_Dyadic.fromDouble(high)),
+        ]),
+      ) ==
+      _PredicateRelation.hit;
+
+  _PredicateRelation _boundedRelation(
+    List<Point2>? polygon,
+    List<_ExactPoint> Function() exactPolygon,
+  ) {
+    if (polygon != null && polygon.length >= 3 && radius > 0) {
+      final distance = _polygonPathDistance(polygon, pagePath);
+      final scale = <double>[
+        radius.abs(),
+        distance.abs(),
+        ...polygon.expand((point) => [point.x.abs(), point.y.abs()]),
+        ...pagePath.expand((point) => [point.x.abs(), point.y.abs()]),
+      ].reduce(math.max);
+      final error = scale * 2.842170943040401e-14;
+      if (distance.isFinite && error.isFinite) {
+        if (distance + error < radius) return _PredicateRelation.hit;
+        if (distance - error > radius) return _PredicateRelation.miss;
+      }
+    }
+    return _shapeWithinRadius(exactPolygon(), exactPath, radiusSquared)
+        ? _PredicateRelation.hit
+        : _PredicateRelation.miss;
+  }
+}
+
+final class _ParameterInterval {
+  const _ParameterInterval(this.low, this.high, this.depth);
+
+  final double low;
+  final double high;
+  final int depth;
+}
+
+List<Point2> _convexHull(List<Point2> source) {
+  if (source.length <= 1) return List.unmodifiable(source);
+  final points = List<Point2>.of(source)
+    ..sort((first, second) {
+      final x = first.x.compareTo(second.x);
+      return x == 0 ? first.y.compareTo(second.y) : x;
+    });
+  final lower = <Point2>[];
+  for (final point in points) {
+    while (lower.length >= 2 &&
+        _orientationSign(lower[lower.length - 2], lower.last, point) <= 0) {
+      lower.removeLast();
+    }
+    lower.add(point);
+  }
+  final upper = <Point2>[];
+  for (final point in points.reversed) {
+    while (upper.length >= 2 &&
+        _orientationSign(upper[upper.length - 2], upper.last, point) <= 0) {
+      upper.removeLast();
+    }
+    upper.add(point);
+  }
+  lower.removeLast();
+  upper.removeLast();
+  return List.unmodifiable([...lower, ...upper]);
+}
+
+double _polygonPathDistance(List<Point2> polygon, List<Point2> path) {
+  var best = double.infinity;
+  for (final point in path) {
+    if (_pointInConvex(point, polygon)) return 0;
+    best = math.min(best, _distanceToPolygon(point, polygon));
+  }
+  for (var pathIndex = 1; pathIndex < path.length; pathIndex += 1) {
+    final first = path[pathIndex - 1];
+    final second = path[pathIndex];
+    for (var edge = 0; edge < polygon.length; edge += 1) {
+      final distance = _segmentToSegmentDistance(
+        first,
+        second,
+        polygon[edge],
+        polygon[(edge + 1) % polygon.length],
       );
-      if (value == 0) continue;
-      sign ??= value;
-      if (value != sign) return false;
+      if (distance == 0) return 0;
+      best = math.min(best, distance);
     }
-    return true;
+  }
+  return best;
+}
+
+double? _representableMidpoint(double low, double high) {
+  final next = _nextPositiveDouble(low);
+  if (next >= high) return null;
+  final middle = low + (high - low) / 2;
+  if (middle > low && middle < high) return middle;
+  return next < high ? next : null;
+}
+
+double _nextPositiveDouble(double value) {
+  if (value == 0) return double.minPositive;
+  final bytes = ByteData(8)..setFloat64(0, value);
+  var high = bytes.getUint32(0);
+  var low = bytes.getUint32(4);
+  if (low == 0xffffffff) {
+    low = 0;
+    high += 1;
+  } else {
+    low += 1;
+  }
+  bytes
+    ..setUint32(0, high)
+    ..setUint32(4, low);
+  return bytes.getFloat64(0);
+}
+
+double _previousDouble(double value) {
+  if (value <= 0) return -double.minPositive;
+  final bytes = ByteData(8)..setFloat64(0, value);
+  var high = bytes.getUint32(0);
+  var low = bytes.getUint32(4);
+  if (low == 0) {
+    low = 0xffffffff;
+    high -= 1;
+  } else {
+    low -= 1;
+  }
+  bytes
+    ..setUint32(0, high)
+    ..setUint32(4, low);
+  return bytes.getFloat64(0);
+}
+
+final class _ExactPoint {
+  const _ExactPoint(this.x, this.y);
+
+  factory _ExactPoint.fromPoint(Point2 value) =>
+      _ExactPoint(_Dyadic.fromDouble(value.x), _Dyadic.fromDouble(value.y));
+
+  factory _ExactPoint.lerp(_ExactPoint first, _ExactPoint second, _Dyadic t) =>
+      _ExactPoint(
+        first.x + (second.x - first.x) * t,
+        first.y + (second.y - first.y) * t,
+      );
+
+  final _Dyadic x;
+  final _Dyadic y;
+
+  _ExactPoint operator -(_ExactPoint other) =>
+      _ExactPoint(x - other.x, y - other.y);
+}
+
+final class _Dyadic implements Comparable<_Dyadic> {
+  const _Dyadic(this.coefficient, this.exponent);
+
+  factory _Dyadic.fromDouble(double value) {
+    if (!value.isFinite) throw const _GeometryBuildException();
+    if (value == 0) return _zero;
+    final bytes = ByteData(8)..setFloat64(0, value);
+    final high = bytes.getUint32(0);
+    final low = bytes.getUint32(4);
+    final negative = high & 0x80000000 != 0;
+    final encodedExponent = (high >>> 20) & 0x7ff;
+    final fraction = (BigInt.from(high & 0xfffff) << 32) | BigInt.from(low);
+    final coefficient = encodedExponent == 0
+        ? fraction
+        : (BigInt.one << 52) | fraction;
+    return _Dyadic(
+      negative ? -coefficient : coefficient,
+      encodedExponent == 0 ? -1074 : encodedExponent - 1075,
+    );
+  }
+
+  static final _Dyadic _zero = _Dyadic(BigInt.zero, 0);
+  final BigInt coefficient;
+  final int exponent;
+
+  _Dyadic operator +(_Dyadic other) {
+    if (coefficient == BigInt.zero) return other;
+    if (other.coefficient == BigInt.zero) return this;
+    final common = math.min(exponent, other.exponent);
+    return _Dyadic(
+      (coefficient << (exponent - common)) +
+          (other.coefficient << (other.exponent - common)),
+      common,
+    );
+  }
+
+  _Dyadic operator -(_Dyadic other) =>
+      this + _Dyadic(-other.coefficient, other.exponent);
+
+  _Dyadic operator *(_Dyadic other) =>
+      _Dyadic(coefficient * other.coefficient, exponent + other.exponent);
+
+  @override
+  int compareTo(_Dyadic other) {
+    if (coefficient == BigInt.zero && other.coefficient == BigInt.zero) {
+      return 0;
+    }
+    final common = math.min(exponent, other.exponent);
+    return (coefficient << (exponent - common))
+        .compareTo(other.coefficient << (other.exponent - common))
+        .sign;
   }
 }
 
-double _rawPointSegmentDistance(
-  double px,
-  double py,
-  double ax,
-  double ay,
-  double bx,
-  double by,
-) {
-  final dx = bx - ax, dy = by - ay;
-  final squared = dx * dx + dy * dy;
-  if (squared == 0) return _hypot(px - ax, py - ay);
-  final t = ((px - ax) * dx + (py - ay) * dy) / squared;
-  final clamped = t.clamp(0.0, 1.0);
-  return _hypot(px - (ax + dx * clamped), py - (ay + dy * clamped));
-}
+_Dyadic _exactDot(_ExactPoint first, _ExactPoint second) =>
+    first.x * second.x + first.y * second.y;
 
-double _rawSegmentDistance(
-  double ax,
-  double ay,
-  double bx,
-  double by,
-  double cx,
-  double cy,
-  double dx,
-  double dy,
-) {
-  if (_rawSegmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy)) return 0;
-  return math.min(
-    math.min(
-      _rawPointSegmentDistance(ax, ay, cx, cy, dx, dy),
-      _rawPointSegmentDistance(bx, by, cx, cy, dx, dy),
-    ),
-    math.min(
-      _rawPointSegmentDistance(cx, cy, ax, ay, bx, by),
-      _rawPointSegmentDistance(dx, dy, ax, ay, bx, by),
-    ),
-  );
-}
+_Dyadic _exactCross(_ExactPoint first, _ExactPoint second) =>
+    first.x * second.y - first.y * second.x;
 
-bool _rawSegmentsIntersect(
-  double ax,
-  double ay,
-  double bx,
-  double by,
-  double cx,
-  double cy,
-  double dx,
-  double dy,
+int _exactOrientation(_ExactPoint a, _ExactPoint b, _ExactPoint c) =>
+    _exactCross(b - a, c - a).compareTo(_Dyadic._zero);
+
+bool _exactOnSegment(_ExactPoint a, _ExactPoint point, _ExactPoint b) =>
+    point.x.compareTo(a.x.compareTo(b.x) <= 0 ? a.x : b.x) >= 0 &&
+    point.x.compareTo(a.x.compareTo(b.x) >= 0 ? a.x : b.x) <= 0 &&
+    point.y.compareTo(a.y.compareTo(b.y) <= 0 ? a.y : b.y) >= 0 &&
+    point.y.compareTo(a.y.compareTo(b.y) >= 0 ? a.y : b.y) <= 0;
+
+bool _exactSegmentsIntersect(
+  _ExactPoint a,
+  _ExactPoint b,
+  _ExactPoint c,
+  _ExactPoint d,
 ) {
-  final first = _rawOrientation(ax, ay, bx, by, cx, cy);
-  final second = _rawOrientation(ax, ay, bx, by, dx, dy);
-  final third = _rawOrientation(cx, cy, dx, dy, ax, ay);
-  final fourth = _rawOrientation(cx, cy, dx, dy, bx, by);
-  bool between(double a, double value, double b) =>
-      value >= math.min(a, b) && value <= math.max(a, b);
-  if (first == 0 && between(ax, cx, bx) && between(ay, cy, by)) return true;
-  if (second == 0 && between(ax, dx, bx) && between(ay, dy, by)) return true;
-  if (third == 0 && between(cx, ax, dx) && between(cy, ay, dy)) return true;
-  if (fourth == 0 && between(cx, bx, dx) && between(cy, by, dy)) return true;
+  final first = _exactOrientation(a, b, c);
+  final second = _exactOrientation(a, b, d);
+  final third = _exactOrientation(c, d, a);
+  final fourth = _exactOrientation(c, d, b);
+  if (first == 0 && _exactOnSegment(a, c, b)) return true;
+  if (second == 0 && _exactOnSegment(a, d, b)) return true;
+  if (third == 0 && _exactOnSegment(c, a, d)) return true;
+  if (fourth == 0 && _exactOnSegment(c, b, d)) return true;
   return first != second && third != fourth;
 }
 
-double _rawOrientation(
-  double ax,
-  double ay,
-  double bx,
-  double by,
-  double cx,
-  double cy,
+bool _exactPointSegmentWithinRadius(
+  _ExactPoint point,
+  _ExactPoint first,
+  _ExactPoint second,
+  _Dyadic radiusSquared,
 ) {
-  final value = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
-  return value.sign;
+  final direction = second - first;
+  final offset = point - first;
+  final lengthSquared = _exactDot(direction, direction);
+  if (lengthSquared.compareTo(_Dyadic._zero) == 0) {
+    return _exactDot(offset, offset).compareTo(radiusSquared) <= 0;
+  }
+  final projection = _exactDot(offset, direction);
+  if (projection.compareTo(_Dyadic._zero) <= 0) {
+    return _exactDot(offset, offset).compareTo(radiusSquared) <= 0;
+  }
+  if (projection.compareTo(lengthSquared) >= 0) {
+    final tail = point - second;
+    return _exactDot(tail, tail).compareTo(radiusSquared) <= 0;
+  }
+  final cross = _exactCross(offset, direction);
+  return (cross * cross).compareTo(radiusSquared * lengthSquared) <= 0;
+}
+
+bool _exactPointInConvex(_ExactPoint point, List<_ExactPoint> polygon) {
+  int? sign;
+  for (var index = 0; index < polygon.length; index += 1) {
+    final value = _exactOrientation(
+      polygon[index],
+      polygon[(index + 1) % polygon.length],
+      point,
+    );
+    if (value == 0) continue;
+    sign ??= value;
+    if (sign != value) return false;
+  }
+  return true;
+}
+
+bool _exactHasArea(List<_ExactPoint> polygon) {
+  if (polygon.length < 3) return false;
+  final first = polygon.first;
+  for (var index = 1; index + 1 < polygon.length; index += 1) {
+    if (_exactOrientation(first, polygon[index], polygon[index + 1]) != 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool _shapeWithinRadius(
+  List<_ExactPoint> polygon,
+  List<_ExactPoint> path,
+  _Dyadic radiusSquared,
+) {
+  if (polygon.isEmpty || path.isEmpty) throw const _GeometryBuildException();
+  if (_exactHasArea(polygon) &&
+      path.any((point) => _exactPointInConvex(point, polygon))) {
+    return true;
+  }
+  for (var edge = 0; edge < polygon.length; edge += 1) {
+    final first = polygon[edge];
+    final second = polygon[(edge + 1) % polygon.length];
+    for (final point in path) {
+      if (_exactPointSegmentWithinRadius(point, first, second, radiusSquared)) {
+        return true;
+      }
+    }
+    if (path.length == 2) {
+      if (_exactSegmentsIntersect(first, second, path.first, path.last) ||
+          _exactPointSegmentWithinRadius(
+            first,
+            path.first,
+            path.last,
+            radiusSquared,
+          ) ||
+          _exactPointSegmentWithinRadius(
+            second,
+            path.first,
+            path.last,
+            radiusSquared,
+          )) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+List<_ExactPoint> _exactConvexHull(List<_ExactPoint> values) {
+  final points = List<_ExactPoint>.of(values)
+    ..sort((first, second) {
+      final x = first.x.compareTo(second.x);
+      return x != 0 ? x : first.y.compareTo(second.y);
+    });
+  final unique = <_ExactPoint>[];
+  for (final point in points) {
+    if (unique.isEmpty ||
+        point.x.compareTo(unique.last.x) != 0 ||
+        point.y.compareTo(unique.last.y) != 0) {
+      unique.add(point);
+    }
+  }
+  if (unique.length <= 2) return List.unmodifiable(unique);
+  final lower = <_ExactPoint>[];
+  for (final point in unique) {
+    while (lower.length >= 2 &&
+        _exactOrientation(lower[lower.length - 2], lower.last, point) <= 0) {
+      lower.removeLast();
+    }
+    lower.add(point);
+  }
+  final upper = <_ExactPoint>[];
+  for (final point in unique.reversed) {
+    while (upper.length >= 2 &&
+        _exactOrientation(upper[upper.length - 2], upper.last, point) <= 0) {
+      upper.removeLast();
+    }
+    upper.add(point);
+  }
+  return List.unmodifiable([...lower..removeLast(), ...upper..removeLast()]);
 }
 
 final class _GeometryBuildException implements Exception {

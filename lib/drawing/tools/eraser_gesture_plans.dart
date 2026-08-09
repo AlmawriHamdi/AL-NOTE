@@ -87,6 +87,10 @@ final class PartialEraseWorkBatch {
     required this.candidateSourceSegments,
     required this.intervalClassifications,
     required this.classificationChecks,
+    required this.rootIsolationAdvances,
+    required this.featureTransitions,
+    required this.pendingClassificationIntervals,
+    required this.resumedClassifierOrdinal,
     this.update,
   });
 
@@ -101,6 +105,18 @@ final class PartialEraseWorkBatch {
 
   /// Direct interval-distance checks completed in this batch.
   final int classificationChecks;
+
+  /// Root-search or boundary brackets advanced in this batch.
+  final int rootIsolationAdvances;
+
+  /// Fixed-size geometric features traversed in this batch.
+  final int featureTransitions;
+
+  /// Classifier intervals retained for the next batch.
+  final int pendingClassificationIntervals;
+
+  /// One-based candidate ordinal resumed by this batch, or zero when absent.
+  final int resumedClassifierOrdinal;
 
   /// Exact preview update, present only when [pointCompleted] is true.
   final EraserGestureUpdate? update;
@@ -728,14 +744,20 @@ final class PartialEraseGesturePlan {
   int _classificationCheckCount = 0;
   int _maximumClassificationDepth = 0;
   int _maximumPendingClassificationIntervals = 0;
+  int _ordinaryAnalyticClassificationCount = 0;
+  int _exactFallbackClassificationCount = 0;
+  int _exactFallbackExhaustionCount = 0;
+  int _maximumInnerOperationMicros = 0;
   int _intervalMergeCount = 0;
   int _uuidAllocationCount = 0;
   int _classificationCacheHitCount = 0;
   int _classificationGeometryResolutionCount = 0;
   int _processedBatchCount = 0;
   int _maximumProcessedBatchSize = 0;
+  int _spatialQueryCount = 0;
   _PendingPartialPoint? _pendingPoint;
   bool _finalPreviewMaterialized = false;
+  bool _classificationUncertaintyExitedEarly = false;
 
   /// Accepted pointer-point count.
   int get pointCount => _pointCount;
@@ -755,7 +777,7 @@ final class PartialEraseGesturePlan {
   /// Cumulative fragment geometries created and resolved by accepted segments.
   int get fragmentGeometryResolutionCount => _fragmentCount;
 
-  /// Exact affected-Stroke materializations performed at terminal creation.
+  /// Complete terminal survivor-materialization passes performed.
   int get terminalMaterializationCount => _terminalMaterializationCount;
 
   /// Source sample segments visited by terminal materialization.
@@ -784,6 +806,19 @@ final class PartialEraseGesturePlan {
   int get maximumPendingClassificationIntervals =>
       _maximumPendingClassificationIntervals;
 
+  /// Classifications completed by the bounded analytic hot path.
+  int get ordinaryAnalyticClassificationCount =>
+      _ordinaryAnalyticClassificationCount;
+
+  /// Classifications or predicates requiring exact fallback arithmetic.
+  int get exactFallbackClassificationCount => _exactFallbackClassificationCount;
+
+  /// Exact fallbacks exhausted by their aggregate deterministic ceiling.
+  int get exactFallbackExhaustionCount => _exactFallbackExhaustionCount;
+
+  /// Largest measured indivisible classifier operation.
+  int get maximumInnerOperationMicros => _maximumInnerOperationMicros;
+
   /// Interval merge operations performed across accepted pointer segments.
   int get intervalMergeCount => _intervalMergeCount;
 
@@ -804,6 +839,12 @@ final class PartialEraseGesturePlan {
 
   /// Stroke-level parametric erasure preparations reused by the gesture.
   int get erasurePreparationCount => candidateStrokeCount;
+
+  /// Prepared spatial-index queries performed without rebuilding geometry.
+  int get spatialQueryCount => _spatialQueryCount;
+
+  /// Completed exact work is never replayed by the retained continuations.
+  int get replayedWorkCount => 0;
 
   /// Number of explicitly bounded input batches processed by this gesture.
   int get processedBatchCount => _processedBatchCount;
@@ -838,6 +879,10 @@ final class PartialEraseGesturePlan {
 
   /// Whether a pointer segment has retained candidate work for a later batch.
   bool get hasPendingPointWork => _pendingPoint != null;
+
+  /// Whether fixed structured uncertainty stopped the current exact drain.
+  bool get classificationUncertaintyExitedEarly =>
+      _classificationUncertaintyExitedEarly;
 
   /// Whether [latest] still has the captured content identity.
   bool isCurrent(DocumentCoordinatorSnapshot latest) =>
@@ -875,6 +920,7 @@ final class PartialEraseGesturePlan {
           path.value,
           radius,
         );
+        _spatialQueryCount += 1;
         if (query
             is! Ok<
               ({List<int> sourceSegments, int examinedElements}),
@@ -1060,15 +1106,24 @@ final class PartialEraseGesturePlan {
     required int maximumCandidateSourceSegments,
     required int maximumClassifications,
     required int maximumChecks,
+    required int maximumRootIsolationAdvances,
+    required int maximumFeatureTransitions,
+    required int maximumElapsedMicros,
     required bool materializePreviewEvidence,
   }) {
     if (maximumCandidateSourceSegments <= 0 ||
         maximumClassifications <= 0 ||
-        maximumChecks <
-            StrokeGeometryResolver.maximumPreparedClassificationChecks ||
+        maximumChecks <= 0 ||
+        maximumRootIsolationAdvances <= 0 ||
+        maximumFeatureTransitions <
+            geometryResolver.limits.ellipseVertexCount * 2 ||
         maximumCandidateSourceSegments > Revision.maximumValue ||
         maximumClassifications > Revision.maximumValue ||
-        maximumChecks > Revision.maximumValue) {
+        maximumChecks > Revision.maximumValue ||
+        maximumRootIsolationAdvances > Revision.maximumValue ||
+        maximumFeatureTransitions > Revision.maximumValue ||
+        maximumElapsedMicros <= 0 ||
+        maximumElapsedMicros > Revision.maximumValue) {
       return Err(_failure('invalid_partial_work_batch'));
     }
     if (_pendingPoint == null) {
@@ -1094,7 +1149,11 @@ final class PartialEraseGesturePlan {
     var candidates = 0;
     var classifications = 0;
     var checks = 0;
-    while (candidates < maximumCandidateSourceSegments) {
+    var rootAdvances = 0;
+    var featureTransitions = 0;
+    final clock = Stopwatch()..start();
+    while (candidates < maximumCandidateSourceSegments &&
+        clock.elapsedMicroseconds < maximumElapsedMicros) {
       final next = _nextPartialCandidate(pending);
       if (next is! Ok<_PartialCandidate?, StructuredFailure>) {
         _pendingPoint = null;
@@ -1116,6 +1175,10 @@ final class PartialEraseGesturePlan {
             candidateSourceSegments: candidates,
             intervalClassifications: classifications,
             classificationChecks: checks,
+            rootIsolationAdvances: rootAdvances,
+            featureTransitions: featureTransitions,
+            pendingClassificationIntervals: 0,
+            resumedClassifierOrdinal: 0,
             update: completed.value,
           ),
         );
@@ -1130,14 +1193,13 @@ final class PartialEraseGesturePlan {
       if (classifiedIntervals == null) {
         final gestureChecksRemaining =
             maximumClassificationChecks - _classificationCheckCount;
-        final requiredChecks = math.min(
-          StrokeGeometryResolver.maximumPreparedClassificationChecks,
-          gestureChecksRemaining,
-        );
         if (classifications >= maximumClassifications ||
-            requiredChecks <= 0 ||
-            maximumChecks - checks < requiredChecks) {
-          if (requiredChecks <= 0) {
+            gestureChecksRemaining <= 0 ||
+            checks >= maximumChecks ||
+            rootAdvances >= maximumRootIsolationAdvances ||
+            maximumFeatureTransitions - featureTransitions <
+                geometryResolver.limits.ellipseVertexCount) {
+          if (gestureChecksRemaining <= 0) {
             _pendingPoint = null;
             return Err(_failure('partial_classification_work_limit'));
           }
@@ -1147,49 +1209,116 @@ final class PartialEraseGesturePlan {
               candidateSourceSegments: candidates,
               intervalClassifications: classifications,
               classificationChecks: checks,
+              rootIsolationAdvances: rootAdvances,
+              featureTransitions: featureTransitions,
+              pendingClassificationIntervals:
+                  pending.currentClassificationPending,
+              resumedClassifierOrdinal: pending.currentClassifierOrdinal,
             ),
           );
         }
-        final classified = geometryResolver
-            .classifyPreparedSourceSegmentErasure(
-              prepared: candidate.working.erasure,
-              sourceSegment: candidate.segmentIndex,
-              eraserSegment: pending.path,
-              radius: radius,
-              maximumChecks: requiredChecks,
-            );
-        if (classified
-            is! Ok<StrokeErasureClassificationEvidence, StructuredFailure>) {
+        if (pending.currentClassification == null) {
+          final begun = geometryResolver.beginPreparedSourceSegmentErasure(
+            prepared: candidate.working.erasure,
+            sourceSegment: candidate.segmentIndex,
+            eraserSegment: pending.path,
+            radius: radius,
+            maximumChecks: math.min(
+              gestureChecksRemaining,
+              geometryResolver.limits.maximumContainmentChecks,
+            ),
+          );
+          if (begun
+              is! Ok<PreparedStrokeErasureClassification, StructuredFailure>) {
+            _pendingPoint = null;
+            return Err(_failure('partial_split_unavailable'));
+          }
+          pending.currentClassification = begun.value;
+          pending.currentClassifierOrdinal = _candidateSourceSegmentCount + 1;
+        }
+        final advanced = pending.currentClassification!.advance(
+          maximumPredicateEvaluations: math.min(
+            maximumChecks - checks,
+            gestureChecksRemaining,
+          ),
+          maximumRootIsolationAdvances:
+              maximumRootIsolationAdvances - rootAdvances,
+          maximumFeatureTransitions:
+              maximumFeatureTransitions - featureTransitions,
+          maximumElapsedMicros: math.max(
+            1,
+            maximumElapsedMicros - clock.elapsedMicroseconds,
+          ),
+        );
+        if (advanced
+            is! Ok<StrokeErasureClassificationProgress, StructuredFailure>) {
           _pendingPoint = null;
-          if (classified
+          if (advanced
                   is Err<
-                    StrokeErasureClassificationEvidence,
+                    StrokeErasureClassificationProgress,
                     StructuredFailure
                   > &&
-              classified.error.code ==
+              advanced.error.code ==
+                  'drawing.geometry.erasure_classification_uncertain') {
+            _classificationUncertaintyExitedEarly = true;
+          }
+          if (advanced
+                  is Err<
+                    StrokeErasureClassificationProgress,
+                    StructuredFailure
+                  > &&
+              advanced.error.code ==
                   'drawing.geometry.erasure_classification_limit') {
+            _exactFallbackExhaustionCount += 1;
             _classificationCheckCount = maximumClassificationChecks;
             return Err(_failure('partial_classification_work_limit'));
           }
           return Err(_failure('partial_split_unavailable'));
         }
+        checks += advanced.value.predicateEvaluations;
+        rootAdvances += advanced.value.rootIsolationAdvances;
+        featureTransitions += advanced.value.featureTransitions;
+        _classificationCheckCount += advanced.value.predicateEvaluations;
+        pending.currentClassificationPending = advanced.value.pendingIntervals;
+        if (!advanced.value.completed) {
+          return Ok(
+            PartialEraseWorkBatch._(
+              pointCompleted: false,
+              candidateSourceSegments: candidates,
+              intervalClassifications: classifications,
+              classificationChecks: checks,
+              rootIsolationAdvances: rootAdvances,
+              featureTransitions: featureTransitions,
+              pendingClassificationIntervals: advanced.value.pendingIntervals,
+              resumedClassifierOrdinal: pending.currentClassifierOrdinal,
+            ),
+          );
+        }
+        final evidence = advanced.value.evidence!;
         classifications += 1;
-        checks += classified.value.classificationChecks;
-        _classificationCheckCount += classified.value.classificationChecks;
-        _classificationGeometryResolutionCount +=
-            classified.value.geometryResolutions;
-        _spatialElementExaminationCount +=
-            classified.value.spatialElementsExamined;
+        _classificationGeometryResolutionCount += evidence.geometryResolutions;
+        _spatialElementExaminationCount += evidence.spatialElementsExamined;
         _maximumClassificationDepth = math.max(
           _maximumClassificationDepth,
-          classified.value.maximumSearchDepth,
+          evidence.maximumSearchDepth,
         );
         _maximumPendingClassificationIntervals = math.max(
           _maximumPendingClassificationIntervals,
-          classified.value.maximumPendingIntervals,
+          evidence.maximumPendingIntervals,
         );
-        classifiedIntervals = classified.value.intervals;
+        _ordinaryAnalyticClassificationCount +=
+            evidence.ordinaryAnalyticClassifications;
+        _exactFallbackClassificationCount +=
+            evidence.exactFallbackClassifications;
+        _exactFallbackExhaustionCount += evidence.exactFallbackExhaustions;
+        _maximumInnerOperationMicros = math.max(
+          _maximumInnerOperationMicros,
+          evidence.maximumInnerOperationMicros,
+        );
+        classifiedIntervals = evidence.intervals;
         candidate.working.classificationCache[cacheKey] = classifiedIntervals;
+        pending.currentClassification = null;
+        pending.currentClassificationPending = 0;
       } else {
         _classificationCacheHitCount += 1;
       }
@@ -1198,6 +1327,7 @@ final class PartialEraseGesturePlan {
       _candidateSourceSegmentCount += 1;
       candidates += 1;
       pending.currentCandidate = null;
+      pending.currentClassifierOrdinal = 0;
       if (classifiedIntervals.isEmpty) continue;
       final key = (candidate.object, candidate.working, candidate.segmentIndex);
       final existing =
@@ -1223,6 +1353,10 @@ final class PartialEraseGesturePlan {
         candidateSourceSegments: candidates,
         intervalClassifications: classifications,
         classificationChecks: checks,
+        rootIsolationAdvances: rootAdvances,
+        featureTransitions: featureTransitions,
+        pendingClassificationIntervals: pending.currentClassificationPending,
+        resumedClassifierOrdinal: pending.currentClassifierOrdinal,
       ),
     );
   }
@@ -1262,6 +1396,7 @@ final class PartialEraseGesturePlan {
         pending.path,
         radius,
       );
+      _spatialQueryCount += 1;
       if (query
           is! Ok<
             ({List<int> sourceSegments, int examinedElements}),
@@ -1475,6 +1610,7 @@ final class PartialEraseGesturePlan {
     if (_pendingPoint != null || _finalPreviewMaterialized) {
       return Err(_failure('final_preview_unavailable'));
     }
+    _terminalMaterializationCount += 1;
     final previews = <EraserPreviewObject>[];
     var intersections = 0;
     var fragments = 0;
@@ -1493,7 +1629,6 @@ final class PartialEraseGesturePlan {
             maximumFragments: maximumFragments,
             maximumOutputSamples: maximumOutputSamples,
           );
-          _terminalMaterializationCount += 1;
           _terminalSourceSegmentPassCount += working.stroke.samples.length == 1
               ? 1
               : working.stroke.samples.length - 1;
@@ -1548,6 +1683,9 @@ final class PartialEraseGesturePlan {
   }) {
     final affected = _objects.where((value) => value.affected).toList();
     if (affected.isEmpty) return Err(_failure('nothing_erased'));
+    if (_terminalMaterializationCount == 0) {
+      _terminalMaterializationCount = 1;
+    }
     final planned = <_PartialTerminalPlan>[];
     var intersections = 0;
     var fragments = 0;
@@ -1570,7 +1708,6 @@ final class PartialEraseGesturePlan {
               )
             : Ok<StrokeSplitResult, StructuredFailure>(cached);
         if (cached == null) {
-          _terminalMaterializationCount += 1;
           _terminalSourceSegmentPassCount += working.stroke.samples.length == 1
               ? 1
               : working.stroke.samples.length - 1;
@@ -1723,6 +1860,9 @@ final class _PendingPartialPoint {
   List<int> sourceSegments = const [];
   int sourceSegmentIndex = 0;
   _PartialCandidate? currentCandidate;
+  PreparedStrokeErasureClassification? currentClassification;
+  int currentClassificationPending = 0;
+  int currentClassifierOrdinal = 0;
   final Map<
     (_PartialObjectPlan, _WorkingStroke, int),
     List<StrokeErasureInterval>

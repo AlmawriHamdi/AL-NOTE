@@ -97,8 +97,16 @@ void main() {
     maximumEraserClassificationChecks: 2000000,
     maximumEraserBatchCandidateSegments: 32,
     maximumEraserBatchClassifications: 16,
-    maximumEraserBatchClassificationChecks: 512,
+    maximumEraserBatchClassificationChecks: 64,
+    maximumEraserBatchRootIsolationAdvances: 64,
+    maximumEraserBatchFeatureTransitions: 2048,
+    maximumEraserExactSliceMicros: 4000,
+    maximumEraserActiveExactSliceMicros: 1000,
+    cooperativeTaskScheduler: const Phase6EventLoopTaskScheduler(),
+    maximumEraserVisualPictures: 16,
     diagnosticTrace: diagnostics,
+    debugClipboard: const Phase6SystemDebugClipboard(),
+    nativePictureObserver: const Phase6NoopNativePictureObserver(),
   );
   runApp(
     runtime is Ok<Phase6CanvasRuntime, StructuredFailure>
