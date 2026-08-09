@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import 'dart:collection';
+import 'dart:typed_data';
 
 import 'package:al_note/core/interaction.dart';
 import 'package:al_note/core/primitives.dart';
@@ -190,6 +191,98 @@ void main() {
     ]);
   });
 
+  test('positive-radius intervals use certified representable boundaries', () {
+    final resolver = StrokeGeometryResolver(_geometryLimits());
+    final style = _stroke(1, [_sample(0, 0, 0)]).style;
+    StrokeErasureClassificationEvidence classify(Point2 point, double radius) =>
+        _ok(
+          resolver.classifySourceSegmentErasureDetailed(
+            first: _sample(0, 0, 0),
+            second: _sample(10, 0, 10),
+            style: style,
+            localToPage: _identity(),
+            eraserSegment: _ok(SweptPath.create([point], maximumPoints: 1)),
+            radius: radius,
+            handwritingLimits: _limits,
+            maximumChecks: 100000,
+          ),
+        );
+
+    final evidence = classify(_point(5, 0), .1);
+    expect(evidence.intervals, hasLength(1));
+    final interval = evidence.intervals.single;
+    final preceding = _previousTestDouble(interval.start);
+    final following = _nextTestDouble(interval.end);
+    bool mathematicalHit(double parameter) =>
+        (10 * parameter - 5).abs() - 1 <= .1;
+    expect(mathematicalHit(interval.start), isTrue);
+    expect(mathematicalHit(interval.end), isTrue);
+    expect(mathematicalHit(preceding), isFalse);
+    expect(mathematicalHit(following), isFalse);
+    expect(interval.start, isNot(0.39 + (0.61 - 0.39) * 1e-10));
+    expect(interval.end, isNot(0.61 - (0.61 - 0.39) * 1e-10));
+    expect(evidence.maximumSearchDepth, greaterThan(0));
+
+    final leftDomain = classify(_point(0, 0), .1).intervals.single;
+    final rightDomain = classify(_point(10, 0), .1).intervals.single;
+    expect(leftDomain.start, 0);
+    expect(rightDomain.end, 1);
+
+    final tangent = resolver.classifySourceSegmentErasureDetailed(
+      first: _sample(0, 0, 0),
+      second: _sample(10, 0, 10),
+      style: style,
+      localToPage: _identity(),
+      eraserSegment: _ok(SweptPath.create([_point(5, 1.25)], maximumPoints: 1)),
+      radius: .25,
+      handwritingLimits: _limits,
+      maximumChecks: 256,
+    );
+    expect(tangent, isA<Err<Object?, Object?>>());
+    expect(tangent.toString(), contains('erasure_classification_'));
+    expect(tangent.toString(), isNot(contains('1.25')));
+  });
+
+  test('partial interval merging preserves gaps and joins adjacency', () {
+    final source = _stroke(2, [_sample(0, 0, 0), _sample(10, 0, 10)]);
+    StrokeSplitResult split(List<Point2> path) => _ok(
+      splitStrokeByEraser(
+        source: source,
+        eraserPath: path,
+        radius: 0,
+        localToPage: _identity(),
+        geometryResolver: StrokeGeometryResolver(_geometryLimits()),
+        strokeIdGenerator: _CountingUuidGenerator(),
+        existingIds: {source.id},
+        maximumExistingIds: 1,
+        maximumEraserPoints: 4,
+        maximumIntersections: 8,
+        maximumFragments: 4,
+        maximumOutputSamples: 16,
+        handwritingLimits: _limits,
+      ),
+    );
+
+    final separated = split([
+      _point(2, 0),
+      _point(2, 5),
+      _point(8, 5),
+      _point(8, 0),
+    ]);
+    expect(separated.strokes, hasLength(3));
+    expect(separated.strokes[1].samples.first.position.x, closeTo(3, .001));
+    expect(separated.strokes[1].samples.last.position.x, closeTo(7, .001));
+
+    final adjacent = split([
+      _point(4, 0),
+      _point(4, 5),
+      _point(6, 5),
+      _point(6, 0),
+    ]);
+    expect(adjacent.strokes, hasLength(2));
+    expect(adjacent.outputSampleCount, 4);
+  });
+
   test(
     'partial eraser classifies the auditor affine counterexample exactly',
     () {
@@ -375,10 +468,10 @@ void main() {
     }
     expect(evidence, isNotNull);
     expect(frames, greaterThan(2));
-    expect(roots, 0);
+    expect(roots, inInclusiveRange(2, 160));
     expect(evidence!.intervals, hasLength(1));
     expect(evidence.classificationChecks, predicates);
-    expect(evidence.maximumSearchDepth, 0);
+    expect(evidence.maximumSearchDepth, inInclusiveRange(2, 160));
     expect(evidence.ordinaryAnalyticClassifications, 1);
     expect(evidence.exactFallbackClassifications, 0);
     expect(evidence.exactFallbackExhaustions, 0);
@@ -508,6 +601,35 @@ void main() {
       expect(dot, hasLength(1));
       expect(dot.single.start, 0);
       expect(dot.single.end, 1);
+
+      final subnormalStyle = _ok(
+        StrokeStyle.create(
+          argb: 0xff000000,
+          opacity: 1,
+          baseWidth: double.minPositive,
+          pressureInfluence: 0,
+          minimumPressureFactor: 0,
+          limits: _limits,
+        ),
+      );
+      final subnormal = _ok(
+        StrokeGeometryResolver(
+          _geometryLimits(),
+        ).classifySourceSegmentErasureDetailed(
+          first: _sample(0, 0, 0),
+          second: _sample(double.minPositive, 0, 1),
+          style: subnormalStyle,
+          localToPage: _identity(),
+          eraserSegment: _ok(
+            SweptPath.create([_point(0, 0)], maximumPoints: 1),
+          ),
+          radius: double.minPositive,
+          handwritingLimits: _limits,
+          maximumChecks: 10000,
+        ),
+      );
+      expect(subnormal.intervals, isNotEmpty);
+      expect(subnormal.exactFallbackClassifications, 1);
     },
   );
 
@@ -3393,6 +3515,37 @@ RenderingLimits _renderingLimits() => _ok(
 );
 AffineTransform2D _identity() =>
     _ok(AffineTransform2D.fromOperation(const IdentityTransformOperation2D()));
+
+double _nextTestDouble(double value) {
+  final bytes = ByteData(8)..setFloat64(0, value);
+  var high = bytes.getUint32(0), low = bytes.getUint32(4);
+  if (low == 0xffffffff) {
+    low = 0;
+    high += 1;
+  } else {
+    low += 1;
+  }
+  bytes
+    ..setUint32(0, high)
+    ..setUint32(4, low);
+  return bytes.getFloat64(0);
+}
+
+double _previousTestDouble(double value) {
+  final bytes = ByteData(8)..setFloat64(0, value);
+  var high = bytes.getUint32(0), low = bytes.getUint32(4);
+  if (low == 0) {
+    low = 0xffffffff;
+    high -= 1;
+  } else {
+    low -= 1;
+  }
+  bytes
+    ..setUint32(0, high)
+    ..setUint32(4, low);
+  return bytes.getFloat64(0);
+}
+
 DocumentMutationCoordinator _coordinator(DocumentRoot root) => _ok(
   DocumentMutationCoordinator.create(
     initialRoot: root,

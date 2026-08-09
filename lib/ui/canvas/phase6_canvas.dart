@@ -134,7 +134,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   bool _partialTerminalPreviewActive = false;
   WholeEraseGesturePlan? _wholeEraserPlan;
   PartialEraseGesturePlan? _partialEraserPlan;
-  final List<Point2> _partialPendingPoints = [];
+  late final _CursorPointQueue _partialPendingPoints;
   Point2? _partialProcessedExactPoint;
   int _partialExactPointCount = 0;
   bool _partialBatchScheduled = false;
@@ -328,6 +328,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       indexPreparations: plan?.erasurePreparationCount ?? 0,
       candidateIndexScans: plan?.spatialQueryCount ?? 0,
       replayedExactWork: plan?.replayedWorkCount ?? 0,
+      pendingQueueFrontRemovals: _partialPendingPoints.frontRemovalCount,
+      pendingQueueCompactions: _partialPendingPoints.compactionCount,
     );
   }
 
@@ -379,6 +381,9 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   @override
   void initState() {
     super.initState();
+    _partialPendingPoints = _CursorPointQueue(
+      maximumPoints: widget.runtime.maximumEraserPoints,
+    );
     _eraserCursor = _EraserCursorController(
       onRequest: () {
         _cursorRepaintRequests += 1;
@@ -744,6 +749,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     _cooperativeSchedulerWaitMicros = 0;
     _partialProcessedExactPoint = null;
     _partialExactPointCount = 0;
+    _partialPendingPoints.resetAccounting();
     _partialUpClock = null;
     _diagnostics.beginGesture();
     _tracePartial(Phase6DiagnosticStage.partialPrepareEntered);
@@ -837,7 +843,10 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     int? pointerId,
   }) {
     _partialEraserPath.add(point);
-    _appendAuthoritativePartialPoint(point);
+    if (!_appendAuthoritativePartialPoint(point)) {
+      _cancelGesture('Partial erase rejected');
+      return;
+    }
     _maximumProcessingBacklog = math.max(
       _maximumProcessingBacklog,
       _partialPendingPoints.length,
@@ -851,19 +860,19 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     _schedulePartialEraserBatch();
   }
 
-  void _appendAuthoritativePartialPoint(Point2 point) {
+  bool _appendAuthoritativePartialPoint(Point2 point) {
     final plan = _partialEraserPlan;
     if (_partialPendingPoints.isEmpty) {
-      if (_partialProcessedExactPoint == point) return;
-      _partialPendingPoints.add(point);
+      if (_partialProcessedExactPoint == point) return true;
+      if (!_partialPendingPoints.add(point)) return false;
       _partialExactPointCount += 1;
-      return;
+      return true;
     }
     final latest = _partialPendingPoints.last;
-    if (latest == point) return;
+    if (latest == point) return true;
     Point2? predecessor;
     if (_partialPendingPoints.length >= 2) {
-      predecessor = _partialPendingPoints[_partialPendingPoints.length - 2];
+      predecessor = _partialPendingPoints.penultimate;
     } else if (plan?.hasPendingPointWork != true) {
       predecessor = _partialProcessedExactPoint;
     }
@@ -874,12 +883,13 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
         last: point,
       );
       if (redundant is Ok<bool, StructuredFailure> && redundant.value) {
-        _partialPendingPoints[_partialPendingPoints.length - 1] = point;
-        return;
+        _partialPendingPoints.replaceLast(point);
+        return true;
       }
     }
-    _partialPendingPoints.add(point);
+    if (!_partialPendingPoints.add(point)) return false;
     _partialExactPointCount += 1;
+    return true;
   }
 
   void _schedulePartialEraserBatch({bool cooperative = false}) {
@@ -1047,7 +1057,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
         _candidateResumptions += 1;
         break;
       }
-      _partialProcessedExactPoint = _partialPendingPoints.removeAt(0);
+      _partialProcessedExactPoint = _partialPendingPoints.removeFirst();
       completedPoints += 1;
     }
     classificationClock.stop();
@@ -2879,6 +2889,64 @@ InteractionActionId _actionId(_CanvasTool tool) =>
     _ok(InteractionActionId.parse('alnote.actions.${tool.name.toLowerCase()}'));
 Revision _revision(int v) => _ok(Revision.create(v));
 T _ok<T, E>(Result<T, E> value) => (value as Ok<T, E>).value;
+
+final class _CursorPointQueue {
+  _CursorPointQueue({required this.maximumPoints});
+
+  static const int _compactionThreshold = 256;
+
+  final int maximumPoints;
+  final List<Point2> _storage = [];
+  int _head = 0;
+  int frontRemovalCount = 0;
+  int compactionCount = 0;
+
+  int get length => _storage.length - _head;
+  bool get isEmpty => length == 0;
+  bool get isNotEmpty => !isEmpty;
+  Point2 get first => _storage[_head];
+  Point2 get last => _storage.last;
+  Point2 get penultimate => _storage[_storage.length - 2];
+
+  bool add(Point2 point) {
+    if (length >= maximumPoints) return false;
+    if (_storage.length >= maximumPoints && _head > 0) _compact();
+    _storage.add(point);
+    return true;
+  }
+
+  void replaceLast(Point2 point) {
+    _storage[_storage.length - 1] = point;
+  }
+
+  Point2 removeFirst() {
+    final value = _storage[_head++];
+    frontRemovalCount += 1;
+    if (_head == _storage.length) {
+      _storage.clear();
+      _head = 0;
+    } else if (_head >= _compactionThreshold && _head * 2 >= _storage.length) {
+      _compact();
+    }
+    return value;
+  }
+
+  void clear() {
+    _storage.clear();
+    _head = 0;
+  }
+
+  void resetAccounting() {
+    frontRemovalCount = 0;
+    compactionCount = 0;
+  }
+
+  void _compact() {
+    _storage.removeRange(0, _head);
+    _head = 0;
+    compactionCount += 1;
+  }
+}
 
 final class _UndoIntent extends Intent {
   const _UndoIntent();

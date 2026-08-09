@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import '../../core/geometry/affine_transform_2d.dart';
 import '../../core/geometry/geometry_values.dart';
@@ -1999,7 +2000,7 @@ List<StrokeErasureInterval> _mergeIntervals(
     ..sort((a, b) => a.start.compareTo(b.start));
   final merged = <StrokeErasureInterval>[];
   for (final value in ordered) {
-    if (merged.isEmpty || value.start > merged.last.end) {
+    if (merged.isEmpty || _hasRepresentableGap(merged.last.end, value.start)) {
       merged.add(value);
       continue;
     }
@@ -2007,6 +2008,23 @@ List<StrokeErasureInterval> _mergeIntervals(
     merged.add(_interval(previous.start, math.max(previous.end, value.end)));
   }
   return List.unmodifiable(merged);
+}
+
+bool _hasRepresentableGap(double previousEnd, double nextStart) {
+  if (nextStart <= previousEnd) return false;
+  if (previousEnd == 1) return false;
+  final bytes = ByteData(8)..setFloat64(0, previousEnd);
+  var high = bytes.getUint32(0), low = bytes.getUint32(4);
+  if (low == 0xffffffff) {
+    low = 0;
+    high += 1;
+  } else {
+    low += 1;
+  }
+  bytes
+    ..setUint32(0, high)
+    ..setUint32(4, low);
+  return bytes.getFloat64(0) < nextStart;
 }
 
 StrokeErasureInterval _interval(double start, double end) =>

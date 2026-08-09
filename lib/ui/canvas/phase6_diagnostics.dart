@@ -145,6 +145,8 @@ final class Phase6DiagnosticEvent {
     required this.indexPreparations,
     required this.candidateIndexScans,
     required this.replayedExactWork,
+    required this.pendingQueueFrontRemovals,
+    required this.pendingQueueCompactions,
   });
 
   final int sequence;
@@ -352,6 +354,12 @@ final class Phase6DiagnosticEvent {
   /// Completed exact point, candidate, or classifier work replayed.
   final int replayedExactWork;
 
+  /// Logical O(1) front removals completed by the pending-point queue.
+  final int pendingQueueFrontRemovals;
+
+  /// Deterministic retained-storage compactions performed by the queue.
+  final int pendingQueueCompactions;
+
   /// Fixed-label representation containing no document or pointer data.
   String toSafeText() =>
       'phase6_diag seq=$sequence gesture=$gestureOrdinal '
@@ -403,6 +411,8 @@ final class Phase6DiagnosticEvent {
       'schedulerWaitMicros=$cooperativeSchedulerWaitMicros '
       'indexPreparations=$indexPreparations indexScans=$candidateIndexScans '
       'replayedWork=$replayedExactWork '
+      'queueFrontRemovals=$pendingQueueFrontRemovals '
+      'queueCompactions=$pendingQueueCompactions '
       'segments=$pointerSegments objects=$candidateObjects '
       'strokes=$candidateStrokes sourceSegments=$candidateSourceSegments '
       'spatial=$spatialElements classifications=$classifications '
@@ -542,6 +552,8 @@ final class Phase6DiagnosticTrace {
     int indexPreparations = 0,
     int candidateIndexScans = 0,
     int replayedExactWork = 0,
+    int pendingQueueFrontRemovals = 0,
+    int pendingQueueCompactions = 0,
   }) {
     if (!enabled) return;
     final counts = [
@@ -621,6 +633,8 @@ final class Phase6DiagnosticTrace {
       indexPreparations,
       candidateIndexScans,
       replayedExactWork,
+      pendingQueueFrontRemovals,
+      pendingQueueCompactions,
     ];
     if (counts.any((value) => value < 0 || value > Revision.maximumValue)) {
       return;
@@ -708,6 +722,8 @@ final class Phase6DiagnosticTrace {
       indexPreparations: indexPreparations,
       candidateIndexScans: candidateIndexScans,
       replayedExactWork: replayedExactWork,
+      pendingQueueFrontRemovals: pendingQueueFrontRemovals,
+      pendingQueueCompactions: pendingQueueCompactions,
     );
     if (_events.length == capacity) _events.removeAt(0);
     _events.add(event);

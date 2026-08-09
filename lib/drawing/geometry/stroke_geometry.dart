@@ -1561,6 +1561,9 @@ final class _ResumableErasureClassifier {
   double? _leftHit;
   double? _rightHit;
   double? _rightMiss;
+  bool _leftAdjacentChecked = false;
+  bool _rightAdjacentChecked = false;
+  bool _numericUncertain = false;
   List<StrokeErasureInterval>? _result;
   _SubdivisionErasureClassifier? _fallback;
 
@@ -1694,7 +1697,7 @@ final class _ResumableErasureClassifier {
           ),
         );
       case _AnalyticPhase.probes:
-        if (_probe < _probes.length) {
+        if (_probe < _probes.length && !(_probe >= 2 && _hits.isNotEmpty)) {
           final parameter = _probes[_probe++];
           final relation = _certifiedHitAt(parameter);
           if (relation.$1) {
@@ -1711,13 +1714,7 @@ final class _ResumableErasureClassifier {
             ),
           );
         }
-        if (_hits.isEmpty) {
-          _startFallback();
-        } else {
-          _hits.sort();
-          if (exactFallbackClassifications == 0) ordinaryClassifications = 1;
-          _complete([StrokeErasureInterval._(_hits.first, _hits.last)]);
-        }
+        _finishProbes();
         return const Ok(
           _ResumableAdvance(
             intervals: null,
@@ -1727,7 +1724,11 @@ final class _ResumableErasureClassifier {
           ),
         );
       case _AnalyticPhase.leftBoundary:
-        final middle = _analyticBracketAdvance(_leftMiss!, _leftHit!);
+        final adjacent = _previousDouble(_leftHit!);
+        final checkingAdjacent = !_leftAdjacentChecked && adjacent > _leftMiss!;
+        final middle = checkingAdjacent
+            ? adjacent
+            : _analyticBracketAdvance(_leftMiss!, _leftHit!);
         if (middle == null) {
           _phase = _AnalyticPhase.rightBoundary;
           return const Ok(
@@ -1742,8 +1743,10 @@ final class _ResumableErasureClassifier {
         final relation = _certifiedHitAt(middle);
         if (relation.$1) {
           _leftHit = middle;
+          _leftAdjacentChecked = checkingAdjacent;
         } else {
           _leftMiss = middle;
+          if (checkingAdjacent) _leftAdjacentChecked = true;
         }
         maximumDepth += 1;
         return Ok(
@@ -1767,7 +1770,12 @@ final class _ResumableErasureClassifier {
             ),
           );
         }
-        final middle = _analyticBracketAdvance(_rightMiss!, _rightHit!);
+        final adjacent = _nextPositiveDouble(_rightHit!);
+        final checkingAdjacent =
+            !_rightAdjacentChecked && adjacent < _rightMiss!;
+        final middle = checkingAdjacent
+            ? adjacent
+            : _analyticBracketAdvance(_rightMiss!, _rightHit!);
         if (middle == null) {
           if (exactFallbackClassifications == 0) ordinaryClassifications = 1;
           _complete([StrokeErasureInterval._(_leftHit!, _rightHit!)]);
@@ -1783,8 +1791,10 @@ final class _ResumableErasureClassifier {
         final relation = _certifiedHitAt(middle);
         if (relation.$1) {
           _rightHit = middle;
+          _rightAdjacentChecked = checkingAdjacent;
         } else {
           _rightMiss = middle;
+          if (checkingAdjacent) _rightAdjacentChecked = true;
         }
         maximumDepth += 1;
         return Ok(
@@ -1829,15 +1839,68 @@ final class _ResumableErasureClassifier {
     }
   }
 
-  void _startFallback() {
+  void _startFallback({
+    double? witness,
+    double? leftMiss,
+    double? leftHit,
+    double? rightHit,
+    double? rightMiss,
+  }) {
     exactFallbackClassifications = math.max(exactFallbackClassifications, 1);
     _fallback ??= _SubdivisionErasureClassifier(
       section: section,
       path: pagePath,
       radius: radius,
       maximumChecks: maximumChecks - totalPredicates,
+      witness: witness,
+      leftMiss: leftMiss,
+      leftHit: leftHit,
+      rightHit: rightHit,
+      rightMiss: rightMiss,
     );
     _phase = _AnalyticPhase.fallback;
+  }
+
+  void _finishProbes() {
+    // A prepared cross-section is defined by affine half-space bounds and one
+    // swept Eraser segment is convex. Projecting their convex intersection
+    // onto the source parameter therefore yields one interval. One certified
+    // interior witness plus the two domain endpoints is sufficient here;
+    // intervals from separate Eraser segments are merged by the gesture plan.
+    _hits.sort();
+    _misses.sort();
+    final firstHit = _hits.firstOrNull;
+    final lastHit = _hits.lastOrNull;
+    final leftMiss = firstHit == null || firstHit == 0
+        ? null
+        : _misses.where((value) => value < firstHit).lastOrNull;
+    final rightMiss = lastHit == null || lastHit == 1
+        ? null
+        : _misses.where((value) => value > lastHit).firstOrNull;
+    final bounded =
+        firstHit != null &&
+        lastHit != null &&
+        (firstHit == 0 || leftMiss != null) &&
+        (lastHit == 1 || rightMiss != null);
+    if (_numericUncertain) {
+      _startFallback(
+        witness: firstHit,
+        leftMiss: bounded ? leftMiss : null,
+        leftHit: bounded ? firstHit : null,
+        rightHit: bounded ? lastHit : null,
+        rightMiss: bounded ? rightMiss : null,
+      );
+    } else if (!bounded) {
+      _startFallback(witness: firstHit);
+    } else {
+      _leftMiss = leftMiss;
+      _leftHit = firstHit;
+      _rightHit = lastHit;
+      _rightMiss = rightMiss;
+      _phase = _leftMiss == null
+          ? _AnalyticPhase.rightBoundary
+          : _AnalyticPhase.leftBoundary;
+    }
   }
 
   void _addFeatureEvents(int index) {
@@ -1845,9 +1908,17 @@ final class _ResumableErasureClassifier {
     final end = section.endPolygon[index];
     final velocityX = end.x - start.x;
     final velocityY = end.y - start.y;
+    if (![velocityX, velocityY].every((value) => value.isFinite)) {
+      _numericUncertain = true;
+      return;
+    }
     for (final point in pagePath) {
       final offsetX = start.x - point.x;
       final offsetY = start.y - point.y;
+      if (![offsetX, offsetY].every((value) => value.isFinite)) {
+        _numericUncertain = true;
+        continue;
+      }
       _addQuadraticRoots(
         velocityX * velocityX + velocityY * velocityY,
         2 * (offsetX * velocityX + offsetY * velocityY),
@@ -1860,19 +1931,37 @@ final class _ResumableErasureClassifier {
       final dx = second.x - first.x;
       final dy = second.y - first.y;
       final length = math.sqrt(dx * dx + dy * dy);
-      if (length.isFinite && length > 0) {
+      if (!length.isFinite) {
+        _numericUncertain = true;
+      } else if (length > 0) {
         final initial = (start.x - first.x) * dy - (start.y - first.y) * dx;
         final change = velocityX * dy - velocityY * dx;
         for (final signedRadius in [radius * length, -radius * length]) {
-          if (change != 0 && change.isFinite) {
+          if (![
+            initial,
+            change,
+            signedRadius,
+          ].every((value) => value.isFinite)) {
+            _numericUncertain = true;
+          } else if (change != 0) {
             final t = (signedRadius - initial) / change;
-            final vertex = t >= 0 && t <= 1
-                ? section.vertexAtDouble(index, t)
-                : null;
-            if (vertex != null) {
+            if (!t.isFinite) {
+              _numericUncertain = true;
+              continue;
+            }
+            if (t >= 0 && t <= 1) {
+              final vertex = section.vertexAtDouble(index, t);
+              if (vertex == null) {
+                _numericUncertain = true;
+                continue;
+              }
               final projection =
                   ((vertex.x - first.x) * dx + (vertex.y - first.y) * dy) /
                   (length * length);
+              if (!projection.isFinite) {
+                _numericUncertain = true;
+                continue;
+              }
               if (projection >= 0 && projection <= 1) _addEvent(t);
             }
           }
@@ -1884,7 +1973,9 @@ final class _ResumableErasureClassifier {
     final edgeX = edgeStart.x - start.x;
     final edgeY = edgeStart.y - start.y;
     final edgeLength = math.sqrt(edgeX * edgeX + edgeY * edgeY);
-    if (edgeLength.isFinite && edgeLength > 0) {
+    if (!edgeLength.isFinite || edgeLength == 0) {
+      _numericUncertain = true;
+    } else {
       final normalX = -edgeY / edgeLength;
       final normalY = edgeX / edgeLength;
       final tangentX = edgeX / edgeLength;
@@ -1894,18 +1985,37 @@ final class _ResumableErasureClassifier {
             (point.x - start.x) * normalX + (point.y - start.y) * normalY;
         final change = -(velocityX * normalX + velocityY * normalY);
         for (final signedRadius in [radius, -radius]) {
-          if (change == 0 || !change.isFinite) continue;
+          if (![
+            initial,
+            change,
+            signedRadius,
+          ].every((value) => value.isFinite)) {
+            _numericUncertain = true;
+            continue;
+          }
+          if (change == 0) continue;
           final t = (signedRadius - initial) / change;
+          if (!t.isFinite) {
+            _numericUncertain = true;
+            continue;
+          }
           if (t < 0 || t > 1) continue;
           final firstVertex = section.vertexAtDouble(index, t);
           final secondVertex = section.vertexAtDouble(next, t);
-          if (firstVertex == null || secondVertex == null) continue;
+          if (firstVertex == null || secondVertex == null) {
+            _numericUncertain = true;
+            continue;
+          }
           final projection =
               (point.x - firstVertex.x) * tangentX +
               (point.y - firstVertex.y) * tangentY;
           final lengthAt =
               (secondVertex.x - firstVertex.x) * tangentX +
               (secondVertex.y - firstVertex.y) * tangentY;
+          if (!projection.isFinite || !lengthAt.isFinite) {
+            _numericUncertain = true;
+            continue;
+          }
           if (projection >= 0 && projection <= lengthAt) _addEvent(t);
         }
       }
@@ -1913,20 +2023,61 @@ final class _ResumableErasureClassifier {
   }
 
   void _addQuadraticRoots(double a, double b, double c) {
-    if (![a, b, c].every((value) => value.isFinite)) return;
-    if (a == 0) {
-      if (b != 0) _addEvent(-c / b);
+    if (![a, b, c].every((value) => value.isFinite)) {
+      _numericUncertain = true;
       return;
     }
-    final discriminant = b * b - 4 * a * c;
-    if (!discriminant.isFinite || discriminant < 0) return;
+    if (a == 0) {
+      if (b != 0) {
+        final root = -c / b;
+        if (!root.isFinite) {
+          _numericUncertain = true;
+        } else {
+          _addEvent(root);
+        }
+      }
+      return;
+    }
+    final squared = b * b;
+    final product = 4 * a * c;
+    final discriminant = squared - product;
+    if (![squared, product, discriminant].every((value) => value.isFinite)) {
+      _numericUncertain = true;
+      return;
+    }
+    if (discriminant < 0) {
+      final error = (squared.abs() + product.abs()) * 2.842170943040401e-14;
+      if (!error.isFinite || error == 0 || discriminant >= -error) {
+        _numericUncertain = true;
+      }
+      return;
+    }
     final root = math.sqrt(discriminant);
     final q = -.5 * (b + (b < 0 ? -root : root));
+    if (![root, q].every((value) => value.isFinite)) {
+      _numericUncertain = true;
+      return;
+    }
     if (q == 0) {
-      _addEvent(-b / (2 * a));
+      final value = -b / (2 * a);
+      if (!value.isFinite) {
+        _numericUncertain = true;
+      } else {
+        _addEvent(value);
+      }
     } else {
-      _addEvent(q / a);
-      _addEvent(c / q);
+      final first = q / a;
+      final second = c / q;
+      if (!first.isFinite || !second.isFinite) {
+        _numericUncertain = true;
+      } else {
+        if (discriminant > 0 && first == second) {
+          _numericUncertain = true;
+          return;
+        }
+        _addEvent(first);
+        _addEvent(second);
+      }
     }
   }
 
@@ -1940,21 +2091,33 @@ final class _ResumableErasureClassifier {
     for (final value in _events) {
       if (unique.isEmpty || value != unique.last) unique.add(value);
     }
-    final probes = <double>{0, 1};
+    final probes = <double>[0, 1];
+    void addProbe(double value) {
+      if (!probes.contains(value)) probes.add(value);
+    }
+
     if (unique.isEmpty) {
-      probes.add(.5);
+      addProbe(.5);
     } else if (unique.length == 1) {
-      probes.add(unique.single);
+      addProbe(unique.single);
     } else {
       final span = unique.last - unique.first;
-      final inset = math.max(span * 1e-10, double.minPositive);
-      probes
-        ..add(math.min(unique.last, unique.first + inset))
-        ..add(math.max(unique.first, unique.last - inset));
+      final inset = span * 1e-10;
+      if (!span.isFinite || !inset.isFinite || (span > 0 && inset == 0)) {
+        _numericUncertain = true;
+        return;
+      }
+      for (final value in unique) {
+        addProbe(value);
+        if (value < 1) addProbe(_nextPositiveDouble(value));
+        if (value > 0) addProbe(_previousDouble(value));
+      }
+      addProbe(math.min(unique.last, unique.first + inset));
+      addProbe(math.max(unique.first, unique.last - inset));
       final middle = _representableMidpoint(unique.first, unique.last);
-      if (middle != null) probes.add(middle);
+      if (middle != null) addProbe(middle);
     }
-    _probes = probes.toList()..sort();
+    _probes = List.unmodifiable(probes);
   }
 
   (_FloatingRelation, double) _floatingDistanceAt(double parameter) {
@@ -1968,7 +2131,7 @@ final class _ResumableErasureClassifier {
       ...pagePath.expand((point) => [point.x.abs(), point.y.abs()]),
     ].reduce(math.max);
     final error = scale * 2.842170943040401e-14;
-    if (!distance.isFinite || !error.isFinite) {
+    if (!distance.isFinite || !error.isFinite || (scale > 0 && error == 0)) {
       return (_FloatingRelation.ambiguous, distance);
     }
     if (distance + error < radius) return (_FloatingRelation.hit, distance);
@@ -1985,7 +2148,7 @@ final class _ResumableErasureClassifier {
       ...pagePath.expand((point) => [point.x.abs(), point.y.abs()]),
     ].reduce(math.max);
     final error = scale * 2.842170943040401e-14;
-    if (distance.isFinite && error.isFinite) {
+    if (distance.isFinite && error.isFinite && !(scale > 0 && error == 0)) {
       if (distance + error < radius) return _FloatingRelation.hit;
       if (distance - error > radius) return _FloatingRelation.miss;
     }
@@ -2006,10 +2169,9 @@ final class _ResumableErasureClassifier {
   }
 
   double? _analyticBracketAdvance(double miss, double hit) {
-    if (_representableMidpoint(math.min(miss, hit), math.max(miss, hit)) ==
-        null) {
-      return null;
-    }
+    final low = math.min(miss, hit), high = math.max(miss, hit);
+    final midpoint = _representableMidpoint(low, high);
+    if (midpoint == null) return null;
     final missGap = _floatingDistanceAt(miss).$2 - radius;
     final hitGap = _floatingDistanceAt(hit).$2 - radius;
     if (missGap.isFinite &&
@@ -2018,17 +2180,15 @@ final class _ResumableErasureClassifier {
         hitGap <= 0 &&
         missGap != hitGap) {
       final candidate = miss + (hit - miss) * missGap / (missGap - hitGap);
-      final low = math.min(miss, hit);
-      final high = math.max(miss, hit);
-      if (candidate.isFinite && candidate > low && candidate < high) {
+      final guard = (high - low) / 16;
+      if (candidate.isFinite &&
+          guard > 0 &&
+          candidate > low + guard &&
+          candidate < high - guard) {
         return candidate;
       }
-      final adjacent = miss < hit
-          ? _previousDouble(hit)
-          : _nextPositiveDouble(hit);
-      if (adjacent > low && adjacent < high) return adjacent;
     }
-    return _representableMidpoint(math.min(miss, hit), math.max(miss, hit));
+    return midpoint;
   }
 
   void _complete(List<StrokeErasureInterval> intervals) {
@@ -2045,10 +2205,39 @@ final class _SubdivisionErasureClassifier {
     required List<Point2> path,
     required double radius,
     required this.maximumChecks,
+    double? witness,
+    double? leftMiss,
+    double? leftHit,
+    double? rightHit,
+    double? rightMiss,
   }) : pagePath = List.unmodifiable(path),
        exactPath = List.unmodifiable(path.map(_ExactPoint.fromPoint)),
        radius = radius,
-       radiusSquared = _Dyadic.fromDouble(radius) * _Dyadic.fromDouble(radius);
+       radiusSquared = _Dyadic.fromDouble(radius) * _Dyadic.fromDouble(radius),
+       _witness = witness {
+    if (leftHit != null && rightHit != null) {
+      _leftHit = leftHit;
+      _rightHit = rightHit;
+      if (leftHit == 0) {
+        _zeroHit = true;
+        _leftResult = 0;
+      } else {
+        _leftMiss = leftMiss!;
+      }
+      if (rightHit == 1) {
+        _oneHit = true;
+        _rightResult = 1;
+      } else {
+        _rightMiss = rightMiss!;
+      }
+      _phase = _leftResult == null
+          ? _ClassifierPhase.leftBoundary
+          : _ClassifierPhase.rightBoundary;
+      if (_leftResult != null && _rightResult != null) {
+        _complete([StrokeErasureInterval._(_leftResult!, _rightResult!)]);
+      }
+    }
+  }
 
   final _PreparedErasureSegment section;
   final List<Point2> pagePath;
@@ -2073,6 +2262,8 @@ final class _SubdivisionErasureClassifier {
   double _rightMiss = 1;
   double? _leftResult;
   double? _rightResult;
+  bool _leftAdjacentChecked = false;
+  bool _rightAdjacentChecked = false;
   List<StrokeErasureInterval>? _result;
 
   int get pendingCount => _pending.length + (_active == null ? 0 : 1);
@@ -2139,8 +2330,8 @@ final class _SubdivisionErasureClassifier {
           _complete(
             _zeroHit ? const [StrokeErasureInterval._(0, 1)] : const [],
           );
-        } else if (_zeroHit || _oneHit) {
-          _witness = _zeroHit ? 0 : 1;
+        } else if (_zeroHit || _oneHit || _witness != null) {
+          _witness = _zeroHit ? 0 : (_oneHit ? 1 : _witness);
           _startBoundaries();
         } else {
           _phase = _ClassifierPhase.rootEnvelope;
@@ -2193,7 +2384,11 @@ final class _SubdivisionErasureClassifier {
         _phase = _ClassifierPhase.searchMidpoint;
         return const Ok(null);
       case _ClassifierPhase.leftBoundary:
-        final middle = _representableMidpoint(_leftMiss, _leftHit);
+        final adjacent = _previousDouble(_leftHit);
+        final checkingAdjacent = !_leftAdjacentChecked && adjacent > _leftMiss;
+        final middle = checkingAdjacent
+            ? adjacent
+            : _representableMidpoint(_leftMiss, _leftHit);
         if (middle == null) {
           _leftResult = _leftHit;
           _phase = _ClassifierPhase.rightBoundary;
@@ -2201,13 +2396,20 @@ final class _SubdivisionErasureClassifier {
           maximumDepth += 1;
           if (_hitAt(middle)) {
             _leftHit = middle;
+            _leftAdjacentChecked = checkingAdjacent;
           } else {
             _leftMiss = middle;
+            if (checkingAdjacent) _leftAdjacentChecked = true;
           }
         }
         return const Ok(null);
       case _ClassifierPhase.rightBoundary:
-        final middle = _representableMidpoint(_rightHit, _rightMiss);
+        final adjacent = _nextPositiveDouble(_rightHit);
+        final checkingAdjacent =
+            !_rightAdjacentChecked && adjacent < _rightMiss;
+        final middle = checkingAdjacent
+            ? adjacent
+            : _representableMidpoint(_rightHit, _rightMiss);
         if (middle == null) {
           _rightResult = _rightHit;
           _complete([StrokeErasureInterval._(_leftResult ?? 0, _rightResult!)]);
@@ -2215,8 +2417,10 @@ final class _SubdivisionErasureClassifier {
           maximumDepth += 1;
           if (_hitAt(middle)) {
             _rightHit = middle;
+            _rightAdjacentChecked = checkingAdjacent;
           } else {
             _rightMiss = middle;
+            if (checkingAdjacent) _rightAdjacentChecked = true;
           }
         }
         return const Ok(null);

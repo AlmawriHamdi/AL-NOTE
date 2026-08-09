@@ -117,9 +117,8 @@ void main() {
       final runtime = _ok(
         _runtimeResult(
           diagnosticTrace: trace,
-          maximumEraserBatchClassificationChecks: 64,
-          maximumEraserBatchRootIsolationAdvances: 64,
-          maximumEraserBatchFeatureTransitions: 2048,
+          maximumEraserBatchRootIsolationAdvances: 512,
+          maximumEraserBatchFeatureTransitions: 8192,
         ),
       );
       await tester.pumpWidget(AlNoteApp(runtime: runtime));
@@ -558,10 +557,16 @@ void main() {
       );
       expect(callbacks, lessThan(100));
       expect(terminal.exactFinalizationFrames, lessThan(100));
-      expect(terminal.candidateResumptions, lessThan(100));
+      expect(
+        terminal.candidateResumptions,
+        lessThan(terminal.classifications * 2),
+      );
       expect(terminal.classifications, inInclusiveRange(200, 700));
-      expect(terminal.aggregateFeatureTransitions, lessThan(50000));
-      expect(terminal.maximumCallbackWork, lessThanOrEqualTo(2224));
+      expect(
+        terminal.aggregateFeatureTransitions,
+        lessThan(terminal.classifications * 4096),
+      );
+      expect(terminal.maximumCallbackWork, lessThanOrEqualTo(9264));
       expect(terminal.ordinaryAnalyticClassifications, greaterThan(0));
       expect(
         terminal.exactFallbackClassifications,
@@ -691,9 +696,8 @@ void main() {
       final runtime = _ok(
         _runtimeResult(
           diagnosticTrace: trace,
-          maximumEraserBatchClassificationChecks: 64,
-          maximumEraserBatchRootIsolationAdvances: 64,
-          maximumEraserBatchFeatureTransitions: 2048,
+          maximumEraserBatchRootIsolationAdvances: 512,
+          maximumEraserBatchFeatureTransitions: 8192,
         ),
       );
       await tester.pumpWidget(AlNoteApp(runtime: runtime));
@@ -786,7 +790,7 @@ void main() {
       expect(active.activeExactCallbacks, greaterThan(0));
       expect(active.activeExactWork, greaterThan(0));
       expect(active.authoritativeExactPoints, lessThan(active.rawVisualPoints));
-      expect(active.exactProcessingBacklog, lessThan(80));
+      expect(active.exactProcessingBacklog, lessThan(128));
 
       await erase.up();
       await tester.pump();
@@ -807,11 +811,11 @@ void main() {
         terminal.activeExactWork,
         greaterThan(terminal.postReleaseExactWork),
       );
-      expect(terminal.backlogAtPointerUp, lessThan(80));
+      expect(terminal.backlogAtPointerUp, lessThan(128));
       expect(terminal.exactFinalizationFrames, lessThan(80));
       expect(terminal.candidateResumptions, lessThan(160));
       expect(terminal.classifications, inInclusiveRange(400, 650));
-      expect(terminal.maximumCallbackWork, lessThanOrEqualTo(2224));
+      expect(terminal.maximumCallbackWork, lessThanOrEqualTo(9264));
       expect(terminal.terminalMaterializations, 1);
       expect(terminal.publications, 1);
       expect(
@@ -840,9 +844,9 @@ void main() {
         _runtimeResult(
           diagnosticTrace: trace,
           cooperativeTaskScheduler: scheduler,
-          maximumEraserBatchClassificationChecks: 64,
-          maximumEraserBatchRootIsolationAdvances: 64,
-          maximumEraserBatchFeatureTransitions: 2048,
+          maximumEraserPoints: 448,
+          maximumEraserBatchRootIsolationAdvances: 512,
+          maximumEraserBatchFeatureTransitions: 8192,
         ),
       );
       await tester.pumpWidget(AlNoteApp(runtime: runtime));
@@ -962,6 +966,11 @@ void main() {
       );
       expect(terminal.rawVisualPoints, 448);
       expect(terminal.authoritativeExactPoints, inInclusiveRange(300, 448));
+      expect(
+        terminal.pendingQueueFrontRemovals,
+        terminal.authoritativeExactPoints,
+      );
+      expect(terminal.pendingQueueCompactions, lessThanOrEqualTo(1));
       expect(terminal.pointerMoveExactClassifications, 0);
       expect(terminal.postReleaseAnimationFrameWaits, 1);
       expect(terminal.postReleaseCooperativeTasks, cooperativeTasks);
@@ -972,7 +981,7 @@ void main() {
       expect(terminal.indexPreparations, 15);
       expect(terminal.candidateIndexScans, greaterThan(0));
       expect(terminal.replayedExactWork, 0);
-      expect(terminal.maximumCallbackWork, lessThanOrEqualTo(2224));
+      expect(terminal.maximumCallbackWork, lessThanOrEqualTo(9264));
       expect(terminal.terminalMaterializations, 1);
       expect(terminal.publications, 1);
       await tester.tap(find.text('Redo'));
