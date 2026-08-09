@@ -208,59 +208,6 @@ void main() {
     );
   });
 
-  test('SweptPath compacts only exact duplicate same-direction evidence', () {
-    expect(
-      _ok(
-        SweptPath.isRedundantMiddle(
-          first: _point(0, 0),
-          middle: _point(1, 0),
-          last: _point(2, 0),
-        ),
-      ),
-      isTrue,
-    );
-    expect(
-      _ok(
-        SweptPath.isRedundantMiddle(
-          first: _point(0, 0),
-          middle: _point(0, 0),
-          last: _point(1, 0),
-        ),
-      ),
-      isTrue,
-    );
-    expect(
-      _ok(
-        SweptPath.isRedundantMiddle(
-          first: _point(0, 0),
-          middle: _point(1, 0),
-          last: _point(.5, 0),
-        ),
-      ),
-      isFalse,
-    );
-    expect(
-      _ok(
-        SweptPath.isRedundantMiddle(
-          first: _point(0, 0),
-          middle: _point(1, double.minPositive),
-          last: _point(2, 0),
-        ),
-      ),
-      isFalse,
-    );
-    expect(
-      _ok(
-        SweptPath.isRedundantMiddle(
-          first: _point(0, 0),
-          middle: _point(1, 1),
-          last: _point(2, 0),
-        ),
-      ),
-      isFalse,
-    );
-  });
-
   test(
     'GeometryQueryPolygon bounds hostile input and validates simplicity',
     () {

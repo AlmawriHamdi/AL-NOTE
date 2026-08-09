@@ -2,7 +2,6 @@
 
 import 'dart:collection';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import '../../core/geometry/affine_transform_2d.dart';
 import '../../core/geometry/geometry_values.dart';
@@ -73,38 +72,12 @@ final class StrokeGeometryElement {
   final Rect2 bounds;
 }
 
-/// One normalized erased interval on a source sample segment.
+/// An immutable, bounded swept pointer path used by Whole Eraser geometry.
 final class SweptPath {
   SweptPath._(List<Point2> points) : points = List.unmodifiable(points);
 
   /// Largest path ceiling accepted by [create].
   static const int maximumSupportedPoints = 1000000;
-
-  /// Whether [middle] is exactly redundant between [first] and [last].
-  ///
-  /// Only exact duplicates or exactly collinear same-direction evidence is
-  /// removable. Exact dyadic arithmetic prevents a rounded near-collinear
-  /// point from changing authoritative swept-capsule coverage.
-  static Result<bool, StructuredFailure> isRedundantMiddle({
-    required Point2 first,
-    required Point2 middle,
-    required Point2 last,
-  }) {
-    if (middle == first || middle == last) return const Ok(true);
-    try {
-      final exactFirst = _ExactPoint.fromPoint(first);
-      final exactMiddle = _ExactPoint.fromPoint(middle);
-      final exactLast = _ExactPoint.fromPoint(last);
-      final incoming = exactMiddle - exactFirst;
-      final outgoing = exactLast - exactMiddle;
-      return Ok(
-        _exactCross(incoming, outgoing).compareTo(_Dyadic._zero) == 0 &&
-            _exactDot(incoming, outgoing).compareTo(_Dyadic._zero) > 0,
-      );
-    } on Object {
-      return Err(_failure('swept_compaction_unavailable'));
-    }
-  }
 
   /// Safely captures [source] without trusting collection metadata or tails.
   static Result<SweptPath, StructuredFailure> create(
@@ -515,22 +488,6 @@ final class _StrokeGeometryNode {
 final class StrokeGeometryResolver {
   /// Creates a resolver with explicit geometry ceilings.
   const StrokeGeometryResolver(this.limits);
-
-  /// Maximum point/envelope predicates used by one classification.
-  ///
-  /// Classification treats a prepared cross-section as a homothetic convex
-  /// polygon whose center and radius vary affinely with the source parameter.
-  /// The union over any parameter interval is therefore exactly the convex
-  /// hull of its endpoint polygons. Ordinary positive-radius predicates use
-  /// scale-normalized floating distance bounds. The error band is widened
-  /// outward by accumulated-operation ulps; only a lower bound above the
-  /// radius proves a miss and only an upper bound below it proves a hit.
-  /// Ambiguous boundary predicates use the exact dyadic fallback as one
-  /// resumable primitive, never an unbounded search inside one call.
-  /// A returned interval is bounded by representable hit witnesses. If a
-  /// tangent has no representable witness, ordering cannot progress, or this
-  /// proof budget is exhausted, classification fails instead of guessing.
-  static const int maximumPreparedClassificationChecks = 256;
 
   /// Geometry construction ceilings.
   final StrokeGeometryLimits limits;
@@ -1014,79 +971,6 @@ bool _pointInPolygon(Point2 point, List<Point2> polygon) {
   }
   return inside;
 }
-
-final class _ExactPoint {
-  const _ExactPoint(this.x, this.y);
-
-  factory _ExactPoint.fromPoint(Point2 value) =>
-      _ExactPoint(_Dyadic.fromDouble(value.x), _Dyadic.fromDouble(value.y));
-
-  final _Dyadic x;
-  final _Dyadic y;
-
-  _ExactPoint operator -(_ExactPoint other) =>
-      _ExactPoint(x - other.x, y - other.y);
-}
-
-final class _Dyadic implements Comparable<_Dyadic> {
-  const _Dyadic(this.coefficient, this.exponent);
-
-  factory _Dyadic.fromDouble(double value) {
-    if (!value.isFinite) throw const _GeometryBuildException();
-    if (value == 0) return _zero;
-    final bytes = ByteData(8)..setFloat64(0, value);
-    final high = bytes.getUint32(0);
-    final low = bytes.getUint32(4);
-    final negative = high & 0x80000000 != 0;
-    final encodedExponent = (high >>> 20) & 0x7ff;
-    final fraction = (BigInt.from(high & 0xfffff) << 32) | BigInt.from(low);
-    final coefficient = encodedExponent == 0
-        ? fraction
-        : (BigInt.one << 52) | fraction;
-    return _Dyadic(
-      negative ? -coefficient : coefficient,
-      encodedExponent == 0 ? -1074 : encodedExponent - 1075,
-    );
-  }
-
-  static final _Dyadic _zero = _Dyadic(BigInt.zero, 0);
-  final BigInt coefficient;
-  final int exponent;
-
-  _Dyadic operator +(_Dyadic other) {
-    if (coefficient == BigInt.zero) return other;
-    if (other.coefficient == BigInt.zero) return this;
-    final common = math.min(exponent, other.exponent);
-    return _Dyadic(
-      (coefficient << (exponent - common)) +
-          (other.coefficient << (other.exponent - common)),
-      common,
-    );
-  }
-
-  _Dyadic operator -(_Dyadic other) =>
-      this + _Dyadic(-other.coefficient, other.exponent);
-
-  _Dyadic operator *(_Dyadic other) =>
-      _Dyadic(coefficient * other.coefficient, exponent + other.exponent);
-
-  @override
-  int compareTo(_Dyadic other) {
-    if (coefficient == BigInt.zero && other.coefficient == BigInt.zero) {
-      return 0;
-    }
-    final common = math.min(exponent, other.exponent);
-    return (coefficient << (exponent - common))
-        .compareTo(other.coefficient << (other.exponent - common))
-        .sign;
-  }
-}
-
-_Dyadic _exactDot(_ExactPoint first, _ExactPoint second) =>
-    first.x * second.x + first.y * second.y;
-
-_Dyadic _exactCross(_ExactPoint first, _ExactPoint second) =>
-    first.x * second.y - first.y * second.x;
 
 final class _GeometryBuildException implements Exception {
   const _GeometryBuildException();
