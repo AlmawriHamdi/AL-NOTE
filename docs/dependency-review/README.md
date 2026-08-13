@@ -176,3 +176,36 @@ older releases; their status does not replace AL NOTE's mandatory canonical
 path, duplicate/collision, entry-type, header, size, and extraction-safety
 validation. AL NOTE never constructs a platform path from an archive name and
 never extracts package entries to disk.
+
+## Phase 7 Unicode grapheme dependency
+
+Phase 7 needs Unicode extended-grapheme-cluster boundaries for ordinary Text
+Object editing. Dart strings expose UTF-16 code units and Unicode scalar values,
+but the SDK does not provide the Unicode grapheme segmentation required to keep
+combining sequences, variation selectors, emoji modifiers, flags, and ZWJ
+sequences intact. A handwritten segmentation algorithm was rejected because it
+would duplicate a large, versioned Unicode conformance surface with substantial
+correctness and security risk.
+
+`characters 1.4.1` is published by `dart.dev` from
+<https://github.com/dart-lang/core/tree/main/pkgs/characters>. The reviewed
+source is tag `characters-v1.4.1`, commit
+`b59ecf4ceebe6153e1c0166b7c9a7fdd9458a89d`, and the pub archive SHA-256 is
+`faf38497bda5ead2a8c7615f4f7939df04333478bf32e4173fcb06d428b5716b`.
+It is BSD-3-Clause licensed and compatible with AL NOTE's
+GPL-3.0-or-later distribution.
+
+The package was already resolved transitively at exactly version `1.4.1` with
+that checksum. Phase 7 promotes it to a direct dependency without adding,
+upgrading, or downgrading any transitive package. It is imported only by a
+private AL NOTE-owned grapheme adapter; package-owned types do not cross public
+APIs, and the adapter is the replacement boundary.
+
+Version 1.4.1 implements Unicode 16.0.0 grapheme behavior. It is pure Dart and
+supports AL NOTE's Android, Linux, Web, and Windows targets. The reviewed
+package adds no native binaries, Flutter plugins, code generation, runtime
+networking, or bundled assets.
+
+On August 9, 2026, an exact-version OSV query for Pub package
+`characters 1.4.1` returned no records. Absence of returned OSV records is
+evidence for this review, not a security guarantee.
