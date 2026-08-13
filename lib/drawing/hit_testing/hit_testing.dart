@@ -79,6 +79,38 @@ abstract interface class ObjectHitTestingDefinition {
   });
 }
 
+/// Optional whole-Object hit behavior for types without stable subtargets.
+abstract interface class ObjectWholeHitTestingDefinition {
+  /// Whether the Object is hit by a Page-space point.
+  Result<bool, StructuredFailure> wholePoint({
+    required ObjectEnvelope object,
+    required Point2 pagePosition,
+    required double pageTolerance,
+  });
+
+  /// Whether the Object matches a rectangle area query.
+  Result<bool, StructuredFailure> wholeRectangle({
+    required ObjectEnvelope object,
+    required Rect2 area,
+    required AreaHitMode mode,
+  });
+
+  /// Whether the Object matches a lasso area query.
+  Result<bool, StructuredFailure> wholeLasso({
+    required ObjectEnvelope object,
+    required GeometryQueryPolygon polygon,
+    required AreaHitMode mode,
+  });
+
+  /// Whether a bounded Page-space swept capsule intersects visible content.
+  Result<bool, StructuredFailure> wholeSweptSegment({
+    required ObjectEnvelope object,
+    required Point2 start,
+    required Point2 end,
+    required double radius,
+  });
+}
+
 /// Immutable bounded nonglobal Hit-Testing Registry.
 final class HitTestingRegistry {
   HitTestingRegistry._(this.definitions);
@@ -133,7 +165,7 @@ final class HitTestingRegistry {
 }
 
 final class _CapturedHitTestingDefinition
-    implements ObjectHitTestingDefinition {
+    implements ObjectHitTestingDefinition, ObjectWholeHitTestingDefinition {
   const _CapturedHitTestingDefinition(
     this._delegate,
     this.typeKey,
@@ -216,6 +248,94 @@ final class _CapturedHitTestingDefinition
       return Err(_failure('behavior_unavailable', FailureCategory.dependency));
     }
   }
+
+  @override
+  Result<bool, StructuredFailure> wholePoint({
+    required ObjectEnvelope object,
+    required Point2 pagePosition,
+    required double pageTolerance,
+  }) => _isolateWhole(
+    (delegate) => delegate.wholePoint(
+      object: object,
+      pagePosition: pagePosition,
+      pageTolerance: pageTolerance,
+    ),
+  );
+
+  @override
+  Result<bool, StructuredFailure> wholeRectangle({
+    required ObjectEnvelope object,
+    required Rect2 area,
+    required AreaHitMode mode,
+  }) => _isolateWhole(
+    (delegate) =>
+        delegate.wholeRectangle(object: object, area: area, mode: mode),
+  );
+
+  @override
+  Result<bool, StructuredFailure> wholeLasso({
+    required ObjectEnvelope object,
+    required GeometryQueryPolygon polygon,
+    required AreaHitMode mode,
+  }) => _isolateWhole(
+    (delegate) =>
+        delegate.wholeLasso(object: object, polygon: polygon, mode: mode),
+  );
+
+  @override
+  Result<bool, StructuredFailure> wholeSweptSegment({
+    required ObjectEnvelope object,
+    required Point2 start,
+    required Point2 end,
+    required double radius,
+  }) => _isolateWhole(
+    (delegate) => delegate.wholeSweptSegment(
+      object: object,
+      start: start,
+      end: end,
+      radius: radius,
+    ),
+  );
+
+  Result<bool, StructuredFailure> _isolateWhole(
+    Result<bool, StructuredFailure> Function(ObjectWholeHitTestingDefinition)
+    invoke,
+  ) {
+    final delegate = _delegate;
+    if (delegate is! ObjectWholeHitTestingDefinition) return const Ok(false);
+    try {
+      final result = invoke(delegate as ObjectWholeHitTestingDefinition);
+      if (result is Ok<bool, StructuredFailure>) return result;
+      final trusted = _trustedWholeFailure(
+        typeKey,
+        (result as Err<bool, StructuredFailure>).error.code,
+      );
+      return Err(
+        trusted ?? _failure('behavior_unavailable', FailureCategory.dependency),
+      );
+    } on Object {
+      return Err(_failure('behavior_unavailable', FailureCategory.dependency));
+    }
+  }
+}
+
+StructuredFailure? _trustedWholeFailure(ObjectTypeKey typeKey, String code) {
+  if (typeKey != shapeObjectTypeKey) return null;
+  return switch (code) {
+    'drawing.shape_hit_testing.work_limit' => StructuredFailure(
+      code: 'drawing.shape_hit_testing.work_limit',
+      category: FailureCategory.resource,
+      retryDisposition: RetryDisposition.never,
+      message: 'Shape hit testing is invalid or unavailable.',
+    ),
+    'drawing.shape_hit_testing.numeric_uncertain' => StructuredFailure(
+      code: 'drawing.shape_hit_testing.numeric_uncertain',
+      category: FailureCategory.validation,
+      retryDisposition: RetryDisposition.never,
+      message: 'Shape hit testing is invalid or unavailable.',
+    ),
+    _ => null,
+  };
 }
 
 /// Built-in transform-correct handwriting hit-testing definition.
@@ -445,6 +565,9 @@ final class PageHitTester {
         pagePosition: pagePosition,
         pageTolerance: pageTolerance,
       );
+      if (result is Err<StrokeId?, StructuredFailure>) {
+        return Err(result.error);
+      }
       if (result is Ok<StrokeId?, StructuredFailure> && result.value != null) {
         return Ok(
           HitTestResult(
@@ -454,6 +577,25 @@ final class PageHitTester {
             strokeId: result.value,
           ),
         );
+      }
+      final definition = candidate.definition;
+      if (definition is ObjectWholeHitTestingDefinition) {
+        final whole = (definition as ObjectWholeHitTestingDefinition)
+            .wholePoint(
+              object: candidate.object,
+              pagePosition: pagePosition,
+              pageTolerance: pageTolerance,
+            );
+        if (whole is Err<bool, StructuredFailure>) return Err(whole.error);
+        if (whole is Ok<bool, StructuredFailure> && whole.value) {
+          return Ok(
+            HitTestResult(
+              pageId: page.id,
+              layerId: candidate.layerId,
+              objectId: candidate.object.id,
+            ),
+          );
+        }
       }
     }
     return const Ok(null);
@@ -468,6 +610,8 @@ final class PageHitTester {
     page,
     (definition, object) =>
         definition.rectangle(object: object, area: area, mode: mode),
+    (definition, object) =>
+        definition.wholeRectangle(object: object, area: area, mode: mode),
   );
 
   /// Safely captures and validates a simple lasso before querying Objects.
@@ -489,6 +633,8 @@ final class PageHitTester {
       page,
       (definition, object) =>
           definition.lasso(object: object, polygon: values, mode: mode),
+      (definition, object) =>
+          definition.wholeLasso(object: object, polygon: values, mode: mode),
     );
   }
 
@@ -499,6 +645,11 @@ final class PageHitTester {
       ObjectEnvelope object,
     )
     query,
+    Result<bool, StructuredFailure> Function(
+      ObjectWholeHitTestingDefinition definition,
+      ObjectEnvelope object,
+    )
+    wholeQuery,
   ) {
     if (maximumResults < 0 || maximumResults > Revision.maximumValue) {
       return Err(_failure('invalid_result_limit', FailureCategory.validation));
@@ -510,8 +661,11 @@ final class PageHitTester {
     }
     for (final candidate in candidates) {
       final result = query(candidate.definition, candidate.object);
-      if (result is! Ok<List<StrokeId>, StructuredFailure>) continue;
-      for (final stroke in result.value) {
+      if (result is Err<List<StrokeId>, StructuredFailure>) {
+        return Err(result.error);
+      }
+      final strokeIds = (result as Ok<List<StrokeId>, StructuredFailure>).value;
+      for (final stroke in strokeIds) {
         if (hits.length >= maximumResults) {
           return Err(_failure('result_limit', FailureCategory.resource));
         }
@@ -523,6 +677,26 @@ final class PageHitTester {
             strokeId: stroke,
           ),
         );
+      }
+      final definition = candidate.definition;
+      if (strokeIds.isEmpty && definition is ObjectWholeHitTestingDefinition) {
+        final whole = wholeQuery(
+          definition as ObjectWholeHitTestingDefinition,
+          candidate.object,
+        );
+        if (whole is Err<bool, StructuredFailure>) return Err(whole.error);
+        if (whole is Ok<bool, StructuredFailure> && whole.value) {
+          if (hits.length >= maximumResults) {
+            return Err(_failure('result_limit', FailureCategory.resource));
+          }
+          hits.add(
+            HitTestResult(
+              pageId: page.id,
+              layerId: candidate.layerId,
+              objectId: candidate.object.id,
+            ),
+          );
+        }
       }
     }
     return Ok(List.unmodifiable(hits));

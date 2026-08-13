@@ -3,4 +3,6 @@
 /// Portable immutable rendering-scene contracts.
 library;
 
+export 'renderer/content_rendering.dart';
 export 'renderer/rendering_scene.dart';
+export 'renderer/shape_rendering.dart';

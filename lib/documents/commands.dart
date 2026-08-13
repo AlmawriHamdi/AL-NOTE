@@ -5,4 +5,5 @@ library;
 
 export 'commands/command_contracts.dart';
 export 'commands/document_mutation_coordinator.dart';
+export 'commands/phase7_object_requests.dart';
 export 'commands/revision_snapshot.dart';

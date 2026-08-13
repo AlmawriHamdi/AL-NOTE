@@ -20,6 +20,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/document_model_test_support.dart';
+import 'support/phase3_test_support.dart';
 import 'support/uuid_sequence_generator.dart';
 
 /// Verifies the accessible Phase 6 Canvas shell and pointer route.
@@ -921,7 +922,10 @@ void main() {
     );
     await select.up();
     await tester.pump();
-    expect(find.text('Stroke selected'), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.byKey(const Key('canvas-status'))).data,
+      'Stroke selected',
+    );
     final selectedPixels = await _canvasBytes(tester);
     final before = runtime.initialCoordinator.snapshot;
 
@@ -947,26 +951,722 @@ void main() {
     expect(runtime.initialCoordinator.snapshot.revisions, before.revisions);
   });
 
+  testWidgets('Shape tool creates, selects, whole-erases, undoes and redoes', (
+    WidgetTester tester,
+  ) async {
+    final runtime = _runtime();
+    await tester.pumpWidget(AlNoteApp(runtime: runtime));
+    await tester.tap(find.text('shape'));
+    await tester.pump();
+    expect(find.byKey(const Key('shape-kind-control')), findsOneWidget);
+    expect(find.byKey(const Key('shape-color-control')), findsOneWidget);
+    await tester.tap(find.text('Fill'));
+    await tester.pump();
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+    final center = tester.getCenter(canvas);
+    final shapeGesture = await tester.startGesture(
+      center - const Offset(40, 30),
+      kind: PointerDeviceKind.mouse,
+    );
+    await shapeGesture.moveBy(const Offset(80, 60));
+    await shapeGesture.up();
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<Text>(find.byKey(const Key('canvas-status'))).data,
+      'Shape created',
+    );
+    var objects = runtime.initialCoordinator.snapshot.root.pages.single.layers
+        .whereType<ContentLayer>()
+        .single
+        .objects;
+    expect(objects, hasLength(1));
+    expect(objects.single.typeKey, shapeObjectTypeKey);
+
+    await tester.tap(find.text('selection'));
+    await tester.pump();
+    final selectedCenter = tester.getCenter(canvas);
+    final selectShape = await tester.startGesture(
+      selectedCenter,
+      kind: PointerDeviceKind.mouse,
+    );
+    await selectShape.up();
+    await tester.pump();
+    expect(
+      tester.widget<Text>(find.byKey(const Key('canvas-status'))).data,
+      'Stroke selected',
+    );
+
+    await tester.tap(find.text('wholeEraser'));
+    await tester.pump();
+    final eraseShape = await tester.startGesture(
+      selectedCenter - const Offset(5, 0),
+      kind: PointerDeviceKind.mouse,
+    );
+    await eraseShape.moveBy(const Offset(10, 0));
+    await eraseShape.up();
+    await tester.pump();
+    objects = runtime.initialCoordinator.snapshot.root.pages.single.layers
+        .whereType<ContentLayer>()
+        .single
+        .objects;
+    expect(objects, isEmpty);
+    await tester.tap(find.text('Undo'));
+    await tester.pump();
+    expect(
+      runtime.initialCoordinator.snapshot.root.pages.single.layers
+          .whereType<ContentLayer>()
+          .single
+          .objects
+          .single
+          .typeKey,
+      shapeObjectTypeKey,
+    );
+    await tester.tap(find.text('Redo'));
+    await tester.pump();
+    expect(
+      runtime.initialCoordinator.snapshot.root.pages.single.layers
+          .whereType<ContentLayer>()
+          .single
+          .objects,
+      isEmpty,
+    );
+  });
+
+  testWidgets(
+    'Shape previews use authoritative kind style and color geometry',
+    (WidgetTester tester) async {
+      Future<void> configure({
+        required ShapeKind kind,
+        required bool stroke,
+        required bool fill,
+        required String color,
+      }) async {
+        await tester.tap(find.byKey(const Key('shape-kind-control')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(kind.name).last);
+        await tester.pump();
+        final strokeChip = tester.widget<FilterChip>(
+          find.widgetWithText(FilterChip, 'Stroke'),
+        );
+        if (strokeChip.selected != stroke) {
+          await tester.tap(find.widgetWithText(FilterChip, 'Stroke'));
+          await tester.pump();
+        }
+        final fillChip = tester.widget<FilterChip>(
+          find.widgetWithText(FilterChip, 'Fill'),
+        );
+        if (fillChip.selected != fill) {
+          await tester.tap(find.widgetWithText(FilterChip, 'Fill'));
+          await tester.pump();
+        }
+        await tester.tap(find.byKey(const Key('shape-color-control')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(color).last);
+        await tester.pump();
+      }
+
+      for (final entry in <(ShapeKind, bool, bool, String, List<int>)>[
+        (ShapeKind.line, true, false, 'Navy', const [23, 50, 77]),
+        (ShapeKind.rectangle, true, false, 'Black', const [17, 17, 17]),
+        (ShapeKind.ellipse, true, false, 'Red', const [180, 35, 24]),
+        (ShapeKind.rectangle, false, true, 'Navy', const [23, 50, 77]),
+        (ShapeKind.rectangle, true, true, 'Red', const [180, 35, 24]),
+      ]) {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        final generator = _RuntimeCountingUuidGenerator();
+        final runtime = _runtime(uuidGenerator: generator);
+        await tester.pumpWidget(AlNoteApp(runtime: runtime));
+        await tester.tap(find.text('shape'));
+        await tester.pump();
+        await configure(
+          kind: entry.$1,
+          stroke: entry.$2,
+          fill: entry.$3,
+          color: entry.$4,
+        );
+        final canvas = find.bySemanticsLabel('Handwriting canvas');
+        final center = tester.getCenter(canvas);
+        final start = center - const Offset(60, 40);
+        final end = center + const Offset(60, 40);
+        final before = await _canvasImage(tester);
+        final documentBefore = runtime.initialCoordinator.snapshot;
+        final uuidCallsBeforeGesture = generator.calls;
+        final gesture = await tester.startGesture(
+          start,
+          kind: PointerDeviceKind.mouse,
+        );
+        await gesture.moveTo(end);
+        await tester.pump();
+        final preview = await _canvasImage(tester);
+
+        expect(generator.calls, uuidCallsBeforeGesture);
+        expect(
+          runtime.initialCoordinator.snapshot.root,
+          same(documentBefore.root),
+        );
+        expect(
+          runtime.initialCoordinator.snapshot.revisions,
+          documentBefore.revisions,
+        );
+        expect(
+          runtime.initialCoordinator.snapshot.canUndo,
+          documentBefore.canUndo,
+        );
+        expect(
+          _changedNear(before, preview, center, radius: 4),
+          entry.$1 == ShapeKind.line || entry.$3,
+        );
+        if (entry.$1 == ShapeKind.line) {
+          expect(
+            _changedNear(
+              before,
+              preview,
+              center + const Offset(0, -40),
+              radius: 4,
+            ),
+            isFalse,
+            reason: 'line preview must not draw rectangular top edge',
+          );
+        } else if (entry.$1 == ShapeKind.rectangle) {
+          expect(
+            _changedNear(
+              before,
+              preview,
+              center + const Offset(0, -40),
+              radius: 4,
+            ),
+            isTrue,
+          );
+        } else {
+          expect(
+            _changedNear(
+              before,
+              preview,
+              center + const Offset(0, -40),
+              radius: 4,
+            ),
+            isTrue,
+          );
+          expect(
+            _changedNear(before, preview, start, radius: 4),
+            isFalse,
+            reason: 'ellipse preview must not draw rectangular corner',
+          );
+        }
+        final coloredPoint = entry.$3
+            ? center
+            : entry.$1 == ShapeKind.line
+            ? center
+            : center + const Offset(0, -40);
+        expect(
+          _nearestChangedRgb(before, preview, coloredPoint, radius: 5),
+          entry.$5,
+        );
+        await gesture.cancel();
+        await tester.pump();
+        expect(await _canvasBytes(tester), before.bytes);
+        expect(generator.calls, uuidCallsBeforeGesture);
+        expect(
+          runtime.initialCoordinator.snapshot.root,
+          same(documentBefore.root),
+        );
+        expect(runtime.initialCoordinator.snapshot.canUndo, isFalse);
+      }
+    },
+  );
+
+  testWidgets(
+    'Shape preview equals committed pixels under zoom and move is nonpersistent',
+    (WidgetTester tester) async {
+      final generator = _RuntimeCountingUuidGenerator();
+      final runtime = _runtime(uuidGenerator: generator);
+      await tester.pumpWidget(AlNoteApp(runtime: runtime));
+      await tester.tap(find.text('shape'));
+      await tester.pump();
+      await tester.tap(find.text('Fill'));
+      await tester.pump();
+      tester.widget<Slider>(find.byKey(const Key('zoom-slider'))).onChanged!(2);
+      await tester.pump();
+      final canvas = find.bySemanticsLabel('Handwriting canvas');
+      final center = tester.getCenter(canvas);
+      final before = runtime.initialCoordinator.snapshot;
+      final uuidCallsBeforeGesture = generator.calls;
+      final gesture = await tester.startGesture(
+        center - const Offset(50, 35),
+        kind: PointerDeviceKind.mouse,
+      );
+      await gesture.moveBy(const Offset(100, 70));
+      await tester.pump();
+      final preview = await _canvasBytes(tester);
+      expect(generator.calls, uuidCallsBeforeGesture);
+      expect(runtime.initialCoordinator.snapshot.root, same(before.root));
+      expect(runtime.initialCoordinator.snapshot.revisions, before.revisions);
+      expect(runtime.initialCoordinator.snapshot.canUndo, isFalse);
+
+      await gesture.up();
+      await tester.pump();
+      final committed = await _canvasBytes(tester);
+      var maximumDelta = 0;
+      for (var index = 0; index < preview.length; index++) {
+        maximumDelta = math.max(
+          maximumDelta,
+          (preview[index] - committed[index]).abs(),
+        );
+      }
+      expect(maximumDelta, lessThanOrEqualTo(1));
+      expect(generator.calls, uuidCallsBeforeGesture + 3);
+      expect(
+        runtime.initialCoordinator.snapshot.root.pages.single.layers
+            .whereType<ContentLayer>()
+            .single
+            .objects,
+        hasLength(1),
+      );
+      expect(runtime.initialCoordinator.snapshot.canUndo, isTrue);
+      _ok(runtime.initialCoordinator.undo());
+      expect(runtime.initialCoordinator.snapshot.canUndo, isFalse);
+      expect(
+        runtime.initialCoordinator.snapshot.root.pages.single.layers
+            .whereType<ContentLayer>()
+            .single
+            .objects,
+        isEmpty,
+      );
+    },
+  );
+
+  testWidgets(
+    'Line selection forces stroke, disables fill, and remains equivalent',
+    (WidgetTester tester) async {
+      final generator = _RuntimeCountingUuidGenerator();
+      final runtime = _runtime(uuidGenerator: generator);
+      await tester.pumpWidget(AlNoteApp(runtime: runtime));
+      await tester.tap(find.text('shape'));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('shape-stroke-control')));
+      await tester.pump();
+      expect(
+        tester
+            .widget<FilterChip>(find.byKey(const Key('shape-stroke-control')))
+            .selected,
+        isFalse,
+      );
+      expect(
+        tester
+            .widget<FilterChip>(find.byKey(const Key('shape-fill-control')))
+            .selected,
+        isTrue,
+      );
+
+      await tester.tap(find.byKey(const Key('shape-kind-control')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('line').last);
+      await tester.pump();
+      final lineStroke = tester.widget<FilterChip>(
+        find.byKey(const Key('shape-stroke-control')),
+      );
+      final lineFill = tester.widget<FilterChip>(
+        find.byKey(const Key('shape-fill-control')),
+      );
+      expect(lineStroke.selected, isTrue);
+      expect(lineStroke.onSelected, isNull);
+      expect(lineFill.selected, isFalse);
+      expect(lineFill.onSelected, isNull);
+      expect(find.byTooltip('Lines require a visible stroke'), findsOneWidget);
+      expect(find.byTooltip('Fill is unavailable for lines'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('shape-kind-control')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('ellipse').last);
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('shape-fill-control')));
+      await tester.tap(find.byKey(const Key('shape-stroke-control')));
+      await tester.pump();
+      expect(
+        tester
+            .widget<FilterChip>(find.byKey(const Key('shape-stroke-control')))
+            .selected,
+        isFalse,
+      );
+      expect(
+        tester
+            .widget<FilterChip>(find.byKey(const Key('shape-fill-control')))
+            .selected,
+        isTrue,
+      );
+      await tester.tap(find.byKey(const Key('shape-kind-control')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('line').last);
+      await tester.pump();
+      expect(
+        tester
+            .widget<FilterChip>(find.byKey(const Key('shape-stroke-control')))
+            .selected,
+        isTrue,
+      );
+      expect(
+        tester
+            .widget<FilterChip>(find.byKey(const Key('shape-fill-control')))
+            .selected,
+        isFalse,
+      );
+
+      final canvas = find.bySemanticsLabel('Handwriting canvas');
+      final center = tester.getCenter(canvas);
+      final beforeImage = await _canvasImage(tester);
+      final beforeDocument = runtime.initialCoordinator.snapshot;
+      final uuidCallsBeforeGesture = generator.calls;
+      final gesture = await tester.startGesture(
+        center - const Offset(55, 35),
+        kind: PointerDeviceKind.mouse,
+      );
+      await gesture.moveBy(const Offset(110, 70));
+      await tester.pump();
+      final preview = await _canvasImage(tester);
+      expect(_changedNear(beforeImage, preview, center, radius: 4), isTrue);
+      expect(generator.calls, uuidCallsBeforeGesture);
+      expect(
+        runtime.initialCoordinator.snapshot.root,
+        same(beforeDocument.root),
+      );
+      expect(runtime.initialCoordinator.snapshot.canUndo, isFalse);
+
+      await gesture.up();
+      await tester.pump();
+      final committed = await _canvasImage(tester);
+      var maximumDelta = 0;
+      for (var index = 0; index < preview.bytes.length; index += 1) {
+        maximumDelta = math.max(
+          maximumDelta,
+          (preview.bytes[index] - committed.bytes[index]).abs(),
+        );
+      }
+      expect(maximumDelta, lessThanOrEqualTo(1));
+      expect(generator.calls, uuidCallsBeforeGesture + 3);
+      final objects = runtime
+          .initialCoordinator
+          .snapshot
+          .root
+          .pages
+          .single
+          .layers
+          .whereType<ContentLayer>()
+          .single
+          .objects;
+      expect(objects, hasLength(1));
+      final payload = _ok(
+        ShapePayload.decode(
+          objects.single.payload,
+          limits: runtime.shapeLimits,
+        ),
+      );
+      expect(payload.geometry.kind, ShapeKind.line);
+      expect(payload.style.strokeEnabled, isTrue);
+      expect(payload.style.fillEnabled, isFalse);
+
+      await tester.tap(find.byKey(const Key('shape-kind-control')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('rectangle').last);
+      await tester.pump();
+      expect(
+        tester
+            .widget<FilterChip>(find.byKey(const Key('shape-stroke-control')))
+            .onSelected,
+        isNotNull,
+      );
+      expect(
+        tester
+            .widget<FilterChip>(find.byKey(const Key('shape-fill-control')))
+            .onSelected,
+        isNotNull,
+      );
+      await tester.tap(find.byKey(const Key('shape-fill-control')));
+      await tester.tap(find.byKey(const Key('shape-stroke-control')));
+      await tester.pump();
+      expect(
+        tester
+            .widget<FilterChip>(find.byKey(const Key('shape-stroke-control')))
+            .selected,
+        isFalse,
+      );
+      expect(
+        tester
+            .widget<FilterChip>(find.byKey(const Key('shape-fill-control')))
+            .selected,
+        isTrue,
+      );
+      _ok(runtime.initialCoordinator.undo());
+      expect(runtime.initialCoordinator.snapshot.canUndo, isFalse);
+    },
+  );
+
+  testWidgets('Stale invalid line controls publish no invisible object', (
+    WidgetTester tester,
+  ) async {
+    final generator = _RuntimeCountingUuidGenerator();
+    final runtime = _runtime(uuidGenerator: generator);
+    await tester.pumpWidget(AlNoteApp(runtime: runtime));
+    await tester.tap(find.text('shape'));
+    await tester.pump();
+    final staleStrokeCallback = tester
+        .widget<FilterChip>(find.byKey(const Key('shape-stroke-control')))
+        .onSelected!;
+    await tester.tap(find.byKey(const Key('shape-kind-control')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('line').last);
+    await tester.pump();
+
+    staleStrokeCallback(false);
+    await tester.pump();
+    expect(
+      tester
+          .widget<FilterChip>(find.byKey(const Key('shape-stroke-control')))
+          .selected,
+      isFalse,
+    );
+    expect(
+      tester
+          .widget<FilterChip>(find.byKey(const Key('shape-fill-control')))
+          .selected,
+      isTrue,
+    );
+    final canvas = find.bySemanticsLabel('Handwriting canvas');
+    final center = tester.getCenter(canvas);
+    final beforeImage = await _canvasBytes(tester);
+    final beforeDocument = runtime.initialCoordinator.snapshot;
+    final uuidCallsBeforeGesture = generator.calls;
+    final gesture = await tester.startGesture(
+      center - const Offset(45, 25),
+      kind: PointerDeviceKind.mouse,
+    );
+    await gesture.moveBy(const Offset(90, 50));
+    await tester.pump();
+    expect(await _canvasBytes(tester), beforeImage);
+    expect(generator.calls, uuidCallsBeforeGesture);
+    expect(runtime.initialCoordinator.snapshot.root, same(beforeDocument.root));
+    expect(
+      runtime.initialCoordinator.snapshot.revisions,
+      beforeDocument.revisions,
+    );
+    expect(runtime.initialCoordinator.snapshot.canUndo, isFalse);
+
+    await gesture.up();
+    await tester.pump();
+    expect(generator.calls, uuidCallsBeforeGesture);
+    expect(runtime.initialCoordinator.snapshot.root, same(beforeDocument.root));
+    expect(
+      runtime.initialCoordinator.snapshot.revisions,
+      beforeDocument.revisions,
+    );
+    expect(runtime.initialCoordinator.snapshot.canUndo, isFalse);
+    expect(
+      runtime.initialCoordinator.snapshot.root.pages.single.layers
+          .whereType<ContentLayer>()
+          .single
+          .objects,
+      isEmpty,
+    );
+    expect(
+      tester.widget<Text>(find.byKey(const Key('canvas-status'))).data,
+      'Shape rejected',
+    );
+  });
+
+  testWidgets(
+    'Text tool uses editor overlay and empty cancellation publishes nothing',
+    (WidgetTester tester) async {
+      final runtime = _runtime();
+      await tester.pumpWidget(AlNoteApp(runtime: runtime));
+      await tester.tap(find.text('text'));
+      await tester.pump();
+      final canvas = find.bySemanticsLabel('Handwriting canvas');
+      final center = tester.getCenter(canvas);
+      final textGesture = await tester.startGesture(
+        center - const Offset(70, 35),
+        kind: PointerDeviceKind.mouse,
+      );
+      await textGesture.moveBy(const Offset(140, 70));
+      await textGesture.up();
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<Text>(find.byKey(const Key('canvas-status'))).data,
+        'Creating text box',
+      );
+      expect(find.byKey(const Key('text-object-editor')), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('text-object-editor')),
+        'Cafe\u0301 👩‍💻 مرحبا',
+      );
+      await tester.tap(find.text('Bold'));
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+      final objects = runtime
+          .initialCoordinator
+          .snapshot
+          .root
+          .pages
+          .single
+          .layers
+          .whereType<ContentLayer>()
+          .single
+          .objects;
+      expect(objects, hasLength(1));
+      expect(objects.single.typeKey, textObjectTypeKey);
+      final payload = _ok(
+        TextPayload.decode(objects.single.payload, limits: runtime.textLimits),
+      );
+      expect(payload.logicalText, 'Cafe\u0301 👩‍💻 مرحبا');
+      expect(payload.defaultCharacterStyle.weight, 700);
+
+      await tester.tap(find.text('selection'));
+      await tester.pump();
+      final selectText = await tester.startGesture(
+        center,
+        kind: PointerDeviceKind.mouse,
+      );
+      await selectText.up();
+      await tester.pump();
+      expect(find.byKey(const Key('edit-selected-text')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('edit-selected-text')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('text-object-editor')), '');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      var edited = _ok(
+        TextPayload.decode(
+          runtime.initialCoordinator.snapshot.root.pages.single.layers
+              .whereType<ContentLayer>()
+              .single
+              .objects
+              .single
+              .payload,
+          limits: runtime.textLimits,
+        ),
+      );
+      expect(edited.logicalText, isEmpty);
+      expect(
+        runtime.initialCoordinator.snapshot.root.pages.single.layers
+            .whereType<ContentLayer>()
+            .single
+            .objects,
+        hasLength(1),
+      );
+      await tester.tap(find.text('Undo'));
+      await tester.pump();
+      edited = _ok(
+        TextPayload.decode(
+          runtime.initialCoordinator.snapshot.root.pages.single.layers
+              .whereType<ContentLayer>()
+              .single
+              .objects
+              .single
+              .payload,
+          limits: runtime.textLimits,
+        ),
+      );
+      expect(edited.logicalText, payload.logicalText);
+      await tester.tap(find.text('Redo'));
+      await tester.pump();
+      expect(
+        _ok(
+          TextPayload.decode(
+            runtime.initialCoordinator.snapshot.root.pages.single.layers
+                .whereType<ContentLayer>()
+                .single
+                .objects
+                .single
+                .payload,
+            limits: runtime.textLimits,
+          ),
+        ).logicalText,
+        isEmpty,
+      );
+
+      await tester.tap(find.byKey(const Key('edit-selected-text')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('text-object-editor')),
+        'lifecycle flush',
+      );
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pumpAndSettle();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      expect(find.byKey(const Key('text-object-editor')), findsNothing);
+      expect(
+        _ok(
+          TextPayload.decode(
+            runtime.initialCoordinator.snapshot.root.pages.single.layers
+                .whereType<ContentLayer>()
+                .single
+                .objects
+                .single
+                .payload,
+            limits: runtime.textLimits,
+          ),
+        ).logicalText,
+        'lifecycle flush',
+      );
+
+      await tester.tap(find.text('text'));
+      await tester.pump();
+      final emptyText = await tester.startGesture(
+        center + const Offset(100, 100),
+        kind: PointerDeviceKind.mouse,
+      );
+      await emptyText.up();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+      expect(
+        runtime.initialCoordinator.snapshot.root.pages.single.layers
+            .whereType<ContentLayer>()
+            .single
+            .objects,
+        hasLength(1),
+      );
+    },
+  );
+
+  testWidgets(
+    'rich Text editing is rejected without lifecycle mutation',
+    (WidgetTester tester) =>
+        _verifyUnsupportedTextDialog(tester, _widgetRichText),
+  );
+
+  testWidgets(
+    'embedded-newline Text is rejected without lifecycle publication',
+    (WidgetTester tester) =>
+        _verifyUnsupportedTextDialog(tester, _widgetEmbeddedNewlineText),
+  );
+
+  testWidgets(
+    'style-unknown Text is rejected without lifecycle publication',
+    (WidgetTester tester) =>
+        _verifyUnsupportedTextDialog(tester, _widgetStyleUnknownText),
+  );
+
   test('runtime registry ceilings are injected and exact boundaries pass', () {
     final exactGenerator = _RuntimeCountingUuidGenerator();
     expect(
       _runtimeResult(
         uuidGenerator: exactGenerator,
-        maximumRenderingDefinitions: 1,
-        maximumHitTestingDefinitions: 1,
-        maximumTools: 3,
-        maximumActions: 3,
-        maximumBindings: 7,
+        maximumRenderingDefinitions: 4,
+        maximumHitTestingDefinitions: 4,
+        maximumTools: 5,
+        maximumActions: 5,
+        maximumBindings: 11,
       ),
       isA<Ok<Object?, Object?>>(),
     );
     expect(exactGenerator.calls, 5);
     for (final limits in [
-      (rendering: 0, hits: 1, tools: 3, actions: 3, bindings: 7),
-      (rendering: 1, hits: 0, tools: 3, actions: 3, bindings: 7),
-      (rendering: 1, hits: 1, tools: 2, actions: 3, bindings: 7),
-      (rendering: 1, hits: 1, tools: 3, actions: 2, bindings: 7),
-      (rendering: 1, hits: 1, tools: 3, actions: 3, bindings: 6),
+      (rendering: 3, hits: 4, tools: 5, actions: 5, bindings: 11),
+      (rendering: 4, hits: 3, tools: 5, actions: 5, bindings: 11),
+      (rendering: 4, hits: 4, tools: 4, actions: 5, bindings: 11),
+      (rendering: 4, hits: 4, tools: 5, actions: 4, bindings: 11),
+      (rendering: 4, hits: 4, tools: 5, actions: 5, bindings: 10),
     ]) {
       final generator = _RuntimeCountingUuidGenerator();
       expect(
@@ -1031,6 +1731,106 @@ void main() {
   });
 }
 
+Future<void> _verifyUnsupportedTextDialog(
+  WidgetTester tester,
+  TextPayload Function(TextLimits) payloadBuilder,
+) async {
+  final generator = _RuntimeCountingUuidGenerator();
+  final runtime = _runtime(uuidGenerator: generator);
+  final root = runtime.initialCoordinator.snapshot.root;
+  final page = root.pages.single;
+  final layer = page.layers.whereType<ContentLayer>().single;
+  final payload = payloadBuilder(runtime.textLimits);
+  final object = testObject(
+    id: 9090,
+    typeKey: textObjectTypeKey,
+    schemaVersion: textSchemaVersion,
+    payload: payload.encode(),
+    transform: _ok(
+      AffineTransform2D.restoreFromStorage(const [1, 0, 0, 1, 360, 240]),
+    ),
+  );
+  final seeded = _ok(
+    AtomicObjectCollectionEditRequest.create(
+      documentId: root.id,
+      pageId: page.id,
+      metadata: phase3Metadata(
+        family: 'alnote.commands.object.collection_edit',
+        correlation: 9091,
+      ),
+      preconditions: RevisionPreconditions(
+        pages: {
+          page.id:
+              runtime.initialCoordinator.snapshot.revisions.pages[page.id]!,
+        },
+        layerMembership: {
+          layer.id: runtime
+              .initialCoordinator
+              .snapshot
+              .revisions
+              .layerMembership[layer.id]!,
+        },
+      ),
+      additions: [ObjectCollectionAddition(layerId: layer.id, object: object)],
+      maximumOperations: runtime.maximumCommandOperations,
+    ),
+  );
+  expect(
+    runtime.initialCoordinator.execute(seeded),
+    isA<Ok<CommandCommit, CommandFailure>>(),
+  );
+  await tester.pumpWidget(AlNoteApp(runtime: runtime));
+  await tester.tap(find.text('Save in memory'));
+  await tester.pumpAndSettle();
+  final savedBytes = List<int>.of(_canvasPainter(tester).savedBytes!);
+  final savedRoot = _canvasPainter(tester).savedRoot;
+  await tester.tap(find.text('selection'));
+  await tester.pump();
+  final canvas = find.bySemanticsLabel('Handwriting canvas');
+  final gesture = await tester.startGesture(
+    tester.getTopLeft(canvas) + const Offset(40, 40),
+    kind: PointerDeviceKind.mouse,
+  );
+  await gesture.moveTo(tester.getBottomRight(canvas) - const Offset(40, 40));
+  await gesture.up();
+  await tester.pump();
+  expect(find.byKey(const Key('edit-selected-text')), findsOneWidget);
+  final before = runtime.initialCoordinator.snapshot;
+  final encoded = payload.encode();
+  final uuidCalls = generator.calls;
+  await tester.tap(find.byKey(const Key('edit-selected-text')));
+  await tester.pumpAndSettle();
+  expect(find.byKey(const Key('text-object-editor')), findsNothing);
+  expect(find.text('Rich text editing unavailable'), findsOneWidget);
+  expect(find.byKey(const Key('edit-selected-text')), findsOneWidget);
+  tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+  await tester.pump();
+  tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  await tester.pump();
+  final after = runtime.initialCoordinator.snapshot;
+  expect(after.root, same(before.root));
+  expect(after.revisions, before.revisions);
+  expect(after.canUndo, before.canUndo);
+  expect(after.canRedo, before.canRedo);
+  expect(generator.calls, uuidCalls);
+  expect(_canvasPainter(tester).savedBytes, savedBytes);
+  expect(_canvasPainter(tester).savedRoot, same(savedRoot));
+  expect(
+    _ok(
+      TextPayload.decode(
+        after.root.pages.single.layers
+            .whereType<ContentLayer>()
+            .single
+            .objects
+            .single
+            .payload,
+        limits: runtime.textLimits,
+      ),
+    ).encode(),
+    encoded,
+  );
+}
+
 Phase6CanvasRuntime _runtime({
   UuidGenerator? uuidGenerator,
   int storageCeiling = 10000000,
@@ -1057,6 +1857,188 @@ Phase6CanvasRuntime _runtime({
   ),
 );
 
+TextPayload _widgetRichText(TextLimits limits) {
+  TextCharacterStyle style(double size, int color) => _ok(
+    TextCharacterStyle.create(
+      genericFontFamily: TextGenericFontFamily.sansSerif,
+      fontSize: size,
+      weight: 400,
+      italic: false,
+      underline: false,
+      strikethrough: false,
+      argb: color,
+      limits: limits,
+    ),
+  );
+  final first = style(18, 0xff000000);
+  final second = style(28, 0xffff0000);
+  final paragraphStyle = _ok(
+    TextParagraphStyle.create(
+      alignment: TextAlignment.left,
+      direction: TextParagraphDirection.ltr,
+      lineHeight: 1.2,
+      limits: limits,
+      unknownFields: PreservedMap({
+        'styleFuture': const PreservedBoolean(true),
+      }),
+    ),
+  );
+  final paragraph = _ok(
+    TextParagraph.create(
+      runs: [
+        _ok(TextRun.create(text: 'rich ', style: first, limits: limits)),
+        _ok(
+          TextRun.create(
+            text: 'text',
+            style: second,
+            limits: limits,
+            unknownFields: PreservedMap({
+              'runFuture': const PreservedString('preserved'),
+            }),
+          ),
+        ),
+      ],
+      style: paragraphStyle,
+      limits: limits,
+      unknownFields: PreservedMap({
+        'paragraphFuture': const PreservedBoolean(true),
+      }),
+    ),
+  );
+  return _ok(
+    TextPayload.create(
+      paragraphs: [paragraph],
+      defaultCharacterStyle: first,
+      defaultParagraphStyle: paragraphStyle,
+      boxMode: TextBoxMode.fixedWidthFixedHeight,
+      intrinsicWidth: 120,
+      intrinsicHeight: 120,
+      padding: _ok(
+        TextPadding.create(
+          left: 4,
+          top: 4,
+          right: 4,
+          bottom: 4,
+          limits: limits,
+        ),
+      ),
+      verticalAlignment: TextVerticalAlignment.top,
+      overflowPolicy: TextOverflowPolicy.visible,
+      limits: limits,
+      unknownFields: PreservedMap({
+        'payloadFuture': const PreservedBoolean(true),
+      }),
+    ),
+  );
+}
+
+TextPayload _widgetEmbeddedNewlineText(TextLimits limits) {
+  final style = _ok(
+    TextCharacterStyle.create(
+      genericFontFamily: TextGenericFontFamily.sansSerif,
+      fontSize: 18,
+      weight: 400,
+      italic: false,
+      underline: false,
+      strikethrough: false,
+      argb: 0xff000000,
+      limits: limits,
+    ),
+  );
+  final paragraphStyle = _ok(
+    TextParagraphStyle.create(
+      alignment: TextAlignment.left,
+      direction: TextParagraphDirection.ltr,
+      lineHeight: 1.2,
+      limits: limits,
+    ),
+  );
+  final paragraph = _ok(
+    TextParagraph.create(
+      runs: [_ok(TextRun.create(text: 'a\nb', style: style, limits: limits))],
+      style: paragraphStyle,
+      limits: limits,
+    ),
+  );
+  return _ok(
+    TextPayload.create(
+      paragraphs: [paragraph],
+      defaultCharacterStyle: style,
+      defaultParagraphStyle: paragraphStyle,
+      boxMode: TextBoxMode.fixedWidthFixedHeight,
+      intrinsicWidth: 120,
+      intrinsicHeight: 120,
+      padding: _ok(
+        TextPadding.create(
+          left: 4,
+          top: 4,
+          right: 4,
+          bottom: 4,
+          limits: limits,
+        ),
+      ),
+      verticalAlignment: TextVerticalAlignment.top,
+      overflowPolicy: TextOverflowPolicy.visible,
+      limits: limits,
+    ),
+  );
+}
+
+TextPayload _widgetStyleUnknownText(TextLimits limits) {
+  final style = _ok(
+    TextCharacterStyle.create(
+      genericFontFamily: TextGenericFontFamily.sansSerif,
+      fontSize: 18,
+      weight: 400,
+      italic: false,
+      underline: false,
+      strikethrough: false,
+      argb: 0xff000000,
+      limits: limits,
+      unknownFields: PreservedMap({
+        'styleFuture': const PreservedBoolean(true),
+      }),
+    ),
+  );
+  final paragraphStyle = _ok(
+    TextParagraphStyle.create(
+      alignment: TextAlignment.left,
+      direction: TextParagraphDirection.ltr,
+      lineHeight: 1.2,
+      limits: limits,
+    ),
+  );
+  final paragraph = _ok(
+    TextParagraph.create(
+      runs: [_ok(TextRun.create(text: 'simple', style: style, limits: limits))],
+      style: paragraphStyle,
+      limits: limits,
+    ),
+  );
+  return _ok(
+    TextPayload.create(
+      paragraphs: [paragraph],
+      defaultCharacterStyle: style,
+      defaultParagraphStyle: paragraphStyle,
+      boxMode: TextBoxMode.fixedWidthFixedHeight,
+      intrinsicWidth: 120,
+      intrinsicHeight: 120,
+      padding: _ok(
+        TextPadding.create(
+          left: 4,
+          top: 4,
+          right: 4,
+          bottom: 4,
+          limits: limits,
+        ),
+      ),
+      verticalAlignment: TextVerticalAlignment.top,
+      overflowPolicy: TextOverflowPolicy.visible,
+      limits: limits,
+    ),
+  );
+}
+
 Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
   UuidGenerator? uuidGenerator,
   int storageCeiling = 10000000,
@@ -1068,7 +2050,7 @@ Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
   int maximumTools = 16,
   int maximumActions = 16,
   int maximumBindings = 32,
-  int maximumPointsPerPrimitive = 32,
+  int maximumPointsPerPrimitive = 10000,
   int ellipseVertexCount = 16,
   int maximumGeometryElements = 20000,
   int maximumGeometryVertices = 400000,
@@ -1112,6 +2094,61 @@ Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
           List.generate(128, (index) => testUuid(1000 + index)),
         ),
     handwritingLimits: handwritingLimits,
+    shapeLimits: _ok(
+      ShapeLimits.create(
+        maximumVertices: 10000,
+        maximumDashValues: 64,
+        maximumUnknownFields: 256,
+        maximumUnknownNodes: 100000,
+        maximumNestingDepth: 32,
+        maximumUnknownStringCodeUnits: 1000000,
+        maximumCoordinateMagnitude: 1000000,
+        maximumStrokeWidth: 1000,
+        maximumMiterLimit: 100,
+        maximumCornerRadius: 1000000,
+        maximumDerivedSegments: 10000,
+      ),
+    ),
+    shapeInteractionLimits: _ok(
+      ShapeInteractionLimits.create(maximumChecks: 1000000),
+    ),
+    imageLimits: _ok(
+      ImageLimits.create(
+        maximumEncodedBytes: 10000000,
+        maximumHeaderBytes: 1048576,
+        maximumMarkers: 4096,
+        maximumPixelDimension: 32768,
+        maximumPixelCount: 100000000,
+        maximumAlternativeTextScalars: 4096,
+        maximumUnknownFields: 256,
+        maximumUnknownNodes: 100000,
+        maximumNestingDepth: 32,
+        maximumUnknownStringCodeUnits: 1000000,
+        maximumDocumentDimension: 1000000,
+      ),
+    ),
+    textLimits: _ok(
+      TextLimits.create(
+        maximumParagraphs: 10000,
+        maximumRunsPerParagraph: 10000,
+        maximumScalarsPerRun: 1000000,
+        maximumTotalScalars: 1000000,
+        maximumFontFamilyScalars: 256,
+        maximumLanguageHintScalars: 64,
+        maximumUnknownFields: 256,
+        maximumUnknownNodes: 100000,
+        maximumNestingDepth: 32,
+        maximumUnknownStringCodeUnits: 1000000,
+        maximumFontSize: 1000,
+        maximumBoxDimension: 1000000,
+        maximumPadding: 100000,
+        maximumLayoutLines: 100000,
+        maximumLayoutFragments: 100000,
+        maximumCaretStops: 1000000,
+        maximumRangeRectangles: 100000,
+        maximumPendingEdits: 1024,
+      ),
+    ),
     penStyle: _ok(
       StrokeStyle.create(
         argb: 0xff17324d,
@@ -1169,16 +2206,88 @@ Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
 }
 
 Future<Uint8List> _canvasBytes(WidgetTester tester) async {
-  late Uint8List result;
+  return (await _canvasImage(tester)).bytes;
+}
+
+typedef _CanvasImageEvidence = ({
+  Uint8List bytes,
+  int width,
+  int height,
+  Offset origin,
+});
+
+Future<_CanvasImageEvidence> _canvasImage(WidgetTester tester) async {
+  late _CanvasImageEvidence result;
   await tester.runAsync(() async {
     final boundary = tester.renderObject<RenderRepaintBoundary>(
       find.byKey(const Key('phase6-canvas-paint')),
     );
     final image = await boundary.toImage();
     final data = await image.toByteData();
-    result = data!.buffer.asUint8List();
+    result = (
+      bytes: Uint8List.fromList(data!.buffer.asUint8List()),
+      width: image.width,
+      height: image.height,
+      origin: boundary.localToGlobal(Offset.zero),
+    );
     image.dispose();
   });
+  return result;
+}
+
+bool _changedNear(
+  _CanvasImageEvidence before,
+  _CanvasImageEvidence after,
+  Offset globalPoint, {
+  required int radius,
+}) {
+  final center = globalPoint - after.origin;
+  final centerX = center.dx.round();
+  final centerY = center.dy.round();
+  for (var y = centerY - radius; y <= centerY + radius; y += 1) {
+    for (var x = centerX - radius; x <= centerX + radius; x += 1) {
+      if (x < 0 || y < 0 || x >= after.width || y >= after.height) continue;
+      final offset = (y * after.width + x) * 4;
+      for (var channel = 0; channel < 4; channel += 1) {
+        if (before.bytes[offset + channel] != after.bytes[offset + channel]) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+List<int>? _nearestChangedRgb(
+  _CanvasImageEvidence before,
+  _CanvasImageEvidence after,
+  Offset globalPoint, {
+  required int radius,
+}) {
+  final center = globalPoint - after.origin;
+  final centerX = center.dx.round();
+  final centerY = center.dy.round();
+  var greatestChange = -1;
+  List<int>? result;
+  for (var y = centerY - radius; y <= centerY + radius; y += 1) {
+    for (var x = centerX - radius; x <= centerX + radius; x += 1) {
+      if (x < 0 || y < 0 || x >= after.width || y >= after.height) continue;
+      final offset = (y * after.width + x) * 4;
+      var change = 0;
+      for (var channel = 0; channel < 4; channel += 1) {
+        change +=
+            (before.bytes[offset + channel] - after.bytes[offset + channel])
+                .abs();
+      }
+      if (change <= greatestChange || change == 0) continue;
+      greatestChange = change;
+      result = <int>[
+        after.bytes[offset],
+        after.bytes[offset + 1],
+        after.bytes[offset + 2],
+      ];
+    }
+  }
   return result;
 }
 

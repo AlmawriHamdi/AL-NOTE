@@ -1145,14 +1145,18 @@ void main() {
           );
           controller.replace(root: valid.root, targets: [target(page.id, 1)]);
           final beforeSelection = controller.state;
-          final document = DocumentCoordinatorSnapshot(
-            root: valid.root,
-            revisions: revisions,
-            currentContentIdentity: valid.currentContentIdentity,
-            savedContentIdentity: valid.savedContentIdentity,
-            canUndo: valid.canUndo,
-            canRedo: valid.canRedo,
-            historyTraversalEnabled: valid.historyTraversalEnabled,
+          final document = modelValue(
+            DocumentCoordinatorSnapshot.create(
+              root: valid.root,
+              resources: const [],
+              maximumResources: 0,
+              revisions: revisions,
+              currentContentIdentity: valid.currentContentIdentity,
+              savedContentIdentity: valid.savedContentIdentity,
+              canUndo: valid.canUndo,
+              canRedo: valid.canRedo,
+              historyTraversalEnabled: valid.historyTraversalEnabled,
+            ),
           );
           late Result<SelectionState, SelectionFailure> result;
           expect(
@@ -1199,14 +1203,18 @@ void main() {
         );
         final beforeMovedFailure = movedController.state;
         final movedResult = movedController.beginTransform(
-          document: DocumentCoordinatorSnapshot(
-            root: movedRoot,
-            revisions: DocumentRevisionSnapshot.initial(movedRoot),
-            currentContentIdentity: valid.currentContentIdentity,
-            savedContentIdentity: valid.savedContentIdentity,
-            canUndo: false,
-            canRedo: false,
-            historyTraversalEnabled: true,
+          document: modelValue(
+            DocumentCoordinatorSnapshot.create(
+              root: movedRoot,
+              resources: const [],
+              maximumResources: 0,
+              revisions: DocumentRevisionSnapshot.initial(movedRoot),
+              currentContentIdentity: valid.currentContentIdentity,
+              savedContentIdentity: valid.savedContentIdentity,
+              canUndo: false,
+              canRedo: false,
+              historyTraversalEnabled: true,
+            ),
           ),
           operation: offset,
         );

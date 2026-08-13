@@ -1,21 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/geometry/affine_transform_2d.dart';
 import '../../core/geometry/geometry_values.dart';
 import '../../core/geometry/transform_operations.dart';
 import '../../core/identity/uuid_generator.dart';
+import '../../core/identity/uuid_identifier.dart';
 import '../../core/interaction.dart';
+import '../../core/outcomes/cancellation.dart';
 import '../../core/outcomes/result.dart';
 import '../../core/outcomes/structured_failure.dart';
 import '../../core/versioning/revision.dart';
+import '../../core/versioning/schema_version.dart';
 import '../../documents/commands.dart';
 import '../../documents/document_model.dart';
 import '../../documents/files.dart';
@@ -26,10 +31,12 @@ import '../../drawing/renderer.dart';
 import '../../drawing/selection.dart';
 import '../../drawing/tools.dart';
 import '../../drawing/viewport.dart';
+import 'flutter_image_decoder.dart';
+import 'flutter_text_layout_engine.dart';
 import 'phase6_canvas_runtime.dart';
 import 'phase6_diagnostics.dart';
 
-enum _CanvasTool { pen, wholeEraser, selection }
+enum _CanvasTool { pen, wholeEraser, selection, shape, text }
 
 const double _selectionDragThreshold = 6;
 const int _penPreviewChunkPrimitiveLimit = 192;
@@ -111,12 +118,26 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   WholeEraseGesturePlan? _wholeEraserPlan;
   Point2? _selectionDown;
   Point2? _selectionCurrent;
+  Point2? _creationDown;
+  Point2? _creationCurrent;
+  ShapeKind _shapeCreationKind = ShapeKind.rectangle;
+  bool _shapeStrokeEnabled = true;
+  bool _shapeFillEnabled = false;
+  int _shapeArgb = 0xff17324d;
   List<int>? _savedBytes;
   DocumentRoot? _savedRoot;
   DocumentRoot? _reopenedMaterializedRoot;
   String _status = 'Ready';
   int _cursorRepaintRequests = 0;
   int _cursorRepaints = 0;
+  final Map<ImageDecodeCacheKey, FlutterDecodedImage> _decodedImages = {};
+  final Map<ImageDecodeCacheKey, CancellationController> _imageDecodes = {};
+  int _decodedImagePixels = 0;
+  bool _imageRefreshScheduled = false;
+  _TextDialogResult? _activeTextDraft;
+  BuildContext? _activeTextDialogContext;
+  _TextDialogResult? _staleTextDraft;
+  StaleTextDraftEvidence? _staleTextEvidence;
 
   HandwritingLimits get _limits => widget.runtime.handwritingLimits;
   UuidGenerator get _uuid => widget.runtime.uuidGenerator;
@@ -178,6 +199,15 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     _clearEraserTransient();
     _clearPenPreview();
     _eraserCursor.dispose();
+    for (final controller in _imageDecodes.values) {
+      controller.cancel();
+    }
+    _imageDecodes.clear();
+    for (final image in _decodedImages.values) {
+      image.dispose();
+    }
+    _decodedImages.clear();
+    _decodedImagePixels = 0;
     super.dispose();
   }
 
@@ -253,6 +283,13 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      final dialogContext = _activeTextDialogContext;
+      final draft = _activeTextDraft;
+      if (dialogContext != null && draft != null) {
+        Navigator.of(dialogContext).pop(draft);
+      }
+    }
     if (state != AppLifecycleState.resumed && _router.ownership.owner != null) {
       _cancelGesture('Gesture cancelled');
     }
@@ -260,6 +297,18 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
 
   DocumentPage get _page => _coordinator.snapshot.root.pages.single;
   LayerId get _layerId => _page.layers.whereType<ContentLayer>().first.id;
+
+  ObjectEnvelope? get _selectedTextObject {
+    final targets = _selection.state.targets;
+    if (targets.length != 1 || !targets.single.isWholeObject) return null;
+    final id = targets.single.objectId;
+    return _page.layers
+        .expand((layer) => layer.objects)
+        .where(
+          (object) => object.id == id && object.typeKey == textObjectTypeKey,
+        )
+        .firstOrNull;
+  }
 
   void _setTool(_CanvasTool value) {
     if (!_toolRegistry.definitions.containsKey(_toolId(value))) return;
@@ -279,6 +328,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       _clearEraserTransient();
       _selectionDown = null;
       _selectionCurrent = null;
+      _creationDown = null;
+      _creationCurrent = null;
       _tool = value;
       _status = '${value.name} active';
     });
@@ -369,8 +420,16 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       } else if (routedTool == _CanvasTool.wholeEraser) {
         _eraserCursor.update(event.viewPosition);
         _beginWholeErase(pagePoint);
-      } else {
+      } else if (routedTool == _CanvasTool.selection) {
         _beginSelection(pagePoint);
+      } else {
+        _creationDown = pagePoint;
+        _creationCurrent = pagePoint;
+        setState(
+          () => _status = routedTool == _CanvasTool.shape
+              ? 'Creating shape'
+              : 'Creating text box',
+        );
       }
     } else if (_pen != null &&
         routedTool == _CanvasTool.pen &&
@@ -392,6 +451,10 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     } else if (routedTool == _CanvasTool.selection &&
         event.phase == PointerPhase.move) {
       _updateSelection(pagePoint);
+    } else if ((routedTool == _CanvasTool.shape ||
+            routedTool == _CanvasTool.text) &&
+        event.phase == PointerPhase.move) {
+      setState(() => _creationCurrent = pagePoint);
     } else if (_pen != null &&
         routedTool == _CanvasTool.pen &&
         event.phase == PointerPhase.up) {
@@ -427,6 +490,19 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
         event.phase == PointerPhase.up) {
       _finishSelection(pagePoint);
       _router.completeTerminal(event.pointerId);
+    } else if (routedTool == _CanvasTool.shape &&
+        event.phase == PointerPhase.up) {
+      _creationCurrent = pagePoint;
+      _finishShapeCreation();
+      _router.completeTerminal(event.pointerId);
+    } else if (routedTool == _CanvasTool.text &&
+        event.phase == PointerPhase.up) {
+      _creationCurrent = pagePoint;
+      final bounds = _creationBounds(defaultWidth: 180, defaultHeight: 80);
+      _creationDown = null;
+      _creationCurrent = null;
+      _router.completeTerminal(event.pointerId);
+      if (bounds != null) unawaited(_openTextEditor(bounds));
     } else if (event.phase == PointerPhase.up) {
       _router.completeTerminal(event.pointerId);
     } else if (event.phase == PointerPhase.cancel) {
@@ -443,6 +519,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       radius: 8 / _viewport.zoom,
       handwritingLimits: _limits,
       objectRegistry: _registry,
+      hitTestingRegistry: widget.runtime.hitTestingRegistry,
       geometryResolver: _geometry,
       geometryCache: widget.runtime.geometryCache,
       maximumObjects: widget.runtime.maximumHitResults,
@@ -458,6 +535,412 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     _wholeEraserPlan = prepared.value;
     if (!_appendWholeEraserPoint(point, publish: false)) return;
     setState(() => _status = 'Whole erasing');
+  }
+
+  Rect2? _creationBounds({double? defaultWidth, double? defaultHeight}) {
+    final start = _creationDown;
+    final end = _creationCurrent;
+    if (start == null || end == null) return null;
+    final left = math.min(start.x, end.x);
+    final top = math.min(start.y, end.y);
+    var right = math.max(start.x, end.x);
+    var bottom = math.max(start.y, end.y);
+    if (right == left && defaultWidth != null) right += defaultWidth;
+    if (bottom == top && defaultHeight != null) bottom += defaultHeight;
+    return Rect2.fromEdges(
+      left: left,
+      top: top,
+      right: right,
+      bottom: bottom,
+    ).fold<Rect2?>(onOk: (value) => value, onErr: (_) => null);
+  }
+
+  void _finishShapeCreation() {
+    final payload = _shapeCreationPayload();
+    final transform = AffineTransform2D.fromOperation(
+      const IdentityTransformOperation2D(),
+    ).fold<AffineTransform2D?>(onOk: (value) => value, onErr: (_) => null);
+    final committed = payload != null && transform != null
+        ? _publishNewObject(
+            typeKey: shapeObjectTypeKey,
+            schemaVersion: shapeSchemaVersion,
+            payload: payload.encode(),
+            transform: transform,
+            description: 'Create shape',
+          )
+        : false;
+    _creationDown = null;
+    _creationCurrent = null;
+    _selection.reconcile(_coordinator.snapshot.root);
+    setState(() => _status = committed ? 'Shape created' : 'Shape rejected');
+  }
+
+  ShapePayload? _shapeCreationPayload() {
+    final start = _creationDown;
+    final end = _creationCurrent;
+    if (start == null || end == null || start == end) return null;
+    final isLine = _shapeCreationKind == ShapeKind.line;
+    if ((isLine && (!_shapeStrokeEnabled || _shapeFillEnabled)) ||
+        (!isLine && !_shapeStrokeEnabled && !_shapeFillEnabled)) {
+      return null;
+    }
+    final bounds = _creationBounds();
+    ShapeGeometry? geometry;
+    if (_shapeCreationKind == ShapeKind.line) {
+      geometry = ShapeLineGeometry.create(
+        start: start,
+        end: end,
+        limits: widget.runtime.shapeLimits,
+      ).fold<ShapeGeometry?>(onOk: (value) => value, onErr: (_) => null);
+    } else if (bounds != null && _shapeCreationKind == ShapeKind.rectangle) {
+      geometry = ShapeRectangleGeometry.create(
+        bounds: bounds,
+        limits: widget.runtime.shapeLimits,
+      ).fold<ShapeGeometry?>(onOk: (value) => value, onErr: (_) => null);
+    } else if (bounds != null) {
+      geometry = ShapeEllipseGeometry.create(
+        bounds: bounds,
+        limits: widget.runtime.shapeLimits,
+      ).fold<ShapeGeometry?>(onOk: (value) => value, onErr: (_) => null);
+    }
+    final color = _shapeColor(_shapeArgb);
+    final style = color == null
+        ? null
+        : ShapeStyle.create(
+            strokeEnabled: _shapeStrokeEnabled,
+            strokeColor: color,
+            strokeWidth: 3,
+            cap: ShapeStrokeCap.round,
+            join: ShapeStrokeJoin.round,
+            miterLimit: 4,
+            dashArray: const [],
+            dashOffset: 0,
+            fillEnabled: _shapeFillEnabled,
+            fillColor: color,
+            fillRule: ShapeFillRule.nonZero,
+            opacity: 1,
+            startArrowhead: ShapeArrowhead.none,
+            endArrowhead: ShapeArrowhead.none,
+            limits: widget.runtime.shapeLimits,
+          ).fold<ShapeStyle?>(onOk: (value) => value, onErr: (_) => null);
+    final payload = geometry == null || style == null
+        ? null
+        : ShapePayload.create(
+            geometry: geometry,
+            style: style,
+            limits: widget.runtime.shapeLimits,
+          ).fold<ShapePayload?>(onOk: (value) => value, onErr: (_) => null);
+    return payload;
+  }
+
+  Future<void> _openTextEditor(
+    Rect2 pageBounds, {
+    ObjectEnvelope? existing,
+  }) async {
+    final prior = existing == null
+        ? null
+        : TextPayload.decode(
+            existing.payload,
+            limits: widget.runtime.textLimits,
+          ).fold<TextPayload?>(onOk: (value) => value, onErr: (_) => null);
+    if (existing != null && prior == null) {
+      setState(() => _status = 'Text unavailable');
+      return;
+    }
+    if (prior != null && !prior.isSimpleDialogEditable) {
+      setState(() => _status = 'Rich text editing unavailable');
+      return;
+    }
+    final baseObjectRevision = existing == null
+        ? null
+        : _coordinator.snapshot.revisions.objects[existing.id];
+    if (existing != null && baseObjectRevision == null) {
+      setState(() => _status = 'Text unavailable');
+      return;
+    }
+    final initial = _TextDialogResult(
+      text: prior?.logicalText ?? '',
+      fontSize: prior?.defaultCharacterStyle.fontSize ?? 24,
+      bold: (prior?.defaultCharacterStyle.weight ?? 400) >= 700,
+      italic: prior?.defaultCharacterStyle.italic ?? false,
+      alignment: prior?.defaultParagraphStyle.alignment ?? TextAlignment.left,
+      argb: prior?.defaultCharacterStyle.argb ?? 0xff17324d,
+    );
+    _activeTextDraft = initial;
+    final result = await showDialog<_TextDialogResult>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        _activeTextDialogContext = context;
+        return _TextEditorDialog(
+          initial: initial,
+          editing: existing != null,
+          onDraftChanged: (value) => _activeTextDraft = value,
+        );
+      },
+    );
+    _activeTextDialogContext = null;
+    _activeTextDraft = null;
+    if (!mounted) return;
+    if (result == null || existing == null && result.text.isEmpty) {
+      setState(
+        () => _status = existing == null
+            ? 'Text creation cancelled'
+            : 'Text editing cancelled',
+      );
+      return;
+    }
+    final committed = _commitTextDialog(
+      pageBounds,
+      result,
+      existing: existing,
+      prior: prior,
+      baseObjectRevision: baseObjectRevision,
+    );
+    final currentObjectRevision = existing == null
+        ? null
+        : _coordinator.snapshot.revisions.objects[existing.id];
+    final stale =
+        !committed &&
+        baseObjectRevision != null &&
+        currentObjectRevision != baseObjectRevision;
+    if (committed) {
+      _staleTextDraft = null;
+      _staleTextEvidence = null;
+    } else if (stale) {
+      _staleTextDraft = result;
+      _staleTextEvidence = StaleTextDraftEvidence(
+        baseRevision: baseObjectRevision,
+        currentRevision: currentObjectRevision,
+      );
+    }
+    _selection.reconcile(_coordinator.snapshot.root);
+    setState(
+      () => _status = committed
+          ? existing == null
+                ? 'Text created'
+                : 'Text updated'
+          : stale
+          ? 'Text changed elsewhere; draft retained '
+                '(${_staleTextEvidence!.choices.length} recovery options, '
+                '${_staleTextDraft!.text.length} characters)'
+          : 'Text rejected',
+    );
+  }
+
+  bool _commitTextDialog(
+    Rect2 pageBounds,
+    _TextDialogResult dialog, {
+    ObjectEnvelope? existing,
+    TextPayload? prior,
+    Revision? baseObjectRevision,
+  }) {
+    final limits = widget.runtime.textLimits;
+    final character = TextCharacterStyle.create(
+      preferredFontFamily: prior?.defaultCharacterStyle.preferredFontFamily,
+      genericFontFamily:
+          prior?.defaultCharacterStyle.genericFontFamily ??
+          TextGenericFontFamily.sansSerif,
+      fontSize: dialog.fontSize,
+      weight: dialog.bold ? 700 : 400,
+      italic: dialog.italic,
+      underline: prior?.defaultCharacterStyle.underline ?? false,
+      strikethrough: prior?.defaultCharacterStyle.strikethrough ?? false,
+      argb: dialog.argb,
+      limits: limits,
+      unknownFields: prior?.defaultCharacterStyle.unknownFields,
+    ).fold<TextCharacterStyle?>(onOk: (value) => value, onErr: (_) => null);
+    final paragraphStyle = TextParagraphStyle.create(
+      alignment: dialog.alignment,
+      direction:
+          prior?.defaultParagraphStyle.direction ??
+          TextParagraphDirection.automatic,
+      lineHeight: prior?.defaultParagraphStyle.lineHeight ?? 1.2,
+      limits: limits,
+      languageHint: prior?.defaultParagraphStyle.languageHint,
+      unknownFields: prior?.defaultParagraphStyle.unknownFields,
+    ).fold<TextParagraphStyle?>(onOk: (value) => value, onErr: (_) => null);
+    final padding =
+        prior?.padding ??
+        TextPadding.create(
+          left: 6,
+          top: 6,
+          right: 6,
+          bottom: 6,
+          limits: limits,
+        ).fold<TextPadding?>(onOk: (value) => value, onErr: (_) => null);
+    if (character == null || paragraphStyle == null || padding == null)
+      return false;
+    final paragraphs = <TextParagraph>[];
+    for (final text in dialog.text.split('\n')) {
+      final run = TextRun.create(
+        text: text,
+        style: character,
+        limits: limits,
+      ).fold<TextRun?>(onOk: (value) => value, onErr: (_) => null);
+      if (run == null) return false;
+      final paragraph = TextParagraph.create(
+        runs: [run],
+        style: paragraphStyle,
+        limits: limits,
+      ).fold<TextParagraph?>(onOk: (value) => value, onErr: (_) => null);
+      if (paragraph == null) return false;
+      paragraphs.add(paragraph);
+    }
+    final payload = TextPayload.create(
+      paragraphs: paragraphs,
+      defaultCharacterStyle: character,
+      defaultParagraphStyle: paragraphStyle,
+      boxMode: prior?.boxMode ?? TextBoxMode.fixedWidthFixedHeight,
+      intrinsicWidth: prior?.intrinsicWidth ?? pageBounds.width,
+      intrinsicHeight: prior != null
+          ? prior.intrinsicHeight
+          : pageBounds.height,
+      padding: padding,
+      verticalAlignment: prior?.verticalAlignment ?? TextVerticalAlignment.top,
+      overflowPolicy: prior?.overflowPolicy ?? TextOverflowPolicy.clip,
+      limits: limits,
+      unknownFields: prior?.unknownFields,
+    ).fold<TextPayload?>(onOk: (value) => value, onErr: (_) => null);
+    final vector = Vector2.create(
+      x: pageBounds.left,
+      y: pageBounds.top,
+    ).fold<Vector2?>(onOk: (value) => value, onErr: (_) => null);
+    final transform = vector == null
+        ? null
+        : AffineTransform2D.fromOperation(
+            TranslationTransformOperation2D(vector),
+          ).fold<AffineTransform2D?>(
+            onOk: (value) => value,
+            onErr: (_) => null,
+          );
+    if (payload == null) return false;
+    if (existing != null && prior != null) {
+      return baseObjectRevision != null &&
+          _publishTextReplacement(existing, prior, payload, baseObjectRevision);
+    }
+    return transform != null &&
+        _publishNewObject(
+          typeKey: textObjectTypeKey,
+          schemaVersion: textSchemaVersion,
+          payload: payload.encode(),
+          transform: transform,
+          description: 'Create text',
+        );
+  }
+
+  bool _publishTextReplacement(
+    ObjectEnvelope source,
+    TextPayload before,
+    TextPayload after,
+    Revision baseObjectRevision,
+  ) {
+    try {
+      final semantics =
+          TextObjectTypeDefinition(
+            widget.runtime.textLimits,
+            widget.runtime.textLayoutEngine,
+          ).classifyPayloadChange(
+            before.encode(),
+            after.encode(),
+            textSchemaVersion,
+          );
+      final correlation = _uuid.generateV4();
+      final snapshot = _coordinator.snapshot;
+      final membershipRevision = snapshot.revisions.layerMembership[_layerId];
+      if (semantics is! Ok<ObjectPayloadChangeSemantics, StructuredFailure> ||
+          correlation is! Ok<UuidIdentifier, StructuredFailure> ||
+          membershipRevision == null) {
+        return false;
+      }
+      final request = TextObjectEditRequest.replace(
+        documentId: snapshot.root.id,
+        source: source,
+        payload: after,
+        limits: widget.runtime.textLimits,
+        layoutEngine: widget.runtime.textLayoutEngine,
+        metadata: CommandMetadata(
+          family: CommandFamily.objectReplacement,
+          correlationId: CommandCorrelationId.fromUuid(correlation.value),
+          description: 'Edit text',
+        ),
+        preconditions: RevisionPreconditions(
+          objects: {source.id: baseObjectRevision},
+          layerMembership: {_layerId: membershipRevision},
+        ),
+        changeCategories: ObjectReplacementChangeCategories(
+          geometry: semantics.value.geometry,
+          appearance: semantics.value.appearance,
+          text: semantics.value.text,
+          metadata: semantics.value.metadata,
+        ),
+      );
+      return request is Ok<AtomicObjectReplacementRequest, StructuredFailure> &&
+          _coordinator.execute(request.value)
+              is Ok<CommandCommit, CommandFailure>;
+    } on Object {
+      return false;
+    }
+  }
+
+  bool _publishNewObject({
+    required ObjectTypeKey typeKey,
+    required SchemaVersion schemaVersion,
+    required PreservedData payload,
+    required AffineTransform2D transform,
+    required String description,
+  }) {
+    try {
+      final objectUuid = _uuid.generateV4();
+      final correlationUuid = _uuid.generateV4();
+      if (objectUuid is! Ok<UuidIdentifier, StructuredFailure>) return false;
+      if (correlationUuid is! Ok<UuidIdentifier, StructuredFailure>) {
+        return false;
+      }
+      if (objectUuid.value == correlationUuid.value) return false;
+      final envelopeVersion = SchemaVersion.create(
+        1,
+      ).fold<SchemaVersion?>(onOk: (value) => value, onErr: (_) => null);
+      if (envelopeVersion == null) return false;
+      final object = ObjectEnvelope.create(
+        id: ObjectId.fromUuid(objectUuid.value),
+        typeKey: typeKey,
+        envelopeVersion: envelopeVersion,
+        typeSchemaVersion: schemaVersion,
+        transform: transform,
+        visible: true,
+        locked: false,
+        payload: payload,
+        extensionData: PreservedMap.empty(),
+      );
+      if (object is! Ok<ObjectEnvelope, StructuredFailure>) return false;
+      final snapshot = _coordinator.snapshot;
+      final pageRevision = snapshot.revisions.pages[_page.id];
+      final membershipRevision = snapshot.revisions.layerMembership[_layerId];
+      if (pageRevision == null || membershipRevision == null) return false;
+      final request = AtomicObjectCollectionEditRequest.create(
+        documentId: snapshot.root.id,
+        metadata: CommandMetadata(
+          family: CommandFamily.objectCollectionEdit,
+          correlationId: CommandCorrelationId.fromUuid(correlationUuid.value),
+          description: description,
+        ),
+        preconditions: RevisionPreconditions(
+          pages: {_page.id: pageRevision},
+          layerMembership: {_layerId: membershipRevision},
+        ),
+        pageId: _page.id,
+        additions: [
+          ObjectCollectionAddition(layerId: _layerId, object: object.value),
+        ],
+        maximumOperations: widget.runtime.maximumCommandOperations,
+      );
+      return request
+              is Ok<AtomicObjectCollectionEditRequest, StructuredFailure> &&
+          _coordinator.execute(request.value) is Ok;
+    } on Object {
+      return false;
+    }
   }
 
   bool _appendWholeEraserPoint(Point2 point, {bool publish = true}) {
@@ -679,6 +1162,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       _pen = null;
       _selectionDown = null;
       _selectionCurrent = null;
+      _creationDown = null;
+      _creationCurrent = null;
       _status = status;
     });
   }
@@ -788,7 +1273,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     final capture = _coordinator.captureForSave();
     final snapshot = AlnotePackageSnapshot.create(
       document: capture.root,
-      resources: const [],
+      resources: capture.resources,
     );
     if (snapshot is! Ok<AlnotePackageSnapshot, StructuredFailure>) {
       _coordinator.acknowledgeSaveFailure(capture);
@@ -867,6 +1352,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   @override
   Widget build(BuildContext context) {
     final gestureIdle = _router.ownership.owner == null;
+    final selectedText = _selectedTextObject;
+    final lineShapeSelected = _shapeCreationKind == ShapeKind.line;
     final controls = <Widget>[
       for (final tool in _CanvasTool.values)
         Semantics(
@@ -877,6 +1364,119 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
             label: Text(tool.name),
             selected: _tool == tool,
             onSelected: (_) => _setTool(tool),
+          ),
+        ),
+      if (_tool == _CanvasTool.shape) ...[
+        Semantics(
+          label: 'Shape kind',
+          child: DropdownButton<ShapeKind>(
+            key: const Key('shape-kind-control'),
+            value: _shapeCreationKind,
+            items:
+                const [ShapeKind.line, ShapeKind.rectangle, ShapeKind.ellipse]
+                    .map(
+                      (value) => DropdownMenuItem(
+                        value: value,
+                        child: Text(value.name),
+                      ),
+                    )
+                    .toList(growable: false),
+            onChanged: (value) {
+              if (value != null) {
+                setState(() {
+                  _shapeCreationKind = value;
+                  if (value == ShapeKind.line) {
+                    _shapeStrokeEnabled = true;
+                    _shapeFillEnabled = false;
+                  } else if (!_shapeStrokeEnabled && !_shapeFillEnabled) {
+                    _shapeStrokeEnabled = true;
+                  }
+                });
+              }
+            },
+          ),
+        ),
+        Semantics(
+          label: lineShapeSelected
+              ? 'Stroke required for line'
+              : 'Shape stroke',
+          enabled: !lineShapeSelected,
+          child: Tooltip(
+            message: lineShapeSelected
+                ? 'Lines require a visible stroke'
+                : 'Toggle shape stroke',
+            child: FilterChip(
+              key: const Key('shape-stroke-control'),
+              label: const Text('Stroke'),
+              selected: _shapeStrokeEnabled,
+              onSelected: lineShapeSelected
+                  ? null
+                  : (value) => setState(() {
+                      _shapeStrokeEnabled = value;
+                      if (!value && !_shapeFillEnabled) {
+                        _shapeFillEnabled = true;
+                      }
+                    }),
+            ),
+          ),
+        ),
+        Semantics(
+          label: lineShapeSelected ? 'Fill unavailable for line' : 'Shape fill',
+          enabled: !lineShapeSelected,
+          child: Tooltip(
+            message: lineShapeSelected
+                ? 'Fill is unavailable for lines'
+                : 'Toggle shape fill',
+            child: FilterChip(
+              key: const Key('shape-fill-control'),
+              label: const Text('Fill'),
+              selected: _shapeFillEnabled,
+              onSelected: lineShapeSelected
+                  ? null
+                  : (value) => setState(() {
+                      _shapeFillEnabled = value;
+                      if (!value && !_shapeStrokeEnabled) {
+                        _shapeStrokeEnabled = true;
+                      }
+                    }),
+            ),
+          ),
+        ),
+        Semantics(
+          label: 'Shape color',
+          child: DropdownButton<int>(
+            key: const Key('shape-color-control'),
+            value: _shapeArgb,
+            items: const [
+              DropdownMenuItem(value: 0xff17324d, child: Text('Navy')),
+              DropdownMenuItem(value: 0xff111111, child: Text('Black')),
+              DropdownMenuItem(value: 0xffb42318, child: Text('Red')),
+            ],
+            onChanged: (value) {
+              if (value != null) setState(() => _shapeArgb = value);
+            },
+          ),
+        ),
+      ],
+      if (selectedText != null)
+        Semantics(
+          button: true,
+          label: 'Edit selected text object',
+          child: TextButton.icon(
+            key: const Key('edit-selected-text'),
+            onPressed: () {
+              final payload = TextPayload.decode(
+                selectedText.payload,
+                limits: widget.runtime.textLimits,
+              ).fold<TextPayload?>(onOk: (value) => value, onErr: (_) => null);
+              if (payload != null) {
+                unawaited(
+                  _openTextEditor(payload.bounds, existing: selectedText),
+                );
+              }
+            },
+            icon: const Icon(Icons.edit),
+            label: const Text('Edit text'),
           ),
         ),
       Tooltip(
@@ -980,6 +1580,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
                     : _committedDisplayFor(committed, {
                         ..._eraserObjectPreviews.keys,
                       });
+                _scheduleImageRefresh(committedDisplay);
                 final overlays = committed == null
                     ? null
                     : _sceneBuilder
@@ -1013,6 +1614,9 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
                                 key: const Key('phase6-committed-paint'),
                                 painter: _CanvasPainter(
                                   snapshot: committedDisplay,
+                                  decodedImages: Map.unmodifiable(
+                                    _decodedImages,
+                                  ),
                                   paintBackground: true,
                                   savedBytes: _savedBytes,
                                   savedRoot: _savedRoot,
@@ -1046,6 +1650,9 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
                                 key: const Key('phase6-overlay-paint'),
                                 painter: _CanvasPainter(
                                   snapshot: overlays,
+                                  decodedImages: Map.unmodifiable(
+                                    _decodedImages,
+                                  ),
                                   paintBackground: false,
                                   savedBytes: _savedBytes,
                                   savedRoot: _savedRoot,
@@ -1167,7 +1774,30 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       ..._eraserObjectPreviews.values.expand((value) => value),
       if (eraser != null) eraser,
     ];
-    return List.unmodifiable([...eraserPreview]);
+    final creation = _creationPreview();
+    return List.unmodifiable([...eraserPreview, ...creation]);
+  }
+
+  List<ScenePrimitive> _creationPreview() {
+    if (_tool != _CanvasTool.shape) return const [];
+    final payload = _shapeCreationPayload();
+    final identity = AffineTransform2D.fromOperation(
+      const IdentityTransformOperation2D(),
+    ).fold<AffineTransform2D?>(onOk: (value) => value, onErr: (_) => null);
+    if (payload == null || identity == null) return const [];
+    return ShapeRenderingDefinition(shapeLimits: widget.runtime.shapeLimits)
+        .renderTransient(
+          payload: payload,
+          localToPage: identity,
+          viewport: _viewport,
+          layerOpacity: 1,
+          plane: RenderPlane.toolPreview,
+          limits: widget.runtime.renderingLimits,
+        )
+        .fold<List<ScenePrimitive>>(
+          onOk: (value) => value,
+          onErr: (_) => const [],
+        );
   }
 
   bool _appendPenPreviewTail() {
@@ -1248,6 +1878,113 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     _penFrozenPreviewChunks.clear();
     _penActivePreviewPrimitives.clear();
     _penPreviewPrimitiveCount = 0;
+  }
+
+  void _scheduleImageRefresh(RenderSnapshot? scene) {
+    if (scene == null || _imageRefreshScheduled) return;
+    _imageRefreshScheduled = true;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _imageRefreshScheduled = false;
+      if (!mounted) return;
+      unawaited(_refreshDecodedImages(scene));
+    });
+  }
+
+  Future<void> _refreshDecodedImages(RenderSnapshot scene) async {
+    final requested = <ImageDecodeCacheKey, ImagePayload>{};
+    for (final primitive in scene.primitives) {
+      if (primitive case ImageBoxPrimitive(:final payload)) {
+        requested[ImageDecodeCacheKey(
+              resourceIdentity: payload.resourceIdentity,
+              pixelWidth: payload.encodedPixelWidth,
+              pixelHeight: payload.encodedPixelHeight,
+            )] =
+            payload;
+      }
+    }
+    for (final key in _decodedImages.keys.toList()) {
+      if (!requested.containsKey(key) ||
+          !_coordinator.snapshot.root.resources.contains(
+            key.resourceIdentity,
+          )) {
+        _removeDecodedImage(key);
+      }
+    }
+    for (final key in _imageDecodes.keys.toList()) {
+      if (!requested.containsKey(key)) {
+        _imageDecodes.remove(key)?.cancel();
+      }
+    }
+    final resources = {
+      for (final resource in _coordinator.snapshot.resources)
+        resource.identity: resource,
+    };
+    for (final entry in requested.entries) {
+      if (_decodedImages.containsKey(entry.key) ||
+          _imageDecodes.containsKey(entry.key)) {
+        continue;
+      }
+      final resource = resources[entry.key.resourceIdentity];
+      final format = switch (resource?.mediaType.value) {
+        'image/png' => ImageFormat.png,
+        'image/jpeg' => ImageFormat.jpeg,
+        _ => null,
+      };
+      if (resource == null || format == null) continue;
+      final cancellation = CancellationController();
+      _imageDecodes[entry.key] = cancellation;
+      final request = ImageDecodeRequest.create(
+        resourceIdentity: entry.key.resourceIdentity,
+        encodedBytes: resource.bytes,
+        format: format,
+        encodedPixelWidth: entry.value.encodedPixelWidth,
+        encodedPixelHeight: entry.value.encodedPixelHeight,
+        maximumEncodedBytes: widget.runtime.imageLimits.maximumEncodedBytes,
+        maximumDecodedPixels: widget.runtime.imageLimits.maximumPixelCount,
+        cancellationToken: cancellation.token,
+      );
+      if (request is! Ok<ImageDecodeRequest, StructuredFailure>) {
+        _imageDecodes.remove(entry.key);
+        continue;
+      }
+      final decoded = await const FlutterImageDecoder().decodeForPainting(
+        request.value,
+      );
+      _imageDecodes.remove(entry.key);
+      if (!mounted ||
+          cancellation.token.isCancelled ||
+          !_coordinator.snapshot.root.resources.contains(
+            entry.key.resourceIdentity,
+          ) ||
+          decoded is! Ok<FlutterDecodedImage, StructuredFailure>) {
+        if (decoded is Ok<FlutterDecodedImage, StructuredFailure>) {
+          decoded.value.dispose();
+        }
+        continue;
+      }
+      final pixels = decoded.value.pixelWidth * decoded.value.pixelHeight;
+      while (_decodedImages.isNotEmpty &&
+          (_decodedImages.length >= widget.runtime.maximumHitResults ||
+              _decodedImagePixels >
+                  widget.runtime.imageLimits.maximumPixelCount - pixels)) {
+        final oldest = _decodedImages.keys.first;
+        _removeDecodedImage(oldest);
+      }
+      if (pixels > widget.runtime.imageLimits.maximumPixelCount) {
+        decoded.value.dispose();
+        continue;
+      }
+      _decodedImages[entry.key] = decoded.value;
+      _decodedImagePixels += pixels;
+      if (mounted) setState(() {});
+    }
+  }
+
+  void _removeDecodedImage(ImageDecodeCacheKey key) {
+    final image = _decodedImages.remove(key);
+    if (image == null) return;
+    _decodedImagePixels -= image.pixelWidth * image.pixelHeight;
+    image.dispose();
   }
 
   CommittedPageScene? _committedSceneForCurrentInputs() {
@@ -1420,18 +2157,213 @@ ui.Picture _recordPenPicture(Iterable<ScenePrimitive> primitives) {
   return recorder.endRecording();
 }
 
-void _paintPrimitive(Canvas canvas, ScenePrimitive primitive) {
+/// Paints one validated scene primitive for render-boundary regression tests.
+@visibleForTesting
+void paintScenePrimitiveForTesting(Canvas canvas, ScenePrimitive primitive) {
+  _paintPrimitive(canvas, primitive);
+}
+
+void _paintPrimitive(
+  Canvas canvas,
+  ScenePrimitive primitive, {
+  Map<ImageDecodeCacheKey, FlutterDecodedImage> decodedImages = const {},
+}) {
   switch (primitive) {
-    case FilledPolygonPrimitive(:final points, :final color, :final opacity):
-      final path = Path()..moveTo(points.first.x, points.first.y);
+    case FilledPolygonPrimitive(
+      :final points,
+      :final color,
+      :final opacity,
+      :final localToViewCoefficients,
+    ):
+      if (localToViewCoefficients != null) {
+        canvas.save();
+        canvas.transform(_canvasMatrix(localToViewCoefficients));
+      }
+      final path = Path()
+        ..fillType = primitive.fillRule == RenderFillRule.evenOdd
+            ? PathFillType.evenOdd
+            : PathFillType.nonZero
+        ..moveTo(points.first.x, points.first.y);
       for (final point in points.skip(1)) path.lineTo(point.x, point.y);
       path.close();
       canvas.drawPath(
         path,
         Paint()
           ..style = PaintingStyle.fill
-          ..color = Color(color.argb).withValues(alpha: opacity),
+          ..color = Color(
+            color.argb,
+          ).withValues(alpha: _colorAlpha(color.argb) * opacity),
       );
+      if (localToViewCoefficients != null) canvas.restore();
+    case FilledPolygonGroupPrimitive(
+      :final contours,
+      :final color,
+      :final opacity,
+      :final localToViewCoefficients,
+    ):
+      final effectiveAlpha = _colorAlpha(color.argb) * opacity;
+      canvas.saveLayer(
+        Rect.fromLTRB(
+          primitive.bounds.left,
+          primitive.bounds.top,
+          primitive.bounds.right,
+          primitive.bounds.bottom,
+        ).inflate(2),
+        Paint()
+          ..color = const Color(0xffffffff).withValues(alpha: effectiveAlpha),
+      );
+      if (localToViewCoefficients != null) {
+        canvas.save();
+        canvas.transform(_canvasMatrix(localToViewCoefficients));
+      }
+      final paint = Paint()
+        ..style = PaintingStyle.fill
+        ..color = Color(color.argb).withValues(alpha: 1);
+      for (final contour in contours) {
+        final path = Path()..moveTo(contour.first.x, contour.first.y);
+        for (final point in contour.skip(1)) {
+          path.lineTo(point.x, point.y);
+        }
+        path.close();
+        canvas.drawPath(path, paint);
+      }
+      if (localToViewCoefficients != null) canvas.restore();
+      canvas.restore();
+    case StrokedPathPrimitive(
+      :final points,
+      :final color,
+      :final opacity,
+      :final strokeWidth,
+      :final cap,
+      :final join,
+      :final miterLimit,
+      :final closed,
+      :final dashArray,
+      :final dashOffset,
+      :final localToViewCoefficients,
+    ):
+      if (localToViewCoefficients != null) {
+        canvas.save();
+        canvas.transform(_canvasMatrix(localToViewCoefficients));
+      }
+      final path = Path()..moveTo(points.first.x, points.first.y);
+      for (final point in points.skip(1)) path.lineTo(point.x, point.y);
+      if (closed) path.close();
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..color = Color(color.argb).withValues(alpha: opacity)
+        ..strokeWidth = strokeWidth
+        ..strokeCap = switch (cap) {
+          RenderStrokeCap.butt => StrokeCap.butt,
+          RenderStrokeCap.round => StrokeCap.round,
+          RenderStrokeCap.square => StrokeCap.square,
+        }
+        ..strokeJoin = switch (join) {
+          RenderStrokeJoin.miter => StrokeJoin.miter,
+          RenderStrokeJoin.round => StrokeJoin.round,
+          RenderStrokeJoin.bevel => StrokeJoin.bevel,
+        }
+        ..strokeMiterLimit = miterLimit;
+      if (dashArray.isEmpty) {
+        canvas.drawPath(path, paint);
+      } else {
+        _drawDashedPath(canvas, path, paint, dashArray, dashOffset);
+      }
+      if (localToViewCoefficients != null) canvas.restore();
+    case ImageBoxPrimitive(
+      :final payload,
+      :final opacity,
+      :final localToViewCoefficients,
+    ):
+      canvas.save();
+      canvas.transform(_canvasMatrix(localToViewCoefficients));
+      final rect = Rect.fromLTWH(
+        0.0,
+        0,
+        payload.bounds.width,
+        payload.bounds.height,
+      );
+      final decoded =
+          decodedImages[ImageDecodeCacheKey(
+            resourceIdentity: payload.resourceIdentity,
+            pixelWidth: payload.encodedPixelWidth,
+            pixelHeight: payload.encodedPixelHeight,
+          )];
+      if (decoded != null) {
+        decoded.paint(canvas, rect, payload, opacity: opacity);
+        canvas.restore();
+        break;
+      }
+      canvas.drawRect(
+        rect,
+        Paint()
+          ..color = const Color(0xffeef1f4).withValues(alpha: opacity)
+          ..style = PaintingStyle.fill,
+      );
+      canvas.drawRect(
+        rect,
+        Paint()
+          ..color = const Color(0xff6b7280).withValues(alpha: opacity)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
+      );
+      canvas.drawLine(
+        rect.topLeft,
+        rect.bottomRight,
+        Paint()..color = const Color(0xff9ca3af).withValues(alpha: opacity),
+      );
+      canvas.drawLine(
+        rect.topRight,
+        rect.bottomLeft,
+        Paint()..color = const Color(0xff9ca3af).withValues(alpha: opacity),
+      );
+      canvas.restore();
+    case TextBoxPrimitive(
+      :final payload,
+      :final layout,
+      :final opacity,
+      :final localToViewCoefficients,
+    ):
+      canvas.save();
+      canvas.transform(_canvasMatrix(localToViewCoefficients));
+      final box = Rect.fromLTRB(
+        layout.logicalBounds.left,
+        layout.logicalBounds.top,
+        layout.logicalBounds.right,
+        layout.logicalBounds.bottom,
+      );
+      if (payload.boxMode == TextBoxMode.fixedWidthFixedHeight &&
+          payload.overflowPolicy == TextOverflowPolicy.clip) {
+        canvas.clipRect(box);
+      }
+      final painters = <TextPainter>[];
+      final maximumWidth = math.max<double>(
+        0,
+        payload.intrinsicWidth - payload.padding.left - payload.padding.right,
+      );
+      const factory = FlutterTextPainterFactory();
+      try {
+        for (final paragraph in payload.paragraphs) {
+          painters.add(
+            factory.create(
+              payload: payload,
+              paragraph: paragraph,
+              maximumWidth: maximumWidth,
+              layerOpacity: opacity,
+            ),
+          );
+        }
+        for (var index = 0; index < painters.length; index++) {
+          final painter = painters[index];
+          final placement = layout.paragraphs[index];
+          painter.paint(canvas, Offset(placement.origin.x, placement.origin.y));
+        }
+      } finally {
+        for (final painter in painters) {
+          factory.dispose(painter);
+        }
+      }
+      canvas.restore();
     case PlaceholderPrimitive(:final plane, :final bounds, :final opacity):
       canvas.drawRect(
         Rect.fromLTRB(bounds.left, bounds.top, bounds.right, bounds.bottom),
@@ -1441,6 +2373,58 @@ void _paintPrimitive(Canvas canvas, ScenePrimitive primitive) {
           ..style = PaintingStyle.stroke
           ..strokeWidth = plane == RenderPlane.selection ? 2 : 1,
       );
+  }
+}
+
+double _colorAlpha(int argb) => (argb >>> 24 & 0xff) / 255;
+
+Float64List _canvasMatrix(List<double> coefficients) => Float64List.fromList([
+  coefficients[0],
+  coefficients[2],
+  0,
+  0,
+  coefficients[1],
+  coefficients[3],
+  0,
+  0,
+  0,
+  0,
+  1,
+  0,
+  coefficients[4],
+  coefficients[5],
+  0,
+  1,
+]);
+
+void _drawDashedPath(
+  Canvas canvas,
+  Path source,
+  Paint paint,
+  List<double> pattern,
+  double offset,
+) {
+  final cycle = pattern.fold<double>(0, (sum, value) => sum + value);
+  if (!cycle.isFinite || cycle <= 0) return;
+  var phase = offset % cycle;
+  if (phase < 0) phase += cycle;
+  for (final metric in source.computeMetrics()) {
+    var index = 0;
+    while (phase >= pattern[index]) {
+      phase -= pattern[index];
+      index = (index + 1) % pattern.length;
+    }
+    var distance = -phase;
+    while (distance < metric.length) {
+      final length = pattern[index];
+      final start = math.max(0.0, distance);
+      final end = math.min(metric.length, distance + length);
+      if (index.isEven && end > start) {
+        canvas.drawPath(metric.extractPath(start, end), paint);
+      }
+      distance += length;
+      index = (index + 1) % pattern.length;
+    }
   }
 }
 
@@ -1477,6 +2461,7 @@ final class _CanvasPainter extends CustomPainter
     implements Phase6CanvasPersistenceEvidence {
   _CanvasPainter({
     required this.snapshot,
+    required this.decodedImages,
     required this.paintBackground,
     required this.savedBytes,
     required this.savedRoot,
@@ -1488,6 +2473,7 @@ final class _CanvasPainter extends CustomPainter
     required this.wholeGeometryChecks,
   });
   final RenderSnapshot? snapshot;
+  final Map<ImageDecodeCacheKey, FlutterDecodedImage> decodedImages;
   final bool paintBackground;
   final List<int>? savedBytes;
   final DocumentRoot? savedRoot;
@@ -1523,14 +2509,59 @@ final class _CanvasPainter extends CustomPainter
       canvas.drawRect(clip, Paint()..color = Colors.white);
     }
     for (final primitive in scene.primitives) {
-      _paintPrimitive(canvas, primitive);
+      _paintPrimitive(canvas, primitive, decodedImages: decodedImages);
     }
     canvas.restore();
   }
 
   @override
   bool shouldRepaint(covariant _CanvasPainter old) =>
-      old.snapshot != snapshot || old.paintBackground != paintBackground;
+      old.snapshot != snapshot ||
+      old.paintBackground != paintBackground ||
+      !mapEquals(old.decodedImages, decodedImages);
+
+  @override
+  SemanticsBuilderCallback get semanticsBuilder => (Size size) {
+    final scene = snapshot;
+    if (scene == null) return const <CustomPainterSemantics>[];
+    final semantics = <CustomPainterSemantics>[];
+    for (final primitive in scene.primitives) {
+      final label = switch (primitive) {
+        ImageBoxPrimitive(:final payload) =>
+          payload.accessibilityAlternativeText,
+        TextBoxPrimitive(:final payload) => payload.logicalText,
+        _ => null,
+      };
+      if (label == null || label.isEmpty) continue;
+      final direction = switch (primitive) {
+        TextBoxPrimitive(:final payload)
+            when payload.defaultParagraphStyle.direction ==
+                TextParagraphDirection.rtl =>
+          TextDirection.rtl,
+        _ => TextDirection.ltr,
+      };
+      semantics.add(
+        CustomPainterSemantics(
+          rect: Rect.fromLTRB(
+            primitive.bounds.left,
+            primitive.bounds.top,
+            primitive.bounds.right,
+            primitive.bounds.bottom,
+          ),
+          properties: SemanticsProperties(
+            label: label,
+            readOnly: true,
+            textDirection: direction,
+          ),
+        ),
+      );
+    }
+    return semantics;
+  };
+
+  @override
+  bool shouldRebuildSemantics(covariant _CanvasPainter old) =>
+      old.snapshot != snapshot;
 
   @override
   String toString() =>
@@ -1540,6 +2571,12 @@ final class _CanvasPainter extends CustomPainter
 }
 
 Point2 _point(double x, double y) => _ok(Point2.create(x: x, y: y));
+ShapeColor? _shapeColor(int argb) => ShapeColor.create(
+  red: argb >> 16 & 0xff,
+  green: argb >> 8 & 0xff,
+  blue: argb & 0xff,
+  alpha: argb >> 24 & 0xff,
+).fold<ShapeColor?>(onOk: (value) => value, onErr: (_) => null);
 bool _sameObjectIds(Set<ObjectId> first, Set<ObjectId> second) =>
     first.length == second.length && first.every(second.contains);
 ViewPoint _viewPoint(double x, double y) => _ok(ViewPoint.create(x: x, y: y));
@@ -1552,6 +2589,171 @@ T _ok<T, E>(Result<T, E> value) => (value as Ok<T, E>).value;
 
 final class _UndoIntent extends Intent {
   const _UndoIntent();
+}
+
+final class _TextDialogResult {
+  const _TextDialogResult({
+    required this.text,
+    required this.fontSize,
+    required this.bold,
+    required this.italic,
+    required this.alignment,
+    required this.argb,
+  });
+  final String text;
+  final double fontSize;
+  final bool bold;
+  final bool italic;
+  final TextAlignment alignment;
+  final int argb;
+}
+
+final class _TextEditorDialog extends StatefulWidget {
+  const _TextEditorDialog({
+    required this.initial,
+    required this.editing,
+    required this.onDraftChanged,
+  });
+
+  final _TextDialogResult initial;
+  final bool editing;
+  final ValueChanged<_TextDialogResult> onDraftChanged;
+
+  @override
+  State<_TextEditorDialog> createState() => _TextEditorDialogState();
+}
+
+final class _TextEditorDialogState extends State<_TextEditorDialog> {
+  late final TextEditingController _controller;
+  late double _fontSize;
+  late bool _bold;
+  late bool _italic;
+  late TextAlignment _alignment;
+  late int _argb;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initial;
+    _controller = TextEditingController(text: initial.text)
+      ..addListener(_notifyDraft);
+    _fontSize = initial.fontSize;
+    _bold = initial.bold;
+    _italic = initial.italic;
+    _alignment = initial.alignment;
+    _argb = initial.argb;
+  }
+
+  _TextDialogResult get _draft => _TextDialogResult(
+    text: _controller.text,
+    fontSize: _fontSize,
+    bold: _bold,
+    italic: _italic,
+    alignment: _alignment,
+    argb: _argb,
+  );
+
+  void _notifyDraft() => widget.onDraftChanged(_draft);
+
+  void _update(VoidCallback change) {
+    setState(change);
+    _notifyDraft();
+  }
+
+  @override
+  void dispose() {
+    _controller
+      ..removeListener(_notifyDraft)
+      ..dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(widget.editing ? 'Edit text box' : 'Create text box'),
+    content: SizedBox(
+      width: 420,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              key: const Key('text-object-editor'),
+              controller: _controller,
+              autofocus: true,
+              maxLines: 6,
+              decoration: const InputDecoration(labelText: 'Text'),
+            ),
+            Row(
+              children: [
+                const Text('Size'),
+                Expanded(
+                  child: Slider(
+                    value: _fontSize,
+                    min: 8,
+                    max: 72,
+                    divisions: 64,
+                    onChanged: (value) => _update(() => _fontSize = value),
+                  ),
+                ),
+                Text('${_fontSize.round()}'),
+              ],
+            ),
+            Wrap(
+              spacing: 8,
+              children: [
+                FilterChip(
+                  label: const Text('Bold'),
+                  selected: _bold,
+                  onSelected: (value) => _update(() => _bold = value),
+                ),
+                FilterChip(
+                  label: const Text('Italic'),
+                  selected: _italic,
+                  onSelected: (value) => _update(() => _italic = value),
+                ),
+                DropdownButton<TextAlignment>(
+                  value: _alignment,
+                  items: TextAlignment.values
+                      .map(
+                        (value) => DropdownMenuItem(
+                          value: value,
+                          child: Text(value.name),
+                        ),
+                      )
+                      .toList(growable: false),
+                  onChanged: (value) {
+                    if (value != null) _update(() => _alignment = value);
+                  },
+                ),
+                DropdownButton<int>(
+                  value: _argb,
+                  items: const [
+                    DropdownMenuItem(value: 0xff17324d, child: Text('Navy')),
+                    DropdownMenuItem(value: 0xff111111, child: Text('Black')),
+                    DropdownMenuItem(value: 0xffb42318, child: Text('Red')),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) _update(() => _argb = value);
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, _draft),
+        child: Text(widget.editing ? 'Save' : 'Add'),
+      ),
+    ],
+  );
 }
 
 final class _RedoIntent extends Intent {

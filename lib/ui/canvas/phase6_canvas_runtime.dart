@@ -22,6 +22,7 @@ import '../../drawing/hit_testing.dart';
 import '../../drawing/renderer.dart';
 import '../../drawing/tools.dart';
 import 'flutter_pointer_adapter.dart';
+import 'flutter_text_layout_engine.dart';
 import 'phase6_diagnostics.dart';
 
 /// Injected, exception-contained boundary for the debug diagnostics clipboard.
@@ -123,6 +124,11 @@ final class Phase6CanvasRuntime {
   const Phase6CanvasRuntime._({
     required this.uuidGenerator,
     required this.handwritingLimits,
+    required this.shapeLimits,
+    required this.shapeInteractionLimits,
+    required this.imageLimits,
+    required this.textLimits,
+    required this.textLayoutEngine,
     required this.penStyle,
     required this.geometryResolver,
     required this.geometryCache,
@@ -156,6 +162,10 @@ final class Phase6CanvasRuntime {
   static Result<Phase6CanvasRuntime, StructuredFailure> create({
     required UuidGenerator uuidGenerator,
     required HandwritingLimits handwritingLimits,
+    required ShapeLimits shapeLimits,
+    required ShapeInteractionLimits shapeInteractionLimits,
+    required ImageLimits imageLimits,
+    required TextLimits textLimits,
     required StrokeStyle penStyle,
     required StrokeGeometryLimits geometryLimits,
     required RenderingLimits renderingLimits,
@@ -218,18 +228,20 @@ final class Phase6CanvasRuntime {
             Revision.maximumValue,
           );
     if (ceilings.any((value) => value <= 0 || value > Revision.maximumValue) ||
-        maximumRenderingDefinitions < 1 ||
-        maximumHitTestingDefinitions < 1 ||
-        maximumTools < 3 ||
-        maximumActions < 3 ||
-        maximumBindings < 7 ||
+        maximumRenderingDefinitions < 4 ||
+        maximumHitTestingDefinitions < 4 ||
+        maximumTools < 5 ||
+        maximumActions < 5 ||
+        maximumBindings < 11 ||
         maximumPenSamples > handwritingLimits.maximumSamplesPerStroke ||
         requiredElements == null ||
         requiredElements - 1 > geometryLimits.maximumElements ||
         requiredVertices == null ||
         requiredVertices > geometryLimits.maximumVertices ||
         renderingLimits.maximumPointsPerPrimitive <
-            geometryLimits.ellipseVertexCount) {
+            geometryLimits.ellipseVertexCount ||
+        renderingLimits.maximumPointsPerPrimitive <
+            shapeLimits.maximumVertices) {
       return Err(_failure('invalid_limits'));
     }
     final geometry = StrokeGeometryResolver(geometryLimits);
@@ -237,14 +249,23 @@ final class Phase6CanvasRuntime {
       maximumObjects: maximumHitResults,
       maximumStrokes: maximumHitResults,
     );
+    final textLayoutEngine = FlutterTextLayoutEngine(textLimits);
     final objectRegistry = ObjectRegistry.create([
       HandwritingObjectTypeDefinition(handwritingLimits),
+      ShapeObjectTypeDefinition(shapeLimits),
+      ImageObjectTypeDefinition(imageLimits),
+      TextObjectTypeDefinition(textLimits, textLayoutEngine),
     ]).fold<ObjectRegistry?>(onOk: (value) => value, onErr: (_) => null);
-    if (objectRegistry == null || objectRegistry.definitions.length != 1) {
+    if (objectRegistry == null || objectRegistry.definitions.length != 4) {
       return Err(_failure('initialization_failed'));
     }
     final components = _createRuntimeComponents(
       handwritingLimits: handwritingLimits,
+      shapeLimits: shapeLimits,
+      shapeInteractionLimits: shapeInteractionLimits,
+      imageLimits: imageLimits,
+      textLimits: textLimits,
+      textLayoutEngine: textLayoutEngine,
       geometry: geometry,
       geometryCache: geometryCache,
       maximumRenderingDefinitions: maximumRenderingDefinitions,
@@ -339,6 +360,7 @@ final class Phase6CanvasRuntime {
     final coordinator =
         DocumentMutationCoordinator.create(
           initialRoot: root,
+          requireCompleteInitialResources: true,
           validator: DocumentValidator(objectRegistry),
           uuidGenerator: identities,
           historyLimits: historyLimits,
@@ -353,6 +375,11 @@ final class Phase6CanvasRuntime {
       Phase6CanvasRuntime._(
         uuidGenerator: identities,
         handwritingLimits: handwritingLimits,
+        shapeLimits: shapeLimits,
+        shapeInteractionLimits: shapeInteractionLimits,
+        imageLimits: imageLimits,
+        textLimits: textLimits,
+        textLayoutEngine: textLayoutEngine,
         penStyle: penStyle,
         geometryResolver: geometry,
         geometryCache: geometryCache,
@@ -376,7 +403,9 @@ final class Phase6CanvasRuntime {
               storageLimits: storageLimits,
               createCoordinator: (candidate) =>
                   DocumentMutationCoordinator.create(
-                    initialRoot: candidate,
+                    initialRoot: candidate.document,
+                    initialResources: candidate.resources,
+                    requireCompleteInitialResources: true,
                     validator: DocumentValidator(objectRegistry),
                     uuidGenerator: identities,
                     historyLimits: historyLimits,
@@ -400,6 +429,21 @@ final class Phase6CanvasRuntime {
 
   final UuidGenerator uuidGenerator;
   final HandwritingLimits handwritingLimits;
+
+  /// Built-in Shape validation limits.
+  final ShapeLimits shapeLimits;
+
+  /// Synchronous Shape derivation and predicate work ceiling.
+  final ShapeInteractionLimits shapeInteractionLimits;
+
+  /// Built-in Image validation limits.
+  final ImageLimits imageLimits;
+
+  /// Built-in Text validation and layout limits.
+  final TextLimits textLimits;
+
+  /// Runtime-wide authoritative Flutter Text layout configuration.
+  final TextLayoutEngine textLayoutEngine;
 
   /// Resolved persistent Pen appearance shared by preview and commit.
   final StrokeStyle penStyle;
@@ -440,9 +484,12 @@ final class Phase6CanvasRuntime {
 
   /// Creates a fresh coordinator for a successfully reopened exact root.
   Result<DocumentMutationCoordinator, CommandFailure> createCoordinator(
-    DocumentRoot root,
-  ) => DocumentMutationCoordinator.create(
+    DocumentRoot root, {
+    Iterable<DocumentResourceSnapshot> resources = const [],
+  }) => DocumentMutationCoordinator.create(
     initialRoot: root,
+    initialResources: resources,
+    requireCompleteInitialResources: true,
     validator: DocumentValidator(objectRegistry),
     uuidGenerator: uuidGenerator,
     historyLimits: historyLimits,
@@ -461,7 +508,7 @@ final class _DefaultPhase6ReopenGateway implements Phase6ReopenGateway {
   final ObjectRegistry objectRegistry;
   final ResourceLimitSnapshot storageLimits;
   final Result<DocumentMutationCoordinator, CommandFailure> Function(
-    DocumentRoot root,
+    AlnotePackageSnapshot snapshot,
   )
   createCoordinator;
 
@@ -483,9 +530,9 @@ final class _DefaultPhase6ReopenGateway implements Phase6ReopenGateway {
     if (opened is! Completed<OpenedAlnotePackage, StructuredFailure>) {
       return const Phase6ReopenFailure(Phase6ReopenFailureStage.read);
     }
-    OperationOutcome<DocumentRoot, StructuredFailure> materialized;
+    OperationOutcome<AlnotePackageSnapshot, StructuredFailure> materialized;
     try {
-      materialized = opened.value.materializeDocument(
+      materialized = opened.value.materializeSnapshot(
         cancellationToken: CancellationController().token,
       );
     } on Object {
@@ -493,12 +540,12 @@ final class _DefaultPhase6ReopenGateway implements Phase6ReopenGateway {
         Phase6ReopenFailureStage.materialization,
       );
     }
-    if (materialized is! Completed<DocumentRoot, StructuredFailure>) {
+    if (materialized is! Completed<AlnotePackageSnapshot, StructuredFailure>) {
       return const Phase6ReopenFailure(
         Phase6ReopenFailureStage.materialization,
       );
     }
-    if (materialized.value != savedRoot) {
+    if (materialized.value.document != savedRoot) {
       return const Phase6ReopenFailure(Phase6ReopenFailureStage.mismatch);
     }
     Result<DocumentMutationCoordinator, CommandFailure> coordinator;
@@ -511,7 +558,7 @@ final class _DefaultPhase6ReopenGateway implements Phase6ReopenGateway {
       return const Phase6ReopenFailure(Phase6ReopenFailureStage.coordinator);
     }
     return Phase6ReopenSuccess(
-      root: materialized.value,
+      root: materialized.value.document,
       coordinator: coordinator.value,
     );
   }
@@ -527,6 +574,11 @@ typedef _RuntimeComponents = ({
 
 _RuntimeComponents? _createRuntimeComponents({
   required HandwritingLimits handwritingLimits,
+  required ShapeLimits shapeLimits,
+  required ShapeInteractionLimits shapeInteractionLimits,
+  required ImageLimits imageLimits,
+  required TextLimits textLimits,
+  required TextLayoutEngine textLayoutEngine,
   required StrokeGeometryResolver geometry,
   required HandwritingGeometryCache geometryCache,
   required int maximumRenderingDefinitions,
@@ -543,6 +595,9 @@ _RuntimeComponents? _createRuntimeComponents({
         geometryResolver: geometry,
         geometryCache: geometryCache,
       ),
+      ShapeRenderingDefinition(shapeLimits: shapeLimits),
+      ImageRenderingDefinition(imageLimits),
+      TextRenderingDefinition(textLimits, textLayoutEngine),
     ],
     maximumDefinitions: maximumRenderingDefinitions,
   ).fold<RenderingRegistry?>(onOk: (value) => value, onErr: (_) => null);
@@ -553,11 +608,17 @@ _RuntimeComponents? _createRuntimeComponents({
         geometryResolver: geometry,
         geometryCache: geometryCache,
       ),
+      ShapeHitTestingDefinition(
+        shapeLimits: shapeLimits,
+        interactionLimits: shapeInteractionLimits,
+      ),
+      ImageHitTestingDefinition(imageLimits),
+      TextHitTestingDefinition(textLimits, textLayoutEngine),
     ],
     maximumDefinitions: maximumHitTestingDefinitions,
     maximumBehaviorResults: maximumHitBehaviorResults,
   ).fold<HitTestingRegistry?>(onOk: (value) => value, onErr: (_) => null);
-  const toolNames = ['pen', 'wholeeraser', 'selection'];
+  const toolNames = ['pen', 'wholeeraser', 'selection', 'shape', 'text'];
   final tools = <ToolDefinition>[];
   final actions = <InteractionActionDefinition>[];
   final bindings = <InteractionBinding>[];

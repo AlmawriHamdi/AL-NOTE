@@ -12,6 +12,7 @@ import '../../documents/commands.dart';
 import '../../documents/document_model.dart';
 import '../../documents/objects/handwriting.dart';
 import '../geometry.dart';
+import '../hit_testing.dart';
 
 /// Immutable transient rendering evidence for one affected handwriting Object.
 final class EraserPreviewObject {
@@ -71,8 +72,10 @@ final class WholeEraseGesturePlan {
     required this.handwritingLimits,
     required List<_WholeObjectPlan> objects,
     required List<_WholeCandidate> candidates,
+    required List<_WholeRemovalCandidate> wholeRemovalCandidates,
   }) : _objects = objects,
-       _candidates = candidates;
+       _candidates = candidates,
+       _wholeRemovalCandidates = wholeRemovalCandidates;
 
   /// Prepares immutable gesture-local Object, revision, payload, and geometry
   /// evidence without UUID allocation or document publication.
@@ -82,6 +85,7 @@ final class WholeEraseGesturePlan {
     required double radius,
     required HandwritingLimits handwritingLimits,
     required ObjectRegistry objectRegistry,
+    HitTestingRegistry? hitTestingRegistry,
     required StrokeGeometryResolver geometryResolver,
     HandwritingGeometryCache? geometryCache,
     required int maximumObjects,
@@ -108,21 +112,30 @@ final class WholeEraseGesturePlan {
     }
     final objects = <_WholeObjectPlan>[];
     final candidates = <_WholeCandidate>[];
+    final wholeRemovalCandidates = <_WholeRemovalCandidate>[];
     for (final layer in page.layers) {
       if (layer is! ContentLayer || !layer.visible || layer.locked) continue;
       final membershipRevision = document.revisions.layerMembership[layer.id];
       if (membershipRevision == null) return Err(_failure('missing_revision'));
       for (final object in layer.objects) {
-        if (!object.visible ||
-            object.locked ||
-            object.typeKey != handwritingObjectTypeKey ||
-            object.typeSchemaVersion != handwritingSchemaVersion) {
+        if (!object.visible || object.locked) {
           continue;
         }
-        if (objects.length >= maximumObjects) {
+        if (objects.length + wholeRemovalCandidates.length >= maximumObjects) {
           return Err(_failure('whole_object_limit'));
         }
-        if (!_eligibleHandwritingObject(objectRegistry, object)) continue;
+        if (!_eligibleHandwritingObject(objectRegistry, object)) {
+          final removal = _prepareWholeRemoval(
+            registry: objectRegistry,
+            hitTestingRegistry: hitTestingRegistry,
+            object: object,
+            layerId: layer.id,
+            membershipRevision: membershipRevision,
+            objectRevision: document.revisions.objects[object.id],
+          );
+          if (removal != null) wholeRemovalCandidates.add(removal);
+          continue;
+        }
         final prepared = geometryCache?.prepare(
           object: object,
           handwritingLimits: handwritingLimits,
@@ -190,6 +203,7 @@ final class WholeEraseGesturePlan {
         handwritingLimits: handwritingLimits,
         objects: objects,
         candidates: candidates,
+        wholeRemovalCandidates: wholeRemovalCandidates,
       ),
     );
   }
@@ -217,6 +231,7 @@ final class WholeEraseGesturePlan {
 
   final List<_WholeObjectPlan> _objects;
   final List<_WholeCandidate> _candidates;
+  final List<_WholeRemovalCandidate> _wholeRemovalCandidates;
   Point2? _lastPoint;
   int _pointCount = 0;
   int _segmentCount = 0;
@@ -282,7 +297,33 @@ final class WholeEraseGesturePlan {
       newlyAffected += 1;
       changed.add(candidate.owner.object.id);
     }
-    if (_objects.where((value) => value.erased.isNotEmpty).length >
+    for (final candidate in _wholeRemovalCandidates) {
+      if (candidate.affected ||
+          sweptBounds == null ||
+          !_boundsIntersect(candidate.pageBounds, sweptBounds)) {
+        continue;
+      }
+      _geometryCheckCount += 1;
+      final precise = candidate.definition.wholeSweptSegment(
+        object: candidate.object,
+        start: first,
+        end: point,
+        radius: radius,
+      );
+      if (precise is Err<bool, StructuredFailure>) {
+        return Err(precise.error);
+      }
+      if (!(precise as Ok<bool, StructuredFailure>).value) continue;
+      if (_affectedCount >= maximumTargets) {
+        return Err(_failure('whole_target_limit'));
+      }
+      candidate.affected = true;
+      _affectedCount += 1;
+      newlyAffected += 1;
+      changed.add(candidate.object.id);
+    }
+    if (_objects.where((value) => value.erased.isNotEmpty).length +
+            _wholeRemovalCandidates.where((value) => value.affected).length >
         maximumOperations) {
       return Err(_failure('eraser_operation_limit'));
     }
@@ -295,8 +336,8 @@ final class WholeEraseGesturePlan {
   }
 
   /// Current exact survivor evidence for affected Objects.
-  List<EraserPreviewObject> get previews => List.unmodifiable(
-    _objects
+  List<EraserPreviewObject> get previews => List.unmodifiable([
+    ..._objects
         .where((value) => value.erased.isNotEmpty)
         .map(
           (value) => EraserPreviewObject._(
@@ -312,7 +353,15 @@ final class WholeEraseGesturePlan {
                 ),
           ),
         ),
-  );
+    for (final value in _wholeRemovalCandidates.where(
+      (value) => value.affected,
+    ))
+      EraserPreviewObject._(
+        objectId: value.object.id,
+        localToPage: value.object.transform,
+        strokes: const [],
+      ),
+  ]);
 
   /// Builds current preview evidence for one changed Object, when affected.
   EraserPreviewObject? previewFor(ObjectId objectId) {
@@ -322,20 +371,33 @@ final class WholeEraseGesturePlan {
               candidate.object.id == objectId && candidate.erased.isNotEmpty,
         )
         .firstOrNull;
-    return value == null
-        ? null
-        : EraserPreviewObject._(
-            objectId: value.object.id,
-            localToPage: value.object.transform,
-            strokes: value.candidates
-                .where((candidate) => !candidate.affected)
-                .map(
-                  (candidate) => EraserPreviewStroke(
-                    stroke: candidate.stroke,
-                    geometry: candidate.geometry,
-                  ),
-                ),
-          );
+    if (value == null) {
+      final whole = _wholeRemovalCandidates
+          .where(
+            (candidate) =>
+                candidate.object.id == objectId && candidate.affected,
+          )
+          .firstOrNull;
+      return whole == null
+          ? null
+          : EraserPreviewObject._(
+              objectId: whole.object.id,
+              localToPage: whole.object.transform,
+              strokes: const [],
+            );
+    }
+    return EraserPreviewObject._(
+      objectId: value.object.id,
+      localToPage: value.object.transform,
+      strokes: value.candidates
+          .where((candidate) => !candidate.affected)
+          .map(
+            (candidate) => EraserPreviewStroke(
+              stroke: candidate.stroke,
+              geometry: candidate.geometry,
+            ),
+          ),
+    );
   }
 
   /// Builds the one terminal atomic request from prepared target evidence.
@@ -345,7 +407,12 @@ final class WholeEraseGesturePlan {
     final affected = _objects
         .where((value) => value.erased.isNotEmpty)
         .toList();
-    if (affected.isEmpty) return Err(_failure('nothing_erased'));
+    final wholeAffected = _wholeRemovalCandidates
+        .where((value) => value.affected)
+        .toList(growable: false);
+    if (affected.isEmpty && wholeAffected.isEmpty) {
+      return Err(_failure('nothing_erased'));
+    }
     final replacements = <ObjectEnvelope>[];
     final removals = <ObjectId>[];
     final objectRevisions = <ObjectId, Revision>{};
@@ -373,6 +440,11 @@ final class WholeEraseGesturePlan {
         (replacement as Ok<ObjectEnvelope, StructuredFailure>).value,
       );
     }
+    for (final plan in wholeAffected) {
+      removals.add(plan.object.id);
+      objectRevisions[plan.object.id] = plan.objectRevision;
+      membershipRevisions[plan.layerId] = plan.membershipRevision;
+    }
     final occupiedUuids = _occupiedUuids(document.root);
     final correlation = _generate(uuidGenerator);
     if (correlation == null || !occupiedUuids.add(correlation.value)) {
@@ -384,7 +456,7 @@ final class WholeEraseGesturePlan {
       metadata: CommandMetadata(
         family: CommandFamily.objectCollectionEdit,
         correlationId: CommandCorrelationId.fromUuid(correlation),
-        description: 'Erase strokes',
+        description: 'Erase objects',
       ),
       preconditions: RevisionPreconditions(
         pages: {pageId: document.revisions.pages[pageId]!},
@@ -427,6 +499,94 @@ final class _WholeCandidate {
   final HandwritingStroke stroke;
   final TransformedStrokeGeometry geometry;
   bool affected = false;
+}
+
+final class _WholeRemovalCandidate {
+  _WholeRemovalCandidate({
+    required this.layerId,
+    required this.object,
+    required this.pageBounds,
+    required this.definition,
+    required this.objectRevision,
+    required this.membershipRevision,
+  });
+  final LayerId layerId;
+  final ObjectEnvelope object;
+  final Rect2 pageBounds;
+  final ObjectWholeHitTestingDefinition definition;
+  final Revision objectRevision;
+  final Revision membershipRevision;
+  bool affected = false;
+}
+
+_WholeRemovalCandidate? _prepareWholeRemoval({
+  required ObjectRegistry registry,
+  required HitTestingRegistry? hitTestingRegistry,
+  required ObjectEnvelope object,
+  required LayerId layerId,
+  required Revision membershipRevision,
+  required Revision? objectRevision,
+}) {
+  if (objectRevision == null) return null;
+  final supportedBuiltIn =
+      object.typeKey == shapeObjectTypeKey &&
+          object.typeSchemaVersion == shapeSchemaVersion ||
+      object.typeKey == imageObjectTypeKey &&
+          object.typeSchemaVersion == imageSchemaVersion ||
+      object.typeKey == textObjectTypeKey &&
+          object.typeSchemaVersion == textSchemaVersion;
+  if (!supportedBuiltIn) return null;
+  try {
+    final resolution = registry.resolve(object);
+    if (resolution is! SupportedObjectResolution) return null;
+    final capabilities = resolution.definition.capabilities;
+    if (!capabilities.hasIntrinsicGeometry || !capabilities.selectable)
+      return null;
+    final hitDefinition = hitTestingRegistry?.definitions[object.typeKey];
+    if (hitDefinition is! ObjectWholeHitTestingDefinition) return null;
+    final local = resolution.definition.intrinsicGeometry(
+      object.payload,
+      object.typeSchemaVersion,
+    );
+    if (local is! Ok<Rect2, StructuredFailure>) return null;
+    final corners = <Point2>[
+      local.value.topLeft,
+      _point(local.value.right, local.value.top),
+      local.value.bottomRight,
+      _point(local.value.left, local.value.bottom),
+    ];
+    final page = <Point2>[];
+    for (final point in corners) {
+      final transformed = object.transform.applyToPoint(point);
+      if (transformed is! Ok<Point2, StructuredFailure>) return null;
+      page.add(transformed.value);
+    }
+    var left = page.first.x, right = left, top = page.first.y, bottom = top;
+    for (final point in page.skip(1)) {
+      left = math.min(left, point.x);
+      right = math.max(right, point.x);
+      top = math.min(top, point.y);
+      bottom = math.max(bottom, point.y);
+    }
+    final bounds = Rect2.fromEdges(
+      left: left,
+      top: top,
+      right: right,
+      bottom: bottom,
+    );
+    return bounds is Ok<Rect2, StructuredFailure>
+        ? _WholeRemovalCandidate(
+            layerId: layerId,
+            object: object,
+            pageBounds: bounds.value,
+            definition: hitDefinition as ObjectWholeHitTestingDefinition,
+            objectRevision: objectRevision,
+            membershipRevision: membershipRevision,
+          )
+        : null;
+  } on Object {
+    return null;
+  }
 }
 
 bool _validCaptureLimits(int objects, int strokes) =>
@@ -512,6 +672,9 @@ bool _boundsIntersect(Rect2 first, Rect2 second) =>
     first.right >= second.left &&
     first.top <= second.bottom &&
     first.bottom >= second.top;
+
+Point2 _point(double x, double y) =>
+    (Point2.create(x: x, y: y) as Ok<Point2, StructuredFailure>).value;
 
 Set<String> _occupiedUuids(DocumentRoot root) => {
   root.id.uuid.value,

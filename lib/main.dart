@@ -5,6 +5,9 @@ import 'package:al_note/core/primitives.dart';
 import 'package:al_note/documents/commands.dart';
 import 'package:al_note/documents/files.dart';
 import 'package:al_note/documents/objects/handwriting.dart';
+import 'package:al_note/documents/objects/image.dart';
+import 'package:al_note/documents/objects/shape.dart';
+import 'package:al_note/documents/objects/text.dart';
 import 'package:al_note/drawing/geometry.dart';
 import 'package:al_note/drawing/renderer.dart';
 import 'package:al_note/ui/canvas/phase6_canvas_runtime.dart';
@@ -33,9 +36,58 @@ void main() {
     ellipseVertexCount: 16,
     maximumContainmentChecks: 1000000,
   ).fold<StrokeGeometryLimits?>(onOk: (value) => value, onErr: (_) => null);
+  final shape = ShapeLimits.create(
+    maximumVertices: 10000,
+    maximumDashValues: 64,
+    maximumUnknownFields: 256,
+    maximumUnknownNodes: 100000,
+    maximumNestingDepth: 32,
+    maximumUnknownStringCodeUnits: 1000000,
+    maximumCoordinateMagnitude: 1000000,
+    maximumStrokeWidth: 1000,
+    maximumMiterLimit: 100,
+    maximumCornerRadius: 1000000,
+    maximumDerivedSegments: 10000,
+  ).fold<ShapeLimits?>(onOk: (value) => value, onErr: (_) => null);
+  final image = ImageLimits.create(
+    maximumEncodedBytes: 10000000,
+    maximumHeaderBytes: 1048576,
+    maximumMarkers: 4096,
+    maximumPixelDimension: 32768,
+    maximumPixelCount: 100000000,
+    maximumAlternativeTextScalars: 4096,
+    maximumUnknownFields: 256,
+    maximumUnknownNodes: 100000,
+    maximumNestingDepth: 32,
+    maximumUnknownStringCodeUnits: 1000000,
+    maximumDocumentDimension: 1000000,
+  ).fold<ImageLimits?>(onOk: (value) => value, onErr: (_) => null);
+  final shapeInteraction = ShapeInteractionLimits.create(
+    maximumChecks: 1000000,
+  ).fold<ShapeInteractionLimits?>(onOk: (value) => value, onErr: (_) => null);
+  final text = TextLimits.create(
+    maximumParagraphs: 10000,
+    maximumRunsPerParagraph: 10000,
+    maximumScalarsPerRun: 1000000,
+    maximumTotalScalars: 1000000,
+    maximumFontFamilyScalars: 256,
+    maximumLanguageHintScalars: 64,
+    maximumUnknownFields: 256,
+    maximumUnknownNodes: 100000,
+    maximumNestingDepth: 32,
+    maximumUnknownStringCodeUnits: 1000000,
+    maximumFontSize: 1000,
+    maximumBoxDimension: 1000000,
+    maximumPadding: 100000,
+    maximumLayoutLines: 100000,
+    maximumLayoutFragments: 100000,
+    maximumCaretStops: 1000000,
+    maximumRangeRectangles: 100000,
+    maximumPendingEdits: 1024,
+  ).fold<TextLimits?>(onOk: (value) => value, onErr: (_) => null);
   final rendering = RenderingLimits.create(
     maximumPrimitives: 400000,
-    maximumPointsPerPrimitive: 32,
+    maximumPointsPerPrimitive: 10000,
     maximumDamageRegions: 400000,
     maximumPreviewOverlays: 20000,
     maximumSelectionOverlays: 20000,
@@ -61,6 +113,10 @@ void main() {
           limits: handwriting,
         ).fold<StrokeStyle?>(onOk: (value) => value, onErr: (_) => null);
   if (handwriting == null ||
+      shape == null ||
+      shapeInteraction == null ||
+      image == null ||
+      text == null ||
       geometry == null ||
       rendering == null ||
       history == null ||
@@ -73,6 +129,10 @@ void main() {
   final runtime = Phase6CanvasRuntime.create(
     uuidGenerator: uuid,
     handwritingLimits: handwriting,
+    shapeLimits: shape,
+    shapeInteractionLimits: shapeInteraction,
+    imageLimits: image,
+    textLimits: text,
     penStyle: penStyle,
     geometryLimits: geometry,
     renderingLimits: rendering,
