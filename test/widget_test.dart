@@ -1641,6 +1641,12 @@ void main() {
         _verifyUnsupportedTextDialog(tester, _widgetEmbeddedNewlineText),
   );
 
+  testWidgets(
+    'style-unknown Text is rejected without lifecycle publication',
+    (WidgetTester tester) =>
+        _verifyUnsupportedTextDialog(tester, _widgetStyleUnknownText),
+  );
+
   test('runtime registry ceilings are injected and exact boundaries pass', () {
     final exactGenerator = _RuntimeCountingUuidGenerator();
     expect(
@@ -1729,7 +1735,8 @@ Future<void> _verifyUnsupportedTextDialog(
   WidgetTester tester,
   TextPayload Function(TextLimits) payloadBuilder,
 ) async {
-  final runtime = _runtime();
+  final generator = _RuntimeCountingUuidGenerator();
+  final runtime = _runtime(uuidGenerator: generator);
   final root = runtime.initialCoordinator.snapshot.root;
   final page = root.pages.single;
   final layer = page.layers.whereType<ContentLayer>().single;
@@ -1790,6 +1797,7 @@ Future<void> _verifyUnsupportedTextDialog(
   expect(find.byKey(const Key('edit-selected-text')), findsOneWidget);
   final before = runtime.initialCoordinator.snapshot;
   final encoded = payload.encode();
+  final uuidCalls = generator.calls;
   await tester.tap(find.byKey(const Key('edit-selected-text')));
   await tester.pumpAndSettle();
   expect(find.byKey(const Key('text-object-editor')), findsNothing);
@@ -1803,6 +1811,8 @@ Future<void> _verifyUnsupportedTextDialog(
   expect(after.root, same(before.root));
   expect(after.revisions, before.revisions);
   expect(after.canUndo, before.canUndo);
+  expect(after.canRedo, before.canRedo);
+  expect(generator.calls, uuidCalls);
   expect(_canvasPainter(tester).savedBytes, savedBytes);
   expect(_canvasPainter(tester).savedRoot, same(savedRoot));
   expect(
@@ -1946,6 +1956,61 @@ TextPayload _widgetEmbeddedNewlineText(TextLimits limits) {
   final paragraph = _ok(
     TextParagraph.create(
       runs: [_ok(TextRun.create(text: 'a\nb', style: style, limits: limits))],
+      style: paragraphStyle,
+      limits: limits,
+    ),
+  );
+  return _ok(
+    TextPayload.create(
+      paragraphs: [paragraph],
+      defaultCharacterStyle: style,
+      defaultParagraphStyle: paragraphStyle,
+      boxMode: TextBoxMode.fixedWidthFixedHeight,
+      intrinsicWidth: 120,
+      intrinsicHeight: 120,
+      padding: _ok(
+        TextPadding.create(
+          left: 4,
+          top: 4,
+          right: 4,
+          bottom: 4,
+          limits: limits,
+        ),
+      ),
+      verticalAlignment: TextVerticalAlignment.top,
+      overflowPolicy: TextOverflowPolicy.visible,
+      limits: limits,
+    ),
+  );
+}
+
+TextPayload _widgetStyleUnknownText(TextLimits limits) {
+  final style = _ok(
+    TextCharacterStyle.create(
+      genericFontFamily: TextGenericFontFamily.sansSerif,
+      fontSize: 18,
+      weight: 400,
+      italic: false,
+      underline: false,
+      strikethrough: false,
+      argb: 0xff000000,
+      limits: limits,
+      unknownFields: PreservedMap({
+        'styleFuture': const PreservedBoolean(true),
+      }),
+    ),
+  );
+  final paragraphStyle = _ok(
+    TextParagraphStyle.create(
+      alignment: TextAlignment.left,
+      direction: TextParagraphDirection.ltr,
+      lineHeight: 1.2,
+      limits: limits,
+    ),
+  );
+  final paragraph = _ok(
+    TextParagraph.create(
+      runs: [_ok(TextRun.create(text: 'simple', style: style, limits: limits))],
       style: paragraphStyle,
       limits: limits,
     ),

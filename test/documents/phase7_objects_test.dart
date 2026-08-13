@@ -4028,7 +4028,11 @@ void main() {
   });
 
   test('Text derived geometry rejects overflow and underflow redacted', () {
-    TextPayload? payloadFor(double fontSize, double lineHeight) {
+    TextPayload? payloadFor(
+      double fontSize,
+      double lineHeight, {
+      String text = 'x',
+    }) {
       final character = TextCharacterStyle.create(
         genericFontFamily: TextGenericFontFamily.sansSerif,
         fontSize: fontSize,
@@ -4050,7 +4054,7 @@ void main() {
         return null;
       }
       final run = _ok(
-        TextRun.create(text: 'x', style: character.value, limits: _textLimits),
+        TextRun.create(text: text, style: character.value, limits: _textLimits),
       );
       final paragraph = _ok(
         TextParagraph.create(
@@ -4075,9 +4079,27 @@ void main() {
 
     expect(payloadFor(2, double.maxFinite), isNull);
     expect(payloadFor(double.minPositive, double.minPositive), isNull);
+    final auditor = payloadFor(2, double.maxFinite / 5, text: '\n\n');
+    expect(auditor, isNull);
     final exact = payloadFor(2, double.maxFinite / 4);
     expect(exact, isNotNull);
     expect(exact!.bounds.bottom.isFinite, isTrue);
+    expect(
+      _ok(TextPayload.decode(exact.encode(), limits: _textLimits)).encode(),
+      exact.encode(),
+    );
+    final embedded = payloadFor(18, 1.2, text: 'a\nb');
+    expect(embedded, isNotNull);
+    expect(
+      _ok(TextPayload.decode(embedded!.encode(), limits: _textLimits)).encode(),
+      embedded.encode(),
+    );
+    expect(
+      FlutterTextLayoutEngine(
+        _textLimits,
+      ).layout(TextLayoutRequest(payload: embedded)),
+      isA<Ok<TextLayoutSnapshot, StructuredFailure>>(),
+    );
     final base = _textPayload(['x']);
     final hostileStyle = _ok(
       TextParagraphStyle.create(
@@ -4108,6 +4130,167 @@ void main() {
     );
     expect(failure, isA<Err<TextPayload, StructuredFailure>>());
     expect('$failure', isNot(contains(double.maxFinite.toString())));
+  });
+
+  test('Registry rejects newline geometry before any document effects', () {
+    final base = _configuredTextPayload(
+      text: 'x',
+      fontSize: 18,
+      italic: false,
+      underline: false,
+      strikethrough: false,
+    ).encode();
+    final paragraphs = base.values['paragraphs']! as PreservedList;
+    final paragraph = paragraphs.values.single as PreservedMap;
+    final runs = paragraph.values['runs']! as PreservedList;
+    final run = runs.values.single as PreservedMap;
+    final characterStyle = run.values['style']! as PreservedMap;
+    final paragraphStyle = paragraph.values['style']! as PreservedMap;
+    final two = _ok(PreservedDouble.create(2));
+    final extreme = _ok(PreservedDouble.create(double.maxFinite / 5));
+    final hostileCharacter = PreservedMap({
+      ...characterStyle.values,
+      'fontSize': two,
+    });
+    final hostileParagraphStyle = PreservedMap({
+      ...paragraphStyle.values,
+      'lineHeight': extreme,
+    });
+    final hostile = PreservedMap({
+      ...base.values,
+      'defaultCharacterStyle': hostileCharacter,
+      'defaultParagraphStyle': hostileParagraphStyle,
+      'paragraphs': PreservedList([
+        PreservedMap({
+          ...paragraph.values,
+          'style': hostileParagraphStyle,
+          'runs': PreservedList([
+            PreservedMap({
+              ...run.values,
+              'text': const PreservedString('\n\n'),
+              'style': hostileCharacter,
+            }),
+          ]),
+        }),
+      ]),
+    });
+    final definition = TextObjectTypeDefinition(
+      _textLimits,
+      FlutterTextLayoutEngine(_textLimits),
+    );
+    final validation = definition.validatePayload(hostile, textSchemaVersion);
+    expect(validation.isValid, isFalse);
+    expect(
+      definition.intrinsicGeometry(hostile, textSchemaVersion),
+      isA<Err<Rect2, StructuredFailure>>(),
+    );
+    expect('$validation', isNot(contains(double.maxFinite.toString())));
+    final unavailable = TextObjectTypeDefinition(
+      _textLimits,
+      _CountingTextLayoutEngine(
+        FlutterTextLayoutEngine(_textLimits),
+        fail: true,
+      ),
+    ).validatePayload(base, textSchemaVersion);
+    expect(unavailable.isValid, isFalse);
+    expect('$unavailable', isNot(contains('Text layout is unavailable')));
+
+    final hostileObject = testObject(
+      id: 983,
+      typeKey: textObjectTypeKey,
+      schemaVersion: textSchemaVersion,
+      payload: hostile,
+    );
+    expect(
+      TextRenderingDefinition(
+        _textLimits,
+        FlutterTextLayoutEngine(_textLimits),
+      ).render(
+        object: hostileObject,
+        viewport: _viewport(),
+        layerOpacity: 1,
+        plane: RenderPlane.committed,
+        limits: _renderingLimits(),
+      ),
+      isA<Err<List<ScenePrimitive>, StructuredFailure>>(),
+    );
+    expect(
+      TextHitTestingDefinition(
+        _textLimits,
+        FlutterTextLayoutEngine(_textLimits),
+      ).wholePoint(
+        object: hostileObject,
+        pagePosition: _point(0, 0),
+        pageTolerance: 0,
+      ),
+      isA<Err<bool, StructuredFailure>>(),
+    );
+
+    final root = testNotebook();
+    final page = root.pages.single;
+    final layer = page.layers.whereType<ContentLayer>().single;
+    final coordinator = _coordinatorFor(root, testRegistry([definition]));
+    final before = coordinator.snapshot;
+    final request = _ok(
+      AtomicObjectCollectionEditRequest.create(
+        documentId: root.id,
+        pageId: page.id,
+        metadata: phase3Metadata(
+          family: 'alnote.commands.object.collection_edit',
+          correlation: 982,
+        ),
+        preconditions: RevisionPreconditions(
+          pages: {page.id: before.revisions.pages[page.id]!},
+          layerMembership: {
+            layer.id: before.revisions.layerMembership[layer.id]!,
+          },
+        ),
+        additions: [
+          ObjectCollectionAddition(layerId: layer.id, object: hostileObject),
+        ],
+        maximumOperations: 1,
+      ),
+    );
+    final rejected = coordinator.execute(request);
+    expect(rejected, isA<Err<CommandCommit, CommandFailure>>());
+    expect('$rejected', isNot(contains(double.maxFinite.toString())));
+    expect(coordinator.snapshot.root, same(before.root));
+    expect(coordinator.snapshot.revisions, before.revisions);
+    expect(coordinator.snapshot.canUndo, before.canUndo);
+    expect(coordinator.snapshot.canRedo, before.canRedo);
+
+    final invalidRoot = testNotebook(
+      sections: [
+        testSection(
+          pages: [
+            testPage(
+              layers: [
+                testContentLayer(objects: [hostileObject]),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+    final selection = SelectionController(
+      objectRegistry: testRegistry([definition]),
+      coalescingBoundarySink: coordinator,
+      maximumTargets: 1,
+    );
+    final selectionBefore = selection.state;
+    expect(
+      selection.replace(
+        root: invalidRoot,
+        targets: [
+          SelectionTarget.wholeObject(
+            pageId: invalidRoot.pages.single.id,
+            objectId: hostileObject.id,
+          ),
+        ],
+      ),
+      isA<Err<SelectionState, SelectionFailure>>(),
+    );
+    expect(selection.state, same(selectionBefore));
   });
 
   test('Text layout authority aligns rich wrapping and overflow exactly', () {
@@ -4314,7 +4497,49 @@ void main() {
   });
 
   test('minimal dialog representability never flattens rich Text', () {
-    final simple = _textPayload(['simple']);
+    TextPayload simplePayload(List<String> sources) {
+      final template = _configuredTextPayload(
+        text: 'template',
+        fontSize: 18,
+        italic: false,
+        underline: false,
+        strikethrough: false,
+      );
+      final paragraphs = <TextParagraph>[
+        for (final source in sources)
+          _ok(
+            TextParagraph.create(
+              runs: [
+                _ok(
+                  TextRun.create(
+                    text: source,
+                    style: template.defaultCharacterStyle,
+                    limits: _textLimits,
+                  ),
+                ),
+              ],
+              style: template.defaultParagraphStyle,
+              limits: _textLimits,
+            ),
+          ),
+      ];
+      return _ok(
+        TextPayload.create(
+          paragraphs: paragraphs,
+          defaultCharacterStyle: template.defaultCharacterStyle,
+          defaultParagraphStyle: template.defaultParagraphStyle,
+          boxMode: template.boxMode,
+          intrinsicWidth: template.intrinsicWidth,
+          intrinsicHeight: template.intrinsicHeight,
+          padding: template.padding,
+          verticalAlignment: template.verticalAlignment,
+          overflowPolicy: template.overflowPolicy,
+          limits: _textLimits,
+        ),
+      );
+    }
+
+    final simple = simplePayload(['simple']);
     final rich = _richLayoutPayload(
       alignment: TextVerticalAlignment.top,
       overflow: TextOverflowPolicy.visible,
@@ -4322,8 +4547,8 @@ void main() {
     );
     expect(simple.isSimpleDialogEditable, isTrue);
     expect(rich.isSimpleDialogEditable, isFalse);
-    final embedded = _textPayload(['a\nb']);
-    final explicit = _textPayload(['a', 'b']);
+    final embedded = simplePayload(['a\nb']);
+    final explicit = simplePayload(['a', 'b']);
     expect(embedded.logicalText, explicit.logicalText);
     expect(embedded.paragraphs, hasLength(1));
     expect(explicit.paragraphs, hasLength(2));
@@ -4379,6 +4604,97 @@ void main() {
         isFalse,
       );
     }
+  });
+
+  test('minimal dialog rejects unknown data at every style boundary', () {
+    final simple = _configuredTextPayload(
+      text: 'simple',
+      fontSize: 18,
+      italic: false,
+      underline: false,
+      strikethrough: false,
+    );
+    expect(simple.isSimpleDialogEditable, isTrue);
+    final encoded = simple.encode();
+    final paragraphs = encoded.values['paragraphs']! as PreservedList;
+    final paragraph = paragraphs.values.single as PreservedMap;
+    final runs = paragraph.values['runs']! as PreservedList;
+    final run = runs.values.single as PreservedMap;
+    PreservedMap unknownStyle(PreservedData value) {
+      final style = value as PreservedMap;
+      return PreservedMap({
+        ...style.values,
+        'futureStyle': const PreservedBoolean(true),
+      });
+    }
+
+    final candidates = <PreservedMap>[
+      PreservedMap({
+        ...encoded.values,
+        'defaultCharacterStyle': unknownStyle(
+          encoded.values['defaultCharacterStyle']!,
+        ),
+      }),
+      PreservedMap({
+        ...encoded.values,
+        'defaultParagraphStyle': unknownStyle(
+          encoded.values['defaultParagraphStyle']!,
+        ),
+      }),
+      PreservedMap({
+        ...encoded.values,
+        'paragraphs': PreservedList([
+          PreservedMap({
+            ...paragraph.values,
+            'style': unknownStyle(paragraph.values['style']!),
+          }),
+        ]),
+      }),
+      PreservedMap({
+        ...encoded.values,
+        'paragraphs': PreservedList([
+          PreservedMap({
+            ...paragraph.values,
+            'runs': PreservedList([
+              PreservedMap({
+                ...run.values,
+                'style': unknownStyle(run.values['style']!),
+              }),
+            ]),
+          }),
+        ]),
+      }),
+    ];
+    for (final candidate in candidates) {
+      final decoded = _ok(TextPayload.decode(candidate, limits: _textLimits));
+      expect(decoded.paragraphs, hasLength(1));
+      expect(decoded.paragraphs.single.runs, hasLength(1));
+      expect(decoded.paragraphs.single.runs.single.text, 'simple');
+      expect(decoded.isSimpleDialogEditable, isFalse);
+      expect(decoded.encode(), candidate);
+    }
+
+    final sharedCharacter = unknownStyle(
+      encoded.values['defaultCharacterStyle']!,
+    );
+    final sharedCandidate = PreservedMap({
+      ...encoded.values,
+      'defaultCharacterStyle': sharedCharacter,
+      'paragraphs': PreservedList([
+        PreservedMap({
+          ...paragraph.values,
+          'runs': PreservedList([
+            PreservedMap({...run.values, 'style': sharedCharacter}),
+          ]),
+        }),
+      ]),
+    });
+    expect(
+      _ok(
+        TextPayload.decode(sharedCandidate, limits: _textLimits),
+      ).isSimpleDialogEditable,
+      isFalse,
+    );
   });
 
   test(

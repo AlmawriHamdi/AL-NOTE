@@ -633,15 +633,21 @@ final class TextPayload {
 
   /// Whether the minimal Canvas dialog can edit this payload losslessly.
   bool get isSimpleDialogEditable {
+    if (defaultCharacterStyle.unknownFields.values.isNotEmpty ||
+        defaultParagraphStyle.unknownFields.values.isNotEmpty) {
+      return false;
+    }
     for (final paragraph in paragraphs) {
       if (paragraph.runs.length != 1 ||
           paragraph.unknownFields.values.isNotEmpty ||
+          paragraph.style.unknownFields.values.isNotEmpty ||
           !_sameParagraphStyle(paragraph.style, defaultParagraphStyle)) {
         return false;
       }
       final run = paragraph.runs.single;
       if (run.text.contains('\n') ||
           run.unknownFields.values.isNotEmpty ||
+          run.style.unknownFields.values.isNotEmpty ||
           !_sameCharacterStyle(run.style, defaultCharacterStyle)) {
         return false;
       }
@@ -768,11 +774,26 @@ final class TextObjectTypeDefinition
   ValidationReport validatePayload(
     PreservedData payload,
     SchemaVersion schemaVersion,
-  ) =>
-      schemaVersion == textSchemaVersion &&
-          TextPayload.decode(payload, limits: limits) is Ok
-      ? ValidationReport(const [])
-      : ValidationReport([_invalidIssue()]);
+  ) {
+    if (schemaVersion != textSchemaVersion) {
+      return ValidationReport([_invalidIssue()]);
+    }
+    final decoded = TextPayload.decode(payload, limits: limits);
+    if (decoded is! Ok<TextPayload, StructuredFailure>) {
+      return ValidationReport([_invalidIssue()]);
+    }
+    try {
+      final layout = layoutEngine.layout(
+        TextLayoutRequest(payload: decoded.value),
+      );
+      return layout is Ok<TextLayoutSnapshot, StructuredFailure>
+          ? ValidationReport(const [])
+          : ValidationReport([_invalidIssue()]);
+    } on Object {
+      return ValidationReport([_invalidIssue()]);
+    }
+  }
+
   @override
   Result<Rect2, StructuredFailure> intrinsicGeometry(
     PreservedData payload,
@@ -2068,9 +2089,14 @@ Result<Rect2, StructuredFailure> _deriveRepresentableBounds({
     if (!lineExtent.isFinite || lineExtent <= 0) {
       return Err(_failure('invalid_geometry'));
     }
-    // One scalar can occupy at most one wrapped line. Empty paragraphs retain
-    // one line based on the default character style and paragraph style.
-    final maximumLineCount = math.max(1, paragraph.scalarLength);
+    // One scalar can occupy at most one wrapped line, and embedded newlines can
+    // terminate the scalar's line and leave one final logical line. The scalar
+    // ceiling is Web-safe, so checked addition keeps this portable.
+    final scalarLength = paragraph.scalarLength;
+    if (scalarLength >= maximumWebSafeInteger) {
+      return Err(_failure('invalid_geometry'));
+    }
+    final maximumLineCount = scalarLength + 1;
     final paragraphExtent = lineExtent * maximumLineCount;
     if (!paragraphExtent.isFinite || paragraphExtent <= 0) {
       return Err(_failure('invalid_geometry'));
