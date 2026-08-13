@@ -11,6 +11,7 @@ import '../../core/versioning/revision.dart';
 import '../model/document_root.dart';
 import '../model/identifiers.dart';
 import '../objects/object_envelope.dart';
+import '../resources/resource_records.dart';
 import 'revision_snapshot.dart';
 
 /// A stable lowercase namespaced command-family identity.
@@ -299,10 +300,12 @@ final class AtomicObjectCollectionEditRequest extends CommandRequest {
     required List<ObjectCollectionAddition> additions,
     required List<ObjectId> removals,
     required List<ObjectEnvelope> replacements,
+    required List<DocumentResourceSnapshot> resourceAdditions,
     required this.replacementChangeCategories,
   }) : additions = List.unmodifiable(additions),
        removals = List.unmodifiable(removals),
-       replacements = List.unmodifiable(replacements);
+       replacements = List.unmodifiable(replacements),
+       resourceAdditions = List.unmodifiable(resourceAdditions);
 
   /// Safely creates a bounded nonempty collection edit.
   static Result<AtomicObjectCollectionEditRequest, StructuredFailure> create({
@@ -313,6 +316,7 @@ final class AtomicObjectCollectionEditRequest extends CommandRequest {
     Iterable<ObjectCollectionAddition> additions = const [],
     Iterable<ObjectId> removals = const [],
     Iterable<ObjectEnvelope> replacements = const [],
+    Iterable<DocumentResourceSnapshot> resourceAdditions = const [],
     ObjectReplacementChangeCategories replacementChangeCategories =
         const ObjectReplacementChangeCategories(
           appearance: false,
@@ -334,10 +338,20 @@ final class AtomicObjectCollectionEditRequest extends CommandRequest {
             replacements,
             maximumOperations - added.length - removed.length,
           );
+    final resources = added == null || removed == null || replaced == null
+        ? null
+        : _boundedCapture(
+            resourceAdditions,
+            maximumOperations - added.length - removed.length - replaced.length,
+          );
     if (added == null ||
         removed == null ||
         replaced == null ||
-        added.isEmpty && removed.isEmpty && replaced.isEmpty ||
+        resources == null ||
+        added.isEmpty &&
+            removed.isEmpty &&
+            replaced.isEmpty &&
+            resources.isEmpty ||
         metadata.family != CommandFamily.objectCollectionEdit ||
         metadata.coalescing != null) {
       return Err(_requestFailure('invalid_collection_edit'));
@@ -350,6 +364,12 @@ final class AtomicObjectCollectionEditRequest extends CommandRequest {
       if (!ids.add(id)) return Err(_requestFailure('duplicate_target'));
     for (final item in replaced)
       if (!ids.add(item.id)) return Err(_requestFailure('duplicate_target'));
+    final resourceIds = <ResourceIdentity>{};
+    for (final resource in resources) {
+      if (!resourceIds.add(resource.identity)) {
+        return Err(_requestFailure('duplicate_resource'));
+      }
+    }
     return Ok(
       AtomicObjectCollectionEditRequest._(
         documentId: documentId,
@@ -359,6 +379,7 @@ final class AtomicObjectCollectionEditRequest extends CommandRequest {
         additions: added,
         removals: removed,
         replacements: replaced,
+        resourceAdditions: resources,
         replacementChangeCategories: replacementChangeCategories,
       ),
     );
@@ -375,6 +396,9 @@ final class AtomicObjectCollectionEditRequest extends CommandRequest {
 
   /// Same-ID replacements.
   final List<ObjectEnvelope> replacements;
+
+  /// Fully validated immutable resources published with this edit.
+  final List<DocumentResourceSnapshot> resourceAdditions;
 
   /// Caller claim checked against authoritative Object-type semantics.
   final ObjectReplacementChangeCategories replacementChangeCategories;
@@ -819,11 +843,12 @@ final class HistoryLimits {
 
 /// Immutable values supplied to a retained-cost estimator.
 final class HistoryCostEstimateInput {
-  /// Creates estimator input containing no resource bytes.
+  /// Creates estimator input with explicit resource-byte accounting.
   const HistoryCostEstimateInput({
     required this.beforeRoot,
     required this.afterRoot,
     required this.replacedObjectCount,
+    this.retainedResourceBytes = 0,
   });
 
   /// Exact before root.
@@ -834,6 +859,9 @@ final class HistoryCostEstimateInput {
 
   /// Number of retained replacement targets.
   final int replacedObjectCount;
+
+  /// Exact resource octets retained exclusively by this history transition.
+  final int retainedResourceBytes;
 }
 
 /// Injected AL NOTE-owned history retained-cost estimator.

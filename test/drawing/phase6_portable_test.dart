@@ -797,14 +797,18 @@ void main() {
       ),
     );
     final current = coordinator.snapshot;
-    final stale = DocumentCoordinatorSnapshot(
-      root: testNotebook(id: 41),
-      revisions: current.revisions,
-      currentContentIdentity: current.currentContentIdentity,
-      savedContentIdentity: current.savedContentIdentity,
-      canUndo: current.canUndo,
-      canRedo: current.canRedo,
-      historyTraversalEnabled: current.historyTraversalEnabled,
+    final stale = _ok(
+      DocumentCoordinatorSnapshot.create(
+        root: testNotebook(id: 41),
+        resources: const [],
+        maximumResources: 0,
+        revisions: current.revisions,
+        currentContentIdentity: current.currentContentIdentity,
+        savedContentIdentity: current.savedContentIdentity,
+        canUndo: current.canUndo,
+        canRedo: current.canRedo,
+        historyTraversalEnabled: current.historyTraversalEnabled,
+      ),
     );
     expect(
       session.finish(
@@ -1384,14 +1388,18 @@ void main() {
         (valid, unavailableRegistry),
         (valid, incapableRegistry),
       ]) {
-        final snapshot = DocumentCoordinatorSnapshot(
-          root: _rootWithObject(entry.$1),
-          revisions: base.revisions,
-          currentContentIdentity: base.currentContentIdentity,
-          savedContentIdentity: base.savedContentIdentity,
-          canUndo: base.canUndo,
-          canRedo: base.canRedo,
-          historyTraversalEnabled: base.historyTraversalEnabled,
+        final snapshot = _ok(
+          DocumentCoordinatorSnapshot.create(
+            root: _rootWithObject(entry.$1),
+            resources: const [],
+            maximumResources: 0,
+            revisions: base.revisions,
+            currentContentIdentity: base.currentContentIdentity,
+            savedContentIdentity: base.savedContentIdentity,
+            canUndo: base.canUndo,
+            canRedo: base.canRedo,
+            historyTraversalEnabled: base.historyTraversalEnabled,
+          ),
         );
         final whole = WholeEraseGesturePlan.prepare(
           document: snapshot,

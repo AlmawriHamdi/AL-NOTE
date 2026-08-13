@@ -209,6 +209,96 @@ final class PreservedMap extends PreservedData {
   String toString() => 'PreservedMap(length: ${values.length})';
 }
 
+/// Validates preserved unknown evidence incrementally under cumulative limits.
+///
+/// An entry beyond a boundary ceiling is detected with `moveNext` but its key
+/// and value are never read. Accepted strings are scanned as UTF-16 evidence;
+/// collection or string length metadata is not used to approve them.
+bool preservedUnknownDataAllowed({
+  required PreservedMap root,
+  required int maximumFieldsPerBoundary,
+  required int maximumNodes,
+  required int maximumDepth,
+  required int maximumStringCodeUnits,
+}) {
+  if (maximumFieldsPerBoundary < 0 ||
+      maximumNodes <= 0 ||
+      maximumDepth <= 0 ||
+      maximumStringCodeUnits <= 0) {
+    return false;
+  }
+  var nodes = 0;
+  var remainingCodeUnits = maximumStringCodeUnits;
+  final pending = <(PreservedData, int)>[(root, 1)];
+  try {
+    while (pending.isNotEmpty) {
+      final current = pending.removeLast();
+      if (current.$2 > maximumDepth) return false;
+      switch (current.$1) {
+        case PreservedMap(:final values):
+          var boundary = 0;
+          final iterator = values.entries.iterator;
+          while (iterator.moveNext()) {
+            if (boundary >= maximumFieldsPerBoundary ||
+                nodes >= maximumNodes ||
+                current.$2 >= maximumDepth) {
+              return false;
+            }
+            final entry = iterator.current;
+            final remaining = _consumeUtf16(entry.key, remainingCodeUnits);
+            if (remaining == null) return false;
+            remainingCodeUnits = remaining;
+            boundary += 1;
+            nodes += 1;
+            pending.add((entry.value, current.$2 + 1));
+          }
+        case PreservedList(:final values):
+          var boundary = 0;
+          final iterator = values.iterator;
+          while (iterator.moveNext()) {
+            if (boundary >= maximumFieldsPerBoundary ||
+                nodes >= maximumNodes ||
+                current.$2 >= maximumDepth) {
+              return false;
+            }
+            boundary += 1;
+            nodes += 1;
+            pending.add((iterator.current, current.$2 + 1));
+          }
+        case PreservedString(:final value):
+          final remaining = _consumeUtf16(value, remainingCodeUnits);
+          if (remaining == null) return false;
+          remainingCodeUnits = remaining;
+        default:
+          break;
+      }
+    }
+  } on Object {
+    return false;
+  }
+  return true;
+}
+
+int? _consumeUtf16(String value, int remaining) {
+  var index = 0;
+  while (index < value.length) {
+    if (remaining <= 0) return null;
+    final unit = value.codeUnitAt(index);
+    remaining -= 1;
+    index += 1;
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      if (index >= value.length || remaining <= 0) return null;
+      final low = value.codeUnitAt(index);
+      if (low < 0xdc00 || low > 0xdfff) return null;
+      remaining -= 1;
+      index += 1;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return null;
+    }
+  }
+  return remaining;
+}
+
 StructuredFailure _preservedFailure(String code, String message) =>
     StructuredFailure(
       code: code,

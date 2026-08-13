@@ -16,6 +16,7 @@ import '../model/document_validator.dart';
 import '../model/identifiers.dart';
 import '../objects/object_envelope.dart';
 import '../objects/object_registry.dart';
+import '../resources/resources.dart';
 import 'command_contracts.dart';
 import 'revision_snapshot.dart';
 
@@ -32,12 +33,16 @@ final class DocumentSaveCapture {
   /// Creates an exact immutable save capture.
   const DocumentSaveCapture._({
     required this.root,
+    required this.resources,
     required this.contentIdentity,
     required Object owner,
   }) : _owner = owner;
 
   /// The exact captured authoritative root.
   final DocumentRoot root;
+
+  /// Exact immutable resources active at capture time.
+  final List<DocumentResourceSnapshot> resources;
 
   /// The exact captured session content identity.
   final ContentIdentity contentIdentity;
@@ -48,19 +53,63 @@ final class DocumentSaveCapture {
 
 /// Immutable outward-facing state of one document mutation coordinator.
 final class DocumentCoordinatorSnapshot {
-  /// Creates an immutable coordinator snapshot.
-  const DocumentCoordinatorSnapshot({
+  DocumentCoordinatorSnapshot._({
     required this.root,
+    required List<DocumentResourceSnapshot> resources,
     required this.revisions,
     required this.currentContentIdentity,
     required this.savedContentIdentity,
     required this.canUndo,
     required this.canRedo,
     required this.historyTraversalEnabled,
-  });
+  }) : resources = List<DocumentResourceSnapshot>.unmodifiable(resources);
+
+  /// Incrementally captures a complete immutable coordinator snapshot.
+  static Result<DocumentCoordinatorSnapshot, StructuredFailure> create({
+    required DocumentRoot root,
+    required Iterable<DocumentResourceSnapshot> resources,
+    required int maximumResources,
+    required DocumentRevisionSnapshot revisions,
+    required ContentIdentity currentContentIdentity,
+    required ContentIdentity? savedContentIdentity,
+    required bool canUndo,
+    required bool canRedo,
+    required bool historyTraversalEnabled,
+  }) {
+    final captured = _captureSnapshotResources(resources, maximumResources);
+    if (captured == null ||
+        !_resourceCatalogMatches(
+          root.resources,
+          captured.map((value) => value.identity),
+        )) {
+      return Err(
+        StructuredFailure(
+          code: 'documents.commands.invalid_snapshot',
+          category: FailureCategory.validation,
+          retryDisposition: RetryDisposition.never,
+          message: 'Document snapshot evidence is invalid or unavailable.',
+        ),
+      );
+    }
+    return Ok(
+      DocumentCoordinatorSnapshot._(
+        root: root,
+        resources: captured,
+        revisions: revisions,
+        currentContentIdentity: currentContentIdentity,
+        savedContentIdentity: savedContentIdentity,
+        canUndo: canUndo,
+        canRedo: canRedo,
+        historyTraversalEnabled: historyTraversalEnabled,
+      ),
+    );
+  }
 
   /// Current authoritative document root.
   final DocumentRoot root;
+
+  /// Exact immutable resources corresponding to [root]'s catalog.
+  final List<DocumentResourceSnapshot> resources;
 
   /// Current session revision tokens.
   final DocumentRevisionSnapshot revisions;
@@ -97,6 +146,7 @@ enum InitialDocumentSaveState {
 final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   DocumentMutationCoordinator._({
     required DocumentRoot root,
+    required Map<ResourceIdentity, DocumentResourceSnapshot> resources,
     required DocumentValidator validator,
     required UuidGenerator uuidGenerator,
     required HistoryLimits historyLimits,
@@ -105,6 +155,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     required InitialDocumentSaveState initialSaveState,
     required this.maximumListeners,
   }) : _root = root,
+       _resources = resources,
        _validator = validator,
        _uuidGenerator = uuidGenerator,
        _historyLimits = historyLimits,
@@ -135,6 +186,8 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   /// initial session-only content identity.
   static Result<DocumentMutationCoordinator, CommandFailure> create({
     required DocumentRoot initialRoot,
+    Iterable<DocumentResourceSnapshot> initialResources = const [],
+    bool requireCompleteInitialResources = false,
     required DocumentValidator validator,
     required UuidGenerator uuidGenerator,
     required HistoryLimits historyLimits,
@@ -147,7 +200,14 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         _failure('invalid_listener_limit', FailureCategory.validation),
       );
     }
-    if (!validator.validate(initialRoot).isValid) {
+    final resources = _captureResourceMap(
+      initialResources,
+      maximum: initialRoot.resources.entries.length,
+    );
+    if (resources == null ||
+        (requireCompleteInitialResources || resources.isNotEmpty) &&
+            !_resourceCatalogMatches(initialRoot.resources, resources.keys) ||
+        !validator.validate(initialRoot).isValid) {
       return Err(
         _failure('invalid_initial_document', FailureCategory.validation),
       );
@@ -157,6 +217,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         onOk: (uuid) => Ok(
           DocumentMutationCoordinator._(
             root: initialRoot,
+            resources: resources,
             validator: validator,
             uuidGenerator: uuidGenerator,
             historyLimits: historyLimits,
@@ -189,6 +250,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   final HistoryRetainedCostEstimator _retainedCostEstimator;
   final int maximumListeners;
   DocumentRoot _root;
+  Map<ResourceIdentity, DocumentResourceSnapshot> _resources;
   DocumentRevisionSnapshot _revisions;
   ContentIdentity _currentContentIdentity;
   ContentIdentity? _savedContentIdentity;
@@ -204,8 +266,9 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   final Object _saveCaptureOwner = Object();
 
   /// Current immutable coordinator state.
-  DocumentCoordinatorSnapshot get snapshot => DocumentCoordinatorSnapshot(
+  DocumentCoordinatorSnapshot get snapshot => DocumentCoordinatorSnapshot._(
     root: _root,
+    resources: _orderedResources(_resources),
     revisions: _revisions,
     currentContentIdentity: _currentContentIdentity,
     savedContentIdentity: _savedContentIdentity,
@@ -292,6 +355,32 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     if (!request.preconditions.pages.containsKey(request.pageId)) {
       return Err(
         _failure('missing_revision_precondition', FailureCategory.validation),
+      );
+    }
+    if (request.resourceAdditions.isNotEmpty &&
+        request.preconditions.resourceCatalog == null) {
+      return Err(
+        _failure('missing_revision_precondition', FailureCategory.validation),
+      );
+    }
+    final addedResources = <ResourceIdentity, DocumentResourceSnapshot>{};
+    for (final resource in request.resourceAdditions) {
+      if (_resources.containsKey(resource.identity) ||
+          addedResources.containsKey(resource.identity)) {
+        return Err(
+          _failure('invalid_resource_addition', FailureCategory.validation),
+        );
+      }
+      addedResources[resource.identity] = resource;
+    }
+    final resourceCatalog = ResourceCatalog.create([
+      ..._root.resources.entries,
+      for (final identity in addedResources.keys)
+        ResourceCatalogEntry(identity),
+    ]).fold<ResourceCatalog?>(onOk: (value) => value, onErr: (_) => null);
+    if (resourceCatalog == null) {
+      return Err(
+        _failure('invalid_resource_addition', FailureCategory.validation),
       );
     }
     final page = _root.pages
@@ -407,13 +496,19 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     final additionsByLayer = <LayerId, List<ObjectEnvelope>>{};
     for (final item in request.additions)
       (additionsByLayer[item.layerId] ??= []).add(item.object);
-    final candidate = _editPageObjects(
+    final edited = _editPageObjects(
       _root,
       request.pageId,
       request.removals.toSet(),
       replacementMap,
       additionsByLayer,
     ).fold<DocumentRoot?>(onOk: (value) => value, onErr: (_) => null);
+    final candidate = edited == null
+        ? null
+        : _replaceResourceCatalog(
+            edited,
+            resourceCatalog,
+          ).fold<DocumentRoot?>(onOk: (value) => value, onErr: (_) => null);
     if (candidate == null ||
         !_validator.validate(candidate).isValid ||
         candidate == _root)
@@ -453,6 +548,11 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         _failure('object_behavior_unavailable', FailureCategory.dependency),
       );
     }
+    if (!addedResources.keys.every(referencesAfter.contains)) {
+      return Err(
+        _failure('unreferenced_resource_addition', FailureCategory.validation),
+      );
+    }
     return Ok(
       _Prepared(
         before: _root,
@@ -476,6 +576,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         metadataChanged: replacementMetadataChanged,
         addedResourceReferences: referencesAfter.difference(referencesBefore),
         removedResourceReferences: referencesBefore.difference(referencesAfter),
+        addedResources: addedResources,
         addedObjectIds: request.additions.map((v) => v.object.id).toSet(),
         removedObjectIds: request.removals.toSet(),
         replacedObjectIds: replacementMap.keys.toSet(),
@@ -753,6 +854,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     );
 
     _root = prepared.after;
+    _resources = _applyResourceChanges(_resources, prepared);
     _revisions = nextRevisions;
     _recordObjectGenerations(prepared, nextRevisions);
     _issuedObjectIds.addAll(prepared.addedObjectIds);
@@ -789,6 +891,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
       beforeRoot: canCoalesce ? prior.before : prepared.before,
       afterRoot: prepared.after,
       replacedObjectCount: prepared.objectIds.length,
+      retainedResourceBytes: _retainedResourceBytes(prepared),
     );
     final costResult = _estimateCost(
       estimateInput,
@@ -863,11 +966,17 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
       }
       final descriptionBytes = utf8.encode(retainedDescription).length;
       if (descriptionBytes > Revision.maximumValue ||
-          estimated.estimatedBytes > Revision.maximumValue - descriptionBytes) {
+          input.retainedResourceBytes < 0 ||
+          input.retainedResourceBytes > Revision.maximumValue ||
+          estimated.estimatedBytes > Revision.maximumValue - descriptionBytes ||
+          estimated.estimatedBytes + descriptionBytes >
+              Revision.maximumValue - input.retainedResourceBytes) {
         return Err(_failure('history_cost_overflow', FailureCategory.resource));
       }
       return HistoryRetainedCost.create(
-        estimated.estimatedBytes + descriptionBytes,
+        estimated.estimatedBytes +
+            descriptionBytes +
+            input.retainedResourceBytes,
       ).fold(
         onOk: Ok<HistoryRetainedCost, CommandFailure>.new,
         onErr: (_) =>
@@ -964,6 +1073,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         historyRecorded: false,
       );
       _root = destination;
+      _resources = _applyResourceChanges(_resources, prepared);
       _currentContentIdentity = destinationIdentity;
       _revisions = nextRevisions;
       _recordObjectGenerations(prepared, nextRevisions);
@@ -993,6 +1103,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     establishCoalescingBoundary(CoalescingBoundary.saveCheckpoint);
     return DocumentSaveCapture._(
       root: _root,
+      resources: _orderedResources(_resources),
       contentIdentity: _currentContentIdentity,
       owner: _saveCaptureOwner,
     );
@@ -1033,7 +1144,12 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   }
 
   DocumentRevisionSnapshot? _advancedRevisions(_Prepared prepared) {
-    if (prepared.addedObjectIds.isEmpty && prepared.removedObjectIds.isEmpty) {
+    final resourcesChanged =
+        prepared.addedResources.isNotEmpty ||
+        prepared.removedResources.isNotEmpty;
+    if (prepared.addedObjectIds.isEmpty &&
+        prepared.removedObjectIds.isEmpty &&
+        !resourcesChanged) {
       return _revisions
           .advanceObjects(prepared.objectIds)
           .fold(onOk: (value) => value, onErr: (_) => null);
@@ -1042,6 +1158,10 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         value.increment().fold(onOk: (v) => v, onErr: (_) => null);
     final document = increment(_revisions.document);
     if (document == null) return null;
+    final resourceCatalog = resourcesChanged
+        ? increment(_revisions.resourceCatalog)
+        : _revisions.resourceCatalog;
+    if (resourceCatalog == null) return null;
     final pages = Map<PageId, Revision>.of(_revisions.pages);
     final membership = Map<LayerId, Revision>.of(_revisions.layerMembership);
     for (final id in prepared.pageIds) {
@@ -1083,7 +1203,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
       layers: _revisions.layers,
       layerMembership: membership,
       objects: objects,
-      resourceCatalog: _revisions.resourceCatalog,
+      resourceCatalog: resourceCatalog,
     );
   }
 
@@ -1139,7 +1259,9 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
       text: prepared.textChanged,
       resources:
           prepared.addedResourceReferences.isNotEmpty ||
-          prepared.removedResourceReferences.isNotEmpty,
+          prepared.removedResourceReferences.isNotEmpty ||
+          prepared.addedResources.isNotEmpty ||
+          prepared.removedResources.isNotEmpty,
       metadata: prepared.metadataChanged,
       structure: prepared.membershipChanged,
     ),
@@ -1307,6 +1429,141 @@ Map<ObjectId, _Location>? _locateObjects(
   }
   return result.length == wanted.length ? result : null;
 }
+
+Map<ResourceIdentity, DocumentResourceSnapshot>? _captureResourceMap(
+  Iterable<DocumentResourceSnapshot> resources, {
+  required int maximum,
+}) {
+  final result = <ResourceIdentity, DocumentResourceSnapshot>{};
+  try {
+    final iterator = resources.iterator;
+    while (iterator.moveNext()) {
+      if (result.length >= maximum) return null;
+      final resource = iterator.current;
+      if (result.containsKey(resource.identity)) return null;
+      result[resource.identity] = resource;
+    }
+    return Map.unmodifiable(result);
+  } on Object {
+    return null;
+  }
+}
+
+List<DocumentResourceSnapshot>? _captureSnapshotResources(
+  Iterable<DocumentResourceSnapshot> resources,
+  int maximum,
+) {
+  if (maximum < 0 || maximum > Revision.maximumValue) return null;
+  final result = <DocumentResourceSnapshot>[];
+  final identities = <ResourceIdentity>{};
+  try {
+    final iterator = resources.iterator;
+    while (true) {
+      final hasNext = iterator.moveNext();
+      if (!hasNext) break;
+      if (result.length >= maximum) return null;
+      final current = iterator.current;
+      if (!identities.add(current.identity)) return null;
+      result.add(current);
+    }
+  } on Object {
+    return null;
+  }
+  return List<DocumentResourceSnapshot>.unmodifiable(result);
+}
+
+bool _resourceCatalogMatches(
+  ResourceCatalog catalog,
+  Iterable<ResourceIdentity> resources,
+) {
+  final identities = resources.toSet();
+  return identities.length == catalog.entries.length &&
+      catalog.entries.every((entry) => identities.contains(entry.identity));
+}
+
+List<DocumentResourceSnapshot> _orderedResources(
+  Map<ResourceIdentity, DocumentResourceSnapshot> resources,
+) {
+  final values = resources.values.toList()
+    ..sort(
+      (left, right) =>
+          left.identity.uuid.value.compareTo(right.identity.uuid.value),
+    );
+  return List.unmodifiable(values);
+}
+
+Map<ResourceIdentity, DocumentResourceSnapshot> _applyResourceChanges(
+  Map<ResourceIdentity, DocumentResourceSnapshot> current,
+  _Prepared prepared,
+) {
+  final result = Map<ResourceIdentity, DocumentResourceSnapshot>.of(current);
+  for (final identity in prepared.removedResources.keys) {
+    result.remove(identity);
+  }
+  result.addAll(prepared.addedResources);
+  return Map.unmodifiable(result);
+}
+
+int _retainedResourceBytes(_Prepared prepared) {
+  var total = 0;
+  for (final resource in [
+    ...prepared.addedResources.values,
+    ...prepared.removedResources.values,
+  ]) {
+    final length = resource.decodedByteLength;
+    if (length < 0 || total > Revision.maximumValue - length) {
+      return Revision.maximumValue;
+    }
+    total += length;
+  }
+  return total;
+}
+
+Result<DocumentRoot, CommandFailure> _replaceResourceCatalog(
+  DocumentRoot root,
+  ResourceCatalog resources,
+) => switch (root) {
+  StandalonePageDocument() =>
+    StandalonePageDocument.create(
+          id: root.id,
+          schemaVersion: root.schemaVersion,
+          title: root.title,
+          resources: resources,
+          extensionData: root.extensionData,
+          page: root.page,
+        )
+        .map<DocumentRoot>((value) => value)
+        .mapError(
+          (_) => _failure('invalid_candidate', FailureCategory.validation),
+        ),
+  StandalonePdfDocument() =>
+    StandalonePdfDocument.create(
+          id: root.id,
+          schemaVersion: root.schemaVersion,
+          title: root.title,
+          resources: resources,
+          extensionData: root.extensionData,
+          pages: root.pages,
+          source: root.source,
+        )
+        .map<DocumentRoot>((value) => value)
+        .mapError(
+          (_) => _failure('invalid_candidate', FailureCategory.validation),
+        ),
+  NotebookDocument() =>
+    NotebookDocument.create(
+          id: root.id,
+          schemaVersion: root.schemaVersion,
+          title: root.title,
+          resources: resources,
+          extensionData: root.extensionData,
+          sections: root.sections,
+        )
+        .map<DocumentRoot>((value) => value)
+        .mapError(
+          (_) => _failure('invalid_candidate', FailureCategory.validation),
+        ),
+};
 
 Result<DocumentRoot, CommandFailure> _replaceObjects(
   DocumentRoot root,
@@ -1516,6 +1773,8 @@ final class _Prepared {
     Set<ObjectId>? replacedObjectIds,
     this.membershipChanged = false,
     Set<ObjectId>? movedObjectIds,
+    Map<ResourceIdentity, DocumentResourceSnapshot> addedResources = const {},
+    Map<ResourceIdentity, DocumentResourceSnapshot> removedResources = const {},
   }) : assert(objectIds.containsAll(geometryChangedObjectIds)),
        objectIds = Set<ObjectId>.unmodifiable(objectIds),
        pageIds = Set<PageId>.unmodifiable(pageIds),
@@ -1536,7 +1795,9 @@ final class _Prepared {
        replacedObjectIds = Set.unmodifiable(replacedObjectIds ?? objectIds),
        movedObjectIds = Set.unmodifiable(
          movedObjectIds ?? geometryChangedObjectIds,
-       );
+       ),
+       addedResources = Map.unmodifiable(addedResources),
+       removedResources = Map.unmodifiable(removedResources);
   final DocumentRoot before;
   final DocumentRoot after;
   final Set<ObjectId> objectIds;
@@ -1558,6 +1819,8 @@ final class _Prepared {
   final Set<ObjectId> replacedObjectIds;
   final bool membershipChanged;
   final Set<ObjectId> movedObjectIds;
+  final Map<ResourceIdentity, DocumentResourceSnapshot> addedResources;
+  final Map<ResourceIdentity, DocumentResourceSnapshot> removedResources;
 
   _Prepared reversed() => _Prepared(
     before: after,
@@ -1578,6 +1841,8 @@ final class _Prepared {
     replacedObjectIds: replacedObjectIds,
     membershipChanged: membershipChanged,
     movedObjectIds: movedObjectIds,
+    addedResources: removedResources,
+    removedResources: addedResources,
   );
 
   _Prepared merge(_Prepared later) {
@@ -1619,6 +1884,8 @@ final class _Prepared {
       replacedObjectIds: {...replacedObjectIds, ...later.replacedObjectIds},
       membershipChanged: membershipChanged || later.membershipChanged,
       movedObjectIds: _boundChangedObjectIds(mergedOldBounds, mergedNewBounds),
+      addedResources: {...addedResources, ...later.addedResources},
+      removedResources: {...removedResources, ...later.removedResources},
     );
   }
 }

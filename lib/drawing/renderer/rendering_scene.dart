@@ -89,6 +89,15 @@ final class RenderColor {
   final int argb;
 }
 
+/// Portable polygon fill winding rule.
+enum RenderFillRule { nonZero, evenOdd }
+
+/// Portable stroke endpoint cap.
+enum RenderStrokeCap { butt, round, square }
+
+/// Portable stroke corner join.
+enum RenderStrokeJoin { miter, round, bevel }
+
 /// Base family of validated portable scene primitives.
 sealed class ScenePrimitive {
   const ScenePrimitive._({
@@ -114,8 +123,13 @@ final class FilledPolygonPrimitive extends ScenePrimitive {
     required super.bounds,
     required super.opacity,
     required this.color,
+    required this.fillRule,
     required List<Point2> points,
+    required List<double>? localToViewCoefficients,
   }) : points = List<Point2>.unmodifiable(points),
+       localToViewCoefficients = localToViewCoefficients == null
+           ? null
+           : List<double>.unmodifiable(localToViewCoefficients),
        super._();
 
   /// Safely captures a finite polygon under [maximumPoints].
@@ -123,8 +137,11 @@ final class FilledPolygonPrimitive extends ScenePrimitive {
     required RenderPlane plane,
     required double opacity,
     required RenderColor color,
+    RenderFillRule fillRule = RenderFillRule.nonZero,
     required Iterable<Point2> points,
     required int maximumPoints,
+    Iterable<double>? localToViewCoefficients,
+    Rect2? transformedBounds,
   }) {
     if (!opacity.isFinite || opacity < 0 || opacity > 1 || maximumPoints < 3) {
       return Err(_failure('invalid_primitive', FailureCategory.validation));
@@ -135,7 +152,12 @@ final class FilledPolygonPrimitive extends ScenePrimitive {
     final values = (captured as Ok<List<Point2>, StructuredFailure>).value;
     if (values.length < 3)
       return Err(_failure('invalid_primitive', FailureCategory.validation));
-    final bounds = _bounds(values);
+    final transform = _captureOptionalAffine(localToViewCoefficients);
+    if (transform is Err<List<double>?, StructuredFailure> ||
+        (localToViewCoefficients == null) != (transformedBounds == null)) {
+      return Err(_failure('invalid_primitive', FailureCategory.validation));
+    }
+    final bounds = transformedBounds ?? _bounds(values);
     if (bounds == null)
       return Err(_failure('invalid_primitive', FailureCategory.validation));
     return Ok(
@@ -144,7 +166,10 @@ final class FilledPolygonPrimitive extends ScenePrimitive {
         bounds: bounds,
         opacity: opacity,
         color: color,
+        fillRule: fillRule,
         points: values,
+        localToViewCoefficients:
+            (transform as Ok<List<double>?, StructuredFailure>).value,
       ),
     );
   }
@@ -152,8 +177,401 @@ final class FilledPolygonPrimitive extends ScenePrimitive {
   /// Fill color.
   final RenderColor color;
 
+  /// Winding rule used for self-intersecting polygons.
+  final RenderFillRule fillRule;
+
   /// Ordered immutable view-space polygon vertices.
   final List<Point2> points;
+
+  /// Optional local-to-view affine applied to the complete fill geometry.
+  final List<double>? localToViewCoefficients;
+}
+
+/// One same-color polygon union whose opacity is composited exactly once.
+final class FilledPolygonGroupPrimitive extends ScenePrimitive {
+  FilledPolygonGroupPrimitive._({
+    required super.plane,
+    required super.bounds,
+    required super.opacity,
+    required this.color,
+    required List<List<Point2>> contours,
+    required List<double>? localToViewCoefficients,
+  }) : contours = List<List<Point2>>.unmodifiable(
+         contours.map(List<Point2>.unmodifiable),
+       ),
+       localToViewCoefficients = localToViewCoefficients == null
+           ? null
+           : List<double>.unmodifiable(localToViewCoefficients),
+       super._();
+
+  /// Incrementally captures bounded contours without trusting collection sizes.
+  static const int maximumSupportedTotalPoints = 1000000;
+
+  /// Incrementally captures bounded contours without trusting collection sizes.
+  static Result<FilledPolygonGroupPrimitive, StructuredFailure> create({
+    required RenderPlane plane,
+    required double opacity,
+    required RenderColor color,
+    required Iterable<Iterable<Point2>> contours,
+    required int maximumContours,
+    required int maximumPointsPerContour,
+    required int maximumTotalPoints,
+    Iterable<double>? localToViewCoefficients,
+    Rect2? transformedBounds,
+  }) {
+    if (!opacity.isFinite ||
+        opacity < 0 ||
+        opacity > 1 ||
+        maximumContours <= 0 ||
+        maximumContours > Revision.maximumValue ||
+        maximumPointsPerContour < 3 ||
+        maximumPointsPerContour > Revision.maximumValue ||
+        maximumTotalPoints <= 0 ||
+        maximumTotalPoints > Revision.maximumValue ||
+        maximumTotalPoints > maximumSupportedTotalPoints) {
+      return Err(_failure('invalid_polygon_group', FailureCategory.validation));
+    }
+    final values = <List<Point2>>[];
+    var remainingPoints = maximumTotalPoints;
+    double? left, right, top, bottom;
+    try {
+      final iterator = contours.iterator;
+      while (iterator.moveNext()) {
+        if (values.length >= maximumContours) {
+          return Err(_failure('polygon_group_limit', FailureCategory.resource));
+        }
+        final contour = <Point2>[];
+        final pointIterator = iterator.current.iterator;
+        while (pointIterator.moveNext()) {
+          if (contour.length >= maximumPointsPerContour) {
+            return Err(
+              _failure('polygon_group_point_limit', FailureCategory.resource),
+            );
+          }
+          if (remainingPoints <= 0) {
+            return Err(
+              _failure('polygon_group_total_limit', FailureCategory.resource),
+            );
+          }
+          final point = pointIterator.current;
+          contour.add(point);
+          remainingPoints -= 1;
+          left = left == null ? point.x : math.min(left, point.x);
+          right = right == null ? point.x : math.max(right, point.x);
+          top = top == null ? point.y : math.min(top, point.y);
+          bottom = bottom == null ? point.y : math.max(bottom, point.y);
+        }
+        if (contour.length < 3) {
+          return Err(
+            _failure('invalid_polygon_group', FailureCategory.validation),
+          );
+        }
+        values.add(List<Point2>.unmodifiable(contour));
+      }
+    } on Object {
+      return Err(_failure('invalid_iterable', FailureCategory.dependency));
+    }
+    if (values.isEmpty) {
+      return Err(_failure('invalid_polygon_group', FailureCategory.validation));
+    }
+    final transform = _captureOptionalAffine(localToViewCoefficients);
+    if (transform is! Ok<List<double>?, StructuredFailure> ||
+        (localToViewCoefficients == null) != (transformedBounds == null)) {
+      return Err(_failure('invalid_polygon_group', FailureCategory.validation));
+    }
+    final bounds =
+        transformedBounds ??
+        (left == null
+            ? null
+            : Rect2.fromEdges(
+                left: left,
+                top: top!,
+                right: right!,
+                bottom: bottom!,
+              ).fold<Rect2?>(onOk: (value) => value, onErr: (_) => null));
+    if (bounds == null) {
+      return Err(_failure('invalid_polygon_group', FailureCategory.validation));
+    }
+    return Ok(
+      FilledPolygonGroupPrimitive._(
+        plane: plane,
+        bounds: bounds,
+        opacity: opacity,
+        color: color,
+        contours: values,
+        localToViewCoefficients: transform.value,
+      ),
+    );
+  }
+
+  /// Shared stroke color.
+  final RenderColor color;
+
+  /// Deterministically ordered immutable local contours.
+  final List<List<Point2>> contours;
+
+  /// Optional local-to-view affine applied to the complete union.
+  final List<double>? localToViewCoefficients;
+}
+
+/// An immutable view-space stroked path with bounded dash metadata.
+final class StrokedPathPrimitive extends ScenePrimitive {
+  StrokedPathPrimitive._({
+    required super.plane,
+    required super.bounds,
+    required super.opacity,
+    required this.color,
+    required this.strokeWidth,
+    required this.cap,
+    required this.join,
+    required this.miterLimit,
+    required this.closed,
+    required List<double> dashArray,
+    required this.dashOffset,
+    required List<Point2> points,
+    required List<double>? localToViewCoefficients,
+  }) : dashArray = List<double>.unmodifiable(dashArray),
+       points = List<Point2>.unmodifiable(points),
+       localToViewCoefficients = localToViewCoefficients == null
+           ? null
+           : List<double>.unmodifiable(localToViewCoefficients),
+       super._();
+
+  /// Safely captures a finite stroked path.
+  static Result<StrokedPathPrimitive, StructuredFailure> create({
+    required RenderPlane plane,
+    required double opacity,
+    required RenderColor color,
+    required double strokeWidth,
+    required RenderStrokeCap cap,
+    required RenderStrokeJoin join,
+    required double miterLimit,
+    required bool closed,
+    required Iterable<double> dashArray,
+    required double dashOffset,
+    required Iterable<Point2> points,
+    required int maximumPoints,
+    Iterable<double>? localToViewCoefficients,
+    Rect2? transformedBounds,
+  }) {
+    if (!opacity.isFinite ||
+        opacity < 0 ||
+        opacity > 1 ||
+        !strokeWidth.isFinite ||
+        strokeWidth <= 0 ||
+        !miterLimit.isFinite ||
+        miterLimit <= 0 ||
+        !dashOffset.isFinite) {
+      return Err(
+        _failure('invalid_stroke_primitive', FailureCategory.validation),
+      );
+    }
+    final captured = _capture(points, maximumPoints, 'primitive_points');
+    if (captured is Err<List<Point2>, StructuredFailure>)
+      return Err(captured.error);
+    final values = (captured as Ok<List<Point2>, StructuredFailure>).value;
+    final transform = _captureOptionalAffine(localToViewCoefficients);
+    if (transform is Err<List<double>?, StructuredFailure> ||
+        (localToViewCoefficients == null) != (transformedBounds == null)) {
+      return Err(
+        _failure('invalid_stroke_primitive', FailureCategory.validation),
+      );
+    }
+    if (values.length < 2) {
+      return Err(
+        _failure('invalid_stroke_primitive', FailureCategory.validation),
+      );
+    }
+    final dashes = <double>[];
+    try {
+      for (final value in dashArray) {
+        if (!value.isFinite || value <= 0 || dashes.length >= maximumPoints) {
+          return Err(
+            _failure('invalid_stroke_primitive', FailureCategory.validation),
+          );
+        }
+        dashes.add(value);
+      }
+    } on Object {
+      return Err(_failure('invalid_iterable', FailureCategory.dependency));
+    }
+    final rawBounds = _bounds(values);
+    if (rawBounds == null) {
+      return Err(
+        _failure('invalid_stroke_primitive', FailureCategory.validation),
+      );
+    }
+    final half = strokeWidth * math.max(0.5, miterLimit) / 2;
+    final expanded = transformedBounds == null
+        ? Rect2.fromEdges(
+            left: rawBounds.left - half,
+            top: rawBounds.top - half,
+            right: rawBounds.right + half,
+            bottom: rawBounds.bottom + half,
+          ).fold<Rect2?>(onOk: (value) => value, onErr: (_) => null)
+        : transformedBounds;
+    if (expanded == null) {
+      return Err(
+        _failure('invalid_stroke_primitive', FailureCategory.validation),
+      );
+    }
+    return Ok(
+      StrokedPathPrimitive._(
+        plane: plane,
+        bounds: expanded,
+        opacity: opacity,
+        color: color,
+        strokeWidth: strokeWidth,
+        cap: cap,
+        join: join,
+        miterLimit: miterLimit,
+        closed: closed,
+        dashArray: dashes,
+        dashOffset: dashOffset,
+        points: values,
+        localToViewCoefficients:
+            (transform as Ok<List<double>?, StructuredFailure>).value,
+      ),
+    );
+  }
+
+  /// Stroke color.
+  final RenderColor color;
+
+  /// Positive view-space stroke width.
+  final double strokeWidth;
+
+  /// Endpoint cap.
+  final RenderStrokeCap cap;
+
+  /// Corner join.
+  final RenderStrokeJoin join;
+
+  /// Positive miter limit.
+  final double miterLimit;
+
+  /// Whether the last point connects to the first.
+  final bool closed;
+
+  /// Positive view-space dash pattern.
+  final List<double> dashArray;
+
+  /// View-space dash phase.
+  final double dashOffset;
+
+  /// Ordered view-space path points.
+  final List<Point2> points;
+
+  /// Optional local-to-view affine applied to stroke, caps, joins, and dashes.
+  final List<double>? localToViewCoefficients;
+}
+
+/// Portable semantic Image primitive resolved by a UI decode adapter.
+final class ImageBoxPrimitive extends ScenePrimitive {
+  ImageBoxPrimitive._({
+    required super.plane,
+    required super.bounds,
+    required super.opacity,
+    required this.payload,
+    required List<double> localToViewCoefficients,
+  }) : localToViewCoefficients = List<double>.unmodifiable(
+         localToViewCoefficients,
+       ),
+       super._();
+
+  /// Creates a primitive with six finite affine coefficients.
+  static Result<ImageBoxPrimitive, StructuredFailure> create({
+    required RenderPlane plane,
+    required Rect2 bounds,
+    required double opacity,
+    required ImagePayload payload,
+    required Iterable<double> localToViewCoefficients,
+  }) {
+    final captured = _capture(
+      localToViewCoefficients,
+      6,
+      'transform_coefficients',
+    );
+    if (captured is! Ok<List<double>, StructuredFailure> ||
+        captured.value.length != 6 ||
+        captured.value.any((value) => !value.isFinite) ||
+        !opacity.isFinite ||
+        opacity < 0 ||
+        opacity > 1) {
+      return Err(
+        _failure('invalid_image_primitive', FailureCategory.validation),
+      );
+    }
+    return Ok(
+      ImageBoxPrimitive._(
+        plane: plane,
+        bounds: bounds,
+        opacity: opacity,
+        payload: payload,
+        localToViewCoefficients: captured.value,
+      ),
+    );
+  }
+
+  /// Validated persistent Image payload.
+  final ImagePayload payload;
+
+  /// Local-to-view affine coefficients in AL NOTE storage order.
+  final List<double> localToViewCoefficients;
+}
+
+/// Portable semantic Text primitive resolved by a Flutter layout adapter.
+final class TextBoxPrimitive extends ScenePrimitive {
+  TextBoxPrimitive._({
+    required super.plane,
+    required super.bounds,
+    required super.opacity,
+    required this.payload,
+    required List<double> localToViewCoefficients,
+  }) : localToViewCoefficients = List<double>.unmodifiable(
+         localToViewCoefficients,
+       ),
+       super._();
+
+  /// Creates a primitive with six finite affine coefficients.
+  static Result<TextBoxPrimitive, StructuredFailure> create({
+    required RenderPlane plane,
+    required Rect2 bounds,
+    required double opacity,
+    required TextPayload payload,
+    required Iterable<double> localToViewCoefficients,
+  }) {
+    final captured = _capture(
+      localToViewCoefficients,
+      6,
+      'transform_coefficients',
+    );
+    if (captured is! Ok<List<double>, StructuredFailure> ||
+        captured.value.length != 6 ||
+        captured.value.any((value) => !value.isFinite) ||
+        !opacity.isFinite ||
+        opacity < 0 ||
+        opacity > 1) {
+      return Err(
+        _failure('invalid_text_primitive', FailureCategory.validation),
+      );
+    }
+    return Ok(
+      TextBoxPrimitive._(
+        plane: plane,
+        bounds: bounds,
+        opacity: opacity,
+        payload: payload,
+        localToViewCoefficients: captured.value,
+      ),
+    );
+  }
+
+  /// Validated persistent Text payload.
+  final TextPayload payload;
+
+  /// Local-to-view affine coefficients in AL NOTE storage order.
+  final List<double> localToViewCoefficients;
 }
 
 /// Safe inert placeholder for unavailable registered rendering behavior.
@@ -797,6 +1215,19 @@ Result<List<T>, StructuredFailure> _capture<T>(
     return Err(_failure('invalid_iterable', FailureCategory.dependency));
   }
   return Ok(List.unmodifiable(values));
+}
+
+Result<List<double>?, StructuredFailure> _captureOptionalAffine(
+  Iterable<double>? source,
+) {
+  if (source == null) return const Ok(null);
+  final captured = _capture(source, 6, 'transform_coefficients');
+  if (captured is! Ok<List<double>, StructuredFailure> ||
+      captured.value.length != 6 ||
+      captured.value.any((value) => !value.isFinite)) {
+    return Err(_failure('invalid_transform', FailureCategory.validation));
+  }
+  return Ok(captured.value);
 }
 
 Rect2? _bounds(List<Point2> points) {
