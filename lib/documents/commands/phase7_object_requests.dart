@@ -6,6 +6,7 @@ import '../model/identifiers.dart';
 import '../model/preserved_data.dart';
 import '../objects/image.dart';
 import '../objects/object_envelope.dart';
+import '../objects/object_registry.dart';
 import '../objects/shape.dart';
 import '../objects/text.dart';
 import '../resources/resource_records.dart';
@@ -101,6 +102,7 @@ final class TextObjectEditRequest {
     required ObjectEnvelope source,
     required TextPayload payload,
     required TextLimits limits,
+    required TextLayoutEngine layoutEngine,
     required CommandMetadata metadata,
     required RevisionPreconditions preconditions,
     required ObjectReplacementChangeCategories changeCategories,
@@ -116,6 +118,25 @@ final class TextObjectEditRequest {
         replacementPayload is! Ok<TextPayload, StructuredFailure>) {
       return Err(_failure('invalid_text_source'));
     }
+    final classified = TextObjectTypeDefinition.classifyChange(
+      sourcePayload.value.encode(),
+      replacementPayload.value.encode(),
+      textSchemaVersion,
+      limits,
+      layoutEngine,
+    );
+    if (classified is! Ok<ObjectPayloadChangeSemantics, StructuredFailure>) {
+      return Err(_failure('invalid_text_replacement'));
+    }
+    final authoritativeCategories = ObjectReplacementChangeCategories(
+      geometry: classified.value.geometry,
+      appearance: classified.value.appearance,
+      text: classified.value.text,
+      metadata: classified.value.metadata,
+    );
+    if (authoritativeCategories != changeCategories) {
+      return Err(_failure('inaccurate_text_change_evidence'));
+    }
     final envelope = _replacementEnvelope(source, payload.encode());
     if (envelope is! Ok<ObjectEnvelope, StructuredFailure>) {
       return Err(_failure('invalid_text_replacement'));
@@ -126,7 +147,7 @@ final class TextObjectEditRequest {
       preconditions: preconditions,
       targetIds: [source.id],
       replacements: [envelope.value],
-      changeCategories: changeCategories,
+      changeCategories: authoritativeCategories,
     );
   }
 }

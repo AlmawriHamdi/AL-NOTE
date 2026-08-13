@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import 'dart:math' as math;
+
 import '../../../core/geometry/geometry_values.dart';
 import '../../../core/identity/namespaced_identifier.dart';
 import '../../../core/outcomes/result.dart';
@@ -485,7 +487,9 @@ final class TextPayload {
     required this.verticalAlignment,
     required this.overflowPolicy,
     required this.unknownFields,
-  }) : paragraphs = List<TextParagraph>.unmodifiable(paragraphs);
+    required Rect2 bounds,
+  }) : paragraphs = List<TextParagraph>.unmodifiable(paragraphs),
+       _bounds = bounds;
 
   /// Safely creates a persistent Text payload.
   static Result<TextPayload, StructuredFailure> create({
@@ -561,6 +565,16 @@ final class TextPayload {
         !_unknownAllowed(unknown, limits)) {
       return Err(_failure('invalid_payload'));
     }
+    final derivedBounds = _deriveRepresentableBounds(
+      paragraphs: validatedParagraphs,
+      defaultCharacterStyle: validatedDefaultCharacter.value,
+      intrinsicWidth: intrinsicWidth,
+      intrinsicHeight: intrinsicHeight,
+      padding: validatedPadding.value,
+    );
+    if (derivedBounds is! Ok<Rect2, StructuredFailure>) {
+      return Err(_failure('invalid_geometry'));
+    }
     return Ok(
       TextPayload._(
         paragraphs: validatedParagraphs,
@@ -573,6 +587,7 @@ final class TextPayload {
         verticalAlignment: verticalAlignment,
         overflowPolicy: overflowPolicy,
         unknownFields: unknown,
+        bounds: derivedBounds.value,
       ),
     );
   }
@@ -607,22 +622,32 @@ final class TextPayload {
   /// Preserved safe unknown fields.
   final PreservedMap unknownFields;
 
+  final Rect2 _bounds;
+
   /// Bounded logical projection for future Search and accessibility.
   String get logicalText =>
       paragraphs.map((paragraph) => paragraph.logicalText).join('\n');
 
-  /// Conservative local text-box bounds; adapters derive exact auto height.
-  Rect2 get bounds => _rect(
-    0,
-    0,
-    intrinsicWidth,
-    intrinsicHeight ??
-        padding.top +
-            padding.bottom +
-            paragraphs.length *
-                defaultCharacterStyle.fontSize *
-                defaultParagraphStyle.lineHeight,
-  );
+  /// Safely derived conservative local bounds; adapters provide exact layout.
+  Rect2 get bounds => _bounds;
+
+  /// Whether the minimal Canvas dialog can edit this payload losslessly.
+  bool get isSimpleDialogEditable {
+    for (final paragraph in paragraphs) {
+      if (paragraph.runs.length != 1 ||
+          paragraph.unknownFields.values.isNotEmpty ||
+          !_sameParagraphStyle(paragraph.style, defaultParagraphStyle)) {
+        return false;
+      }
+      final run = paragraph.runs.single;
+      if (run.text.contains('\n') ||
+          run.unknownFields.values.isNotEmpty ||
+          !_sameCharacterStyle(run.style, defaultCharacterStyle)) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   /// Encodes deterministically and preserves original Unicode exactly.
   PreservedMap encode() => PreservedMap(<String, PreservedData>{
@@ -715,10 +740,13 @@ final class TextPayload {
 final class TextObjectTypeDefinition
     implements ObjectTypeDefinition, ObjectPayloadChangeClassifier {
   /// Creates a definition with explicit Text limits.
-  const TextObjectTypeDefinition(this.limits);
+  const TextObjectTypeDefinition(this.limits, this.layoutEngine);
 
   /// Text validation ceilings.
   final TextLimits limits;
+
+  /// Shared bounded layout authority for intrinsic visible geometry.
+  final TextLayoutEngine layoutEngine;
   @override
   ObjectTypeKey get typeKey => textObjectTypeKey;
   @override
@@ -749,12 +777,19 @@ final class TextObjectTypeDefinition
   Result<Rect2, StructuredFailure> intrinsicGeometry(
     PreservedData payload,
     SchemaVersion schemaVersion,
-  ) => schemaVersion != textSchemaVersion
-      ? Err(_failure('unsupported_schema'))
-      : TextPayload.decode(
-          payload,
-          limits: limits,
-        ).map((value) => value.bounds);
+  ) {
+    if (schemaVersion != textSchemaVersion) {
+      return Err(_failure('unsupported_schema'));
+    }
+    final decoded = TextPayload.decode(payload, limits: limits);
+    if (decoded is! Ok<TextPayload, StructuredFailure>) {
+      return Err(_failure('invalid_payload'));
+    }
+    return layoutEngine
+        .layout(TextLayoutRequest(payload: decoded.value))
+        .map((value) => value.visualBounds);
+  }
+
   @override
   Result<List<ResourceReference>, StructuredFailure> resourceReferences(
     PreservedData payload,
@@ -781,6 +816,15 @@ final class TextObjectTypeDefinition
     PreservedData before,
     PreservedData after,
     SchemaVersion schemaVersion,
+  ) => classifyChange(before, after, schemaVersion, limits, layoutEngine);
+
+  /// Classifies a Text payload pair using authoritative layout geometry.
+  static Result<ObjectPayloadChangeSemantics, StructuredFailure> classifyChange(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+    TextLimits limits,
+    TextLayoutEngine layoutEngine,
   ) {
     if (schemaVersion != textSchemaVersion)
       return Err(_failure('unsupported_schema'));
@@ -790,17 +834,44 @@ final class TextObjectTypeDefinition
         b is! Ok<TextPayload, StructuredFailure>) {
       return Err(_failure('invalid_payload'));
     }
+    TextLayoutSnapshot beforeLayout;
+    TextLayoutSnapshot afterLayout;
+    try {
+      final beforeResult = layoutEngine.layout(
+        TextLayoutRequest(payload: a.value),
+      );
+      final afterResult = layoutEngine.layout(
+        TextLayoutRequest(payload: b.value),
+      );
+      if (beforeResult is! Ok<TextLayoutSnapshot, StructuredFailure> ||
+          afterResult is! Ok<TextLayoutSnapshot, StructuredFailure>) {
+        return Err(_failure('classification_layout_unavailable'));
+      }
+      beforeLayout = beforeResult.value;
+      afterLayout = afterResult.value;
+    } on Object {
+      return Err(_failure('classification_layout_unavailable'));
+    }
+    final geometry = beforeLayout.visualBounds != afterLayout.visualBounds;
+    final appearance =
+        _appearanceProjection(a.value) != _appearanceProjection(b.value);
+    final text = a.value.logicalText != b.value.logicalText;
+    var metadata = _metadataProjection(a.value) != _metadataProjection(b.value);
+    // The closed categories must be total for every unequal accepted payload,
+    // including future preserved structures not understood more specifically.
+    if (!geometry &&
+        !appearance &&
+        !text &&
+        !metadata &&
+        a.value.encode() != b.value.encode()) {
+      metadata = true;
+    }
     return Ok(
       ObjectPayloadChangeSemantics(
-        geometry:
-            a.value.boxMode != b.value.boxMode ||
-            a.value.intrinsicWidth != b.value.intrinsicWidth ||
-            a.value.intrinsicHeight != b.value.intrinsicHeight ||
-            _encodePadding(a.value.padding) != _encodePadding(b.value.padding),
-        appearance:
-            _appearanceProjection(a.value) != _appearanceProjection(b.value),
-        text: a.value.logicalText != b.value.logicalText,
-        metadata: a.value.unknownFields != b.value.unknownFields,
+        geometry: geometry,
+        appearance: appearance,
+        text: text,
+        metadata: metadata,
       ),
     );
   }
@@ -992,6 +1063,25 @@ final class TextLayoutLine {
   final List<TextLayoutFragment> fragments;
 }
 
+/// Immutable paragraph placement used by rendering and geometry consumers.
+final class TextParagraphLayout {
+  /// Creates portable layout evidence without retaining engine-owned objects.
+  const TextParagraphLayout({
+    required this.paragraphIndex,
+    required this.origin,
+    required this.bounds,
+  });
+
+  /// Index in the payload paragraph sequence.
+  final int paragraphIndex;
+
+  /// Local paint origin for the paragraph.
+  final Point2 origin;
+
+  /// Local paragraph layout bounds before fixed-box clipping.
+  final Rect2 bounds;
+}
+
 /// Redaction-safe physical-font substitution evidence.
 final class TextFontSubstitutionDiagnostic {
   /// Creates evidence without exposing user font names.
@@ -1004,6 +1094,7 @@ final class TextFontSubstitutionDiagnostic {
 /// Immutable bounded portable layout output.
 final class TextLayoutSnapshot {
   TextLayoutSnapshot._({
+    required List<TextParagraphLayout> paragraphs,
     required List<TextLayoutLine> lines,
     required List<TextCaretStop> caretStops,
     required List<Rect2> rangeGeometry,
@@ -1011,13 +1102,15 @@ final class TextLayoutSnapshot {
     required this.logicalBounds,
     required this.visualBounds,
     required this.overflowed,
-  }) : lines = List.unmodifiable(lines),
+  }) : paragraphs = List.unmodifiable(paragraphs),
+       lines = List.unmodifiable(lines),
        caretStops = List.unmodifiable(caretStops),
        rangeGeometry = List.unmodifiable(rangeGeometry),
        fontDiagnostics = List.unmodifiable(fontDiagnostics);
 
   /// Safely captures bounded layout output.
   static Result<TextLayoutSnapshot, StructuredFailure> create({
+    required Iterable<TextParagraphLayout> paragraphs,
     required Iterable<TextLayoutLine> lines,
     required Iterable<TextCaretStop> caretStops,
     required Iterable<Rect2> rangeGeometry,
@@ -1027,6 +1120,11 @@ final class TextLayoutSnapshot {
     required bool overflowed,
     required TextLimits limits,
   }) {
+    final paragraphValues = _capture(
+      paragraphs,
+      limits.maximumParagraphs,
+      'layout_paragraph_limit',
+    );
     final lineValues = _capture(
       lines,
       limits.maximumLayoutLines,
@@ -1047,7 +1145,8 @@ final class TextLayoutSnapshot {
       _boundedProduct(limits.maximumRunsPerParagraph, limits.maximumParagraphs),
       'diagnostic_limit',
     );
-    if (lineValues is! Ok<List<TextLayoutLine>, StructuredFailure> ||
+    if (paragraphValues is! Ok<List<TextParagraphLayout>, StructuredFailure> ||
+        lineValues is! Ok<List<TextLayoutLine>, StructuredFailure> ||
         caretValues is! Ok<List<TextCaretStop>, StructuredFailure> ||
         rangeValues is! Ok<List<Rect2>, StructuredFailure> ||
         diagnosticValues
@@ -1055,11 +1154,13 @@ final class TextLayoutSnapshot {
         !_fragmentTotalWithinLimit(
           lineValues.value,
           limits.maximumLayoutFragments,
-        )) {
+        ) ||
+        !_paragraphLayoutOrderValid(paragraphValues.value)) {
       return Err(_failure('invalid_layout'));
     }
     return Ok(
       TextLayoutSnapshot._(
+        paragraphs: paragraphValues.value,
         lines: lineValues.value,
         caretStops: caretValues.value,
         rangeGeometry: rangeValues.value,
@@ -1070,6 +1171,9 @@ final class TextLayoutSnapshot {
       ),
     );
   }
+
+  /// Authoritative ordered paragraph paint placements.
+  final List<TextParagraphLayout> paragraphs;
 
   /// Ordered visual lines.
   final List<TextLayoutLine> lines;
@@ -1106,6 +1210,13 @@ final class TextLayoutSnapshot {
     }
     return best.position;
   }
+}
+
+bool _paragraphLayoutOrderValid(List<TextParagraphLayout> paragraphs) {
+  for (var index = 0; index < paragraphs.length; index++) {
+    if (paragraphs[index].paragraphIndex != index) return false;
+  }
+  return true;
 }
 
 bool _fragmentTotalWithinLimit(List<TextLayoutLine> lines, int maximum) {
@@ -1314,7 +1425,7 @@ final class TextEditorSession {
   final ObjectEnvelope object;
 
   /// Temporary bounded draft retained after stale rejection.
-  final TextPayload _draft;
+  TextPayload _draft;
 
   /// Current validated temporary draft.
   TextPayload get draft => _draft;
@@ -1323,7 +1434,7 @@ final class TextEditorSession {
   final Revision baseObjectRevision;
 
   /// Temporary caret/range selection.
-  final TextRange _selection;
+  TextRange _selection;
 
   /// Current validated grapheme-aligned selection.
   TextRange get selection => _selection;
@@ -1350,10 +1461,31 @@ final class TextEditorSession {
   /// Adds a bounded noncomposition edit.
   Result<void, StructuredFailure> addPending(PendingTextEdit edit) {
     if (_pending.length >= limits.maximumPendingEdits ||
-        !_validDraftRange(_draft, edit.range, limits) ||
-        !_validPendingAggregate(_draft, [..._pending, edit], limits)) {
+        !_validDraftRange(_draft, edit.range, limits)) {
       return Err(_failure('pending_edit_limit'));
     }
+    final staged = _applyPendingEdit(
+      _draft,
+      edit,
+      typingStyle: _typingStyle,
+      limits: limits,
+    );
+    if (staged is! Ok<TextPayload, StructuredFailure>) {
+      return Err(_failure('pending_edit_limit'));
+    }
+    final replacementParts = edit.replacement.split('\n');
+    final nextPosition = _position(
+      edit.range.start.paragraphIndex + replacementParts.length - 1,
+      replacementParts.length == 1
+          ? edit.range.start.scalarOffset + replacementParts.single.runes.length
+          : replacementParts.last.runes.length,
+    );
+    final nextSelection = TextRange.create(nextPosition, nextPosition);
+    if (nextSelection is! Ok<TextRange, StructuredFailure>) {
+      return Err(_failure('pending_edit_limit'));
+    }
+    _draft = staged.value;
+    _selection = nextSelection.value;
     _pending.add(edit);
     return const Ok<void, StructuredFailure>(null);
   }
@@ -1431,74 +1563,145 @@ bool _validReplacement(String value, TextLimits limits) {
   return segmentScalars <= limits.maximumScalarsPerRun;
 }
 
-bool _validPendingAggregate(
+Result<TextPayload, StructuredFailure> _applyPendingEdit(
   TextPayload draft,
-  List<PendingTextEdit> edits,
-  TextLimits limits,
-) {
-  var total = 0;
-  for (final paragraph in draft.paragraphs) {
-    if (paragraph.scalarLength > limits.maximumTotalScalars - total) {
-      return false;
-    }
-    total += paragraph.scalarLength;
+  PendingTextEdit edit, {
+  required TextCharacterStyle typingStyle,
+  required TextLimits limits,
+}) {
+  if (!_validDraftRange(draft, edit.range, limits) ||
+      !_validReplacement(edit.replacement, limits)) {
+    return Err(_failure('invalid_pending_edit'));
   }
-  var paragraphs = draft.paragraphs.length;
-  final addedRuns = <int, int>{};
-  for (final edit in edits) {
-    if (!_validDraftRange(draft, edit.range, limits) ||
-        !_validReplacement(edit.replacement, limits)) {
-      return false;
-    }
-    final removed = _rangeScalarLength(draft, edit.range);
-    if (removed == null) return false;
-    var inserted = 0;
-    var separators = 0;
-    for (final rune in edit.replacement.runes) {
-      if (rune == 0x0a) {
-        separators += 1;
-      } else {
-        inserted += 1;
+  final startIndex = edit.range.start.paragraphIndex;
+  final endIndex = edit.range.end.paragraphIndex;
+  final startParagraph = draft.paragraphs[startIndex];
+  final endParagraph = draft.paragraphs[endIndex];
+  final prefix = _sliceRuns(
+    startParagraph,
+    0,
+    edit.range.start.scalarOffset,
+    limits,
+  );
+  final suffix = _sliceRuns(
+    endParagraph,
+    edit.range.end.scalarOffset,
+    endParagraph.scalarLength,
+    limits,
+  );
+  if (prefix == null || suffix == null) {
+    return Err(_failure('invalid_pending_edit'));
+  }
+  final replacement = edit.replacement.split('\n');
+  final insertedRuns = <List<TextRun>>[];
+  for (final part in replacement) {
+    final runs = <TextRun>[];
+    if (part.isNotEmpty) {
+      final run = TextRun.create(
+        text: part,
+        style: typingStyle,
+        limits: limits,
+      );
+      if (run is! Ok<TextRun, StructuredFailure>) {
+        return Err(_failure('invalid_pending_edit'));
       }
+      runs.add(run.value);
     }
-    final removedParagraphBoundaries =
-        edit.range.end.paragraphIndex - edit.range.start.paragraphIndex;
-    paragraphs += separators - removedParagraphBoundaries;
-    if (paragraphs <= 0 || paragraphs > limits.maximumParagraphs) return false;
-    final nextTotal = total - removed + inserted;
-    if (nextTotal < 0 || nextTotal > limits.maximumTotalScalars) return false;
-    total = nextTotal;
-    if (edit.replacement.isNotEmpty) {
-      final paragraphIndex = edit.range.start.paragraphIndex;
-      final additions = (addedRuns[paragraphIndex] ?? 0) + separators + 1;
-      if (draft.paragraphs[paragraphIndex].runs.length + additions >
-          limits.maximumRunsPerParagraph) {
-        return false;
+    insertedRuns.add(runs);
+  }
+  final replacements = <TextParagraph>[];
+  if (insertedRuns.length == 1) {
+    final paragraph = TextParagraph.create(
+      runs: [...prefix, ...insertedRuns.single, ...suffix],
+      style: startParagraph.style,
+      limits: limits,
+      unknownFields: startParagraph.unknownFields,
+    );
+    if (paragraph is! Ok<TextParagraph, StructuredFailure>) {
+      return Err(_failure('invalid_pending_edit'));
+    }
+    replacements.add(paragraph.value);
+  } else {
+    for (var index = 0; index < insertedRuns.length; index += 1) {
+      final first = index == 0;
+      final last = index == insertedRuns.length - 1;
+      final sourceStyle = last ? endParagraph.style : startParagraph.style;
+      final sourceUnknown = first
+          ? startParagraph.unknownFields
+          : last && endIndex != startIndex
+          ? endParagraph.unknownFields
+          : PreservedMap.empty();
+      final paragraph = TextParagraph.create(
+        runs: [
+          if (first) ...prefix,
+          ...insertedRuns[index],
+          if (last) ...suffix,
+        ],
+        style: sourceStyle,
+        limits: limits,
+        unknownFields: sourceUnknown,
+      );
+      if (paragraph is! Ok<TextParagraph, StructuredFailure>) {
+        return Err(_failure('invalid_pending_edit'));
       }
-      addedRuns[paragraphIndex] = additions;
+      replacements.add(paragraph.value);
     }
   }
-  return true;
+  return TextPayload.create(
+    paragraphs: [
+      ...draft.paragraphs.take(startIndex),
+      ...replacements,
+      ...draft.paragraphs.skip(endIndex + 1),
+    ],
+    defaultCharacterStyle: draft.defaultCharacterStyle,
+    defaultParagraphStyle: draft.defaultParagraphStyle,
+    boxMode: draft.boxMode,
+    intrinsicWidth: draft.intrinsicWidth,
+    intrinsicHeight: draft.intrinsicHeight,
+    padding: draft.padding,
+    verticalAlignment: draft.verticalAlignment,
+    overflowPolicy: draft.overflowPolicy,
+    limits: limits,
+    unknownFields: draft.unknownFields,
+  );
 }
 
-int? _rangeScalarLength(TextPayload draft, TextRange range) {
-  if (range.start.paragraphIndex == range.end.paragraphIndex) {
-    return range.end.scalarOffset - range.start.scalarOffset;
+List<TextRun>? _sliceRuns(
+  TextParagraph paragraph,
+  int start,
+  int end,
+  TextLimits limits,
+) {
+  if (start < 0 || end < start || end > paragraph.scalarLength) return null;
+  final result = <TextRun>[];
+  var offset = 0;
+  for (final run in paragraph.runs) {
+    final runEnd = offset + run.scalarLength;
+    final sliceStart = math.max(start, offset) - offset;
+    final sliceEnd = math.min(end, runEnd) - offset;
+    if (sliceStart < sliceEnd) {
+      final runes = run.text.runes.toList(growable: false);
+      final sliced = TextRun.create(
+        text: String.fromCharCodes(runes.sublist(sliceStart, sliceEnd)),
+        style: run.style,
+        limits: limits,
+        unknownFields: run.unknownFields,
+      );
+      if (sliced is! Ok<TextRun, StructuredFailure>) return null;
+      result.add(sliced.value);
+    }
+    offset = runEnd;
   }
-  var total =
-      draft.paragraphs[range.start.paragraphIndex].scalarLength -
-      range.start.scalarOffset +
-      range.end.scalarOffset;
-  for (
-    var index = range.start.paragraphIndex + 1;
-    index < range.end.paragraphIndex;
-    index++
-  ) {
-    total += draft.paragraphs[index].scalarLength;
-    if (total > maximumWebSafeInteger) return null;
-  }
-  return total;
+  return List<TextRun>.unmodifiable(result);
 }
+
+TextPosition _position(int paragraphIndex, int scalarOffset) =>
+    (TextPosition.create(
+              paragraphIndex: paragraphIndex,
+              scalarOffset: scalarOffset,
+            )
+            as Ok<TextPosition, StructuredFailure>)
+        .value;
 
 /// Fixed stale-commit recovery choices, with no automatic merge or rebase.
 enum StaleTextDraftRecovery { keepDraft, discardDraft, copyPlainText }
@@ -1773,6 +1976,34 @@ PreservedData _appearanceProjection(TextPayload value) => PreservedList([
     for (final run in paragraph.runs) _encodeCharacterStyle(run.style),
   ],
 ]);
+
+PreservedData _metadataProjection(TextPayload value) => PreservedList([
+  PreservedString(value.boxMode.name),
+  _double(value.intrinsicWidth),
+  if (value.intrinsicHeight != null) _double(value.intrinsicHeight!),
+  _encodePadding(value.padding),
+  PreservedString(value.verticalAlignment.name),
+  PreservedString(value.overflowPolicy.name),
+  _integer(value.paragraphs.length),
+  for (final paragraph in value.paragraphs) _integer(paragraph.runs.length),
+  value.unknownFields,
+  value.defaultCharacterStyle.unknownFields,
+  value.defaultParagraphStyle.unknownFields,
+  for (final paragraph in value.paragraphs) ...[
+    paragraph.unknownFields,
+    paragraph.style.unknownFields,
+    for (final run in paragraph.runs) ...[
+      run.unknownFields,
+      run.style.unknownFields,
+    ],
+  ],
+]);
+
+bool _sameCharacterStyle(TextCharacterStyle first, TextCharacterStyle second) =>
+    _encodeCharacterStyle(first) == _encodeCharacterStyle(second);
+
+bool _sameParagraphStyle(TextParagraphStyle first, TextParagraphStyle second) =>
+    _encodeParagraphStyle(first) == _encodeParagraphStyle(second);
 T? _enumByName<T extends Enum>(Iterable<T> values, PreservedData? source) {
   if (source is! PreservedString) return null;
   for (final value in values) if (value.name == source.value) return value;
@@ -1820,6 +2051,49 @@ Result<TextParagraphStyle, StructuredFailure> _revalidateParagraphStyle(
   unknownFields: value.unknownFields,
 );
 
+Result<Rect2, StructuredFailure> _deriveRepresentableBounds({
+  required List<TextParagraph> paragraphs,
+  required TextCharacterStyle defaultCharacterStyle,
+  required double intrinsicWidth,
+  required double? intrinsicHeight,
+  required TextPadding padding,
+}) {
+  var contentHeight = 0.0;
+  for (final paragraph in paragraphs) {
+    var maximumFontSize = defaultCharacterStyle.fontSize;
+    for (final run in paragraph.runs) {
+      maximumFontSize = math.max(maximumFontSize, run.style.fontSize);
+    }
+    final lineExtent = maximumFontSize * paragraph.style.lineHeight;
+    if (!lineExtent.isFinite || lineExtent <= 0) {
+      return Err(_failure('invalid_geometry'));
+    }
+    // One scalar can occupy at most one wrapped line. Empty paragraphs retain
+    // one line based on the default character style and paragraph style.
+    final maximumLineCount = math.max(1, paragraph.scalarLength);
+    final paragraphExtent = lineExtent * maximumLineCount;
+    if (!paragraphExtent.isFinite || paragraphExtent <= 0) {
+      return Err(_failure('invalid_geometry'));
+    }
+    final next = contentHeight + paragraphExtent;
+    if (!next.isFinite || next < contentHeight) {
+      return Err(_failure('invalid_geometry'));
+    }
+    contentHeight = next;
+  }
+  final withTop = contentHeight + padding.top;
+  final derivedHeight = withTop + padding.bottom;
+  if (!withTop.isFinite || !derivedHeight.isFinite) {
+    return Err(_failure('invalid_geometry'));
+  }
+  return Rect2.fromEdges(
+    left: 0,
+    top: 0,
+    right: intrinsicWidth,
+    bottom: intrinsicHeight ?? derivedHeight,
+  );
+}
+
 bool _unknownAllowed(PreservedMap value, TextLimits limits) {
   return preservedUnknownDataAllowed(
     root: value,
@@ -1863,10 +2137,6 @@ PreservedDouble _double(double value) =>
         .value;
 PreservedInteger _integer(int value) =>
     (PreservedInteger.create(value) as Ok<PreservedInteger, StructuredFailure>)
-        .value;
-Rect2 _rect(double left, double top, double right, double bottom) =>
-    (Rect2.fromEdges(left: left, top: top, right: right, bottom: bottom)
-            as Ok<Rect2, StructuredFailure>)
         .value;
 double _distanceSquared(Point2 point, Rect2 rect) {
   final dx = point.x < rect.left

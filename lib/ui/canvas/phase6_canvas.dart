@@ -32,6 +32,7 @@ import '../../drawing/selection.dart';
 import '../../drawing/tools.dart';
 import '../../drawing/viewport.dart';
 import 'flutter_image_decoder.dart';
+import 'flutter_text_layout_engine.dart';
 import 'phase6_canvas_runtime.dart';
 import 'phase6_diagnostics.dart';
 
@@ -646,6 +647,10 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       setState(() => _status = 'Text unavailable');
       return;
     }
+    if (prior != null && !prior.isSimpleDialogEditable) {
+      setState(() => _status = 'Rich text editing unavailable');
+      return;
+    }
     final baseObjectRevision = existing == null
         ? null
         : _coordinator.snapshot.revisions.objects[existing.id];
@@ -831,8 +836,11 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     Revision baseObjectRevision,
   ) {
     try {
-      final semantics = TextObjectTypeDefinition(widget.runtime.textLimits)
-          .classifyPayloadChange(
+      final semantics =
+          TextObjectTypeDefinition(
+            widget.runtime.textLimits,
+            widget.runtime.textLayoutEngine,
+          ).classifyPayloadChange(
             before.encode(),
             after.encode(),
             textSchemaVersion,
@@ -850,6 +858,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
         source: source,
         payload: after,
         limits: widget.runtime.textLimits,
+        layoutEngine: widget.runtime.textLayoutEngine,
         metadata: CommandMetadata(
           family: CommandFamily.objectReplacement,
           correlationId: CommandCorrelationId.fromUuid(correlation.value),
@@ -2311,16 +2320,17 @@ void _paintPrimitive(
       canvas.restore();
     case TextBoxPrimitive(
       :final payload,
+      :final layout,
       :final opacity,
       :final localToViewCoefficients,
     ):
       canvas.save();
       canvas.transform(_canvasMatrix(localToViewCoefficients));
-      final box = Rect.fromLTWH(
-        0,
-        0,
-        payload.bounds.width,
-        payload.bounds.height,
+      final box = Rect.fromLTRB(
+        layout.logicalBounds.left,
+        layout.logicalBounds.top,
+        layout.logicalBounds.right,
+        layout.logicalBounds.bottom,
       );
       if (payload.boxMode == TextBoxMode.fixedWidthFixedHeight &&
           payload.overflowPolicy == TextOverflowPolicy.clip) {
@@ -2331,45 +2341,27 @@ void _paintPrimitive(
         0,
         payload.intrinsicWidth - payload.padding.left - payload.padding.right,
       );
-      for (final paragraph in payload.paragraphs) {
-        final paragraphStyle = paragraph.style;
-        painters.add(
-          TextPainter(
-            text: TextSpan(
-              children: [
-                for (final run in paragraph.runs)
-                  TextSpan(
-                    text: run.text,
-                    style: _flutterTextStyle(
-                      run.style,
-                      opacity,
-                      lineHeight: paragraphStyle.lineHeight,
-                    ),
-                  ),
-              ],
+      const factory = FlutterTextPainterFactory();
+      try {
+        for (final paragraph in payload.paragraphs) {
+          painters.add(
+            factory.create(
+              payload: payload,
+              paragraph: paragraph,
+              maximumWidth: maximumWidth,
+              layerOpacity: opacity,
             ),
-            textDirection: _flutterParagraphDirection(paragraph),
-            textAlign: _flutterParagraphAlignment(paragraphStyle.alignment),
-            locale: _flutterLocale(paragraphStyle.languageHint),
-          )..layout(maxWidth: maximumWidth),
-        );
-      }
-      final paintedHeight = painters.fold<double>(
-        0,
-        (height, painter) => height + painter.height,
-      );
-      var top = payload.padding.top;
-      final availableHeight =
-          payload.bounds.height - payload.padding.top - payload.padding.bottom;
-      if (payload.verticalAlignment == TextVerticalAlignment.center) {
-        top += math.max(0, (availableHeight - paintedHeight) / 2);
-      } else if (payload.verticalAlignment == TextVerticalAlignment.bottom) {
-        top += math.max(0, availableHeight - paintedHeight);
-      }
-      for (final painter in painters) {
-        painter.paint(canvas, Offset(payload.padding.left, top));
-        top += painter.height;
-        painter.dispose();
+          );
+        }
+        for (var index = 0; index < painters.length; index++) {
+          final painter = painters[index];
+          final placement = layout.paragraphs[index];
+          painter.paint(canvas, Offset(placement.origin.x, placement.origin.y));
+        }
+      } finally {
+        for (final painter in painters) {
+          factory.dispose(painter);
+        }
       }
       canvas.restore();
     case PlaceholderPrimitive(:final plane, :final bounds, :final opacity):
@@ -2404,72 +2396,6 @@ Float64List _canvasMatrix(List<double> coefficients) => Float64List.fromList([
   0,
   1,
 ]);
-
-TextStyle _flutterTextStyle(
-  TextCharacterStyle style,
-  double opacity, {
-  double? lineHeight,
-}) => TextStyle(
-  fontFamily: style.preferredFontFamily,
-  fontFamilyFallback: [_genericFontFamily(style.genericFontFamily)],
-  fontSize: style.fontSize,
-  fontWeight: FontWeight.values[((style.weight / 100).round() - 1).clamp(0, 8)],
-  fontStyle: style.italic ? FontStyle.italic : FontStyle.normal,
-  height: lineHeight,
-  decoration: TextDecoration.combine([
-    if (style.underline) TextDecoration.underline,
-    if (style.strikethrough) TextDecoration.lineThrough,
-  ]),
-  color: Color(style.argb).withValues(alpha: opacity),
-);
-
-TextDirection _flutterParagraphDirection(TextParagraph paragraph) {
-  if (paragraph.style.direction == TextParagraphDirection.rtl) {
-    return TextDirection.rtl;
-  }
-  if (paragraph.style.direction == TextParagraphDirection.ltr) {
-    return TextDirection.ltr;
-  }
-  for (final rune in paragraph.logicalText.runes) {
-    if (rune >= 0x0590 && rune <= 0x08ff ||
-        rune >= 0xfb1d && rune <= 0xfdff ||
-        rune >= 0xfe70 && rune <= 0xfeff) {
-      return TextDirection.rtl;
-    }
-    if (rune >= 0x0041 && rune <= 0x005a || rune >= 0x0061 && rune <= 0x007a) {
-      return TextDirection.ltr;
-    }
-  }
-  return TextDirection.ltr;
-}
-
-TextAlign _flutterParagraphAlignment(TextAlignment alignment) =>
-    switch (alignment) {
-      TextAlignment.left => TextAlign.left,
-      TextAlignment.center => TextAlign.center,
-      TextAlignment.right => TextAlign.right,
-      TextAlignment.justified => TextAlign.justify,
-      TextAlignment.start => TextAlign.start,
-      TextAlignment.end => TextAlign.end,
-    };
-
-Locale? _flutterLocale(String? languageHint) {
-  if (languageHint == null) return null;
-  final parts = languageHint.split('-');
-  if (parts.isEmpty || parts.first.isEmpty) return null;
-  return parts.length > 1
-      ? Locale(parts.first, parts.last)
-      : Locale(parts.first);
-}
-
-String _genericFontFamily(TextGenericFontFamily family) => switch (family) {
-  TextGenericFontFamily.sansSerif => 'sans-serif',
-  TextGenericFontFamily.serif => 'serif',
-  TextGenericFontFamily.monospace => 'monospace',
-  TextGenericFontFamily.cursive => 'cursive',
-  TextGenericFontFamily.fantasy => 'fantasy',
-  TextGenericFontFamily.systemUi => 'system-ui',
-};
 
 void _drawDashedPath(
   Canvas canvas,

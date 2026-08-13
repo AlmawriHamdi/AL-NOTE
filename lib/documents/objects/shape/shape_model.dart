@@ -501,13 +501,19 @@ final class ShapePayload {
     PreservedMap? unknownFields,
   }) {
     final unknown = unknownFields ?? PreservedMap.empty();
-    if (!_geometryAllowed(geometry, limits) ||
-        !_styleAllowed(style, limits) ||
+    final capturedGeometry = _captureGeometry(geometry, limits);
+    final capturedStyle = _captureStyle(style, limits);
+    if (capturedGeometry is! Ok<ShapeGeometry, StructuredFailure> ||
+        capturedStyle is! Ok<ShapeStyle, StructuredFailure> ||
         !_unknownAllowed(unknown, limits)) {
       return Err(_failure('invalid_payload'));
     }
     return Ok(
-      ShapePayload._(geometry: geometry, style: style, unknownFields: unknown),
+      ShapePayload._(
+        geometry: capturedGeometry.value,
+        style: capturedStyle.value,
+        unknownFields: unknown,
+      ),
     );
   }
 
@@ -917,34 +923,64 @@ T? _enumByName<T extends Enum>(Iterable<T> values, PreservedData? source) {
   return null;
 }
 
-bool _geometryAllowed(ShapeGeometry geometry, ShapeLimits limits) =>
-    switch (geometry) {
-      ShapeLineGeometry(:final start, :final end) =>
-        _pointAllowed(start, limits) && _pointAllowed(end, limits),
-      ShapeRectangleGeometry(:final localBounds, :final cornerRadius) =>
-        _rectAllowed(localBounds, limits) &&
-            cornerRadius <= limits.maximumCornerRadius,
-      ShapeEllipseGeometry(:final localBounds) => _rectAllowed(
-        localBounds,
-        limits,
-      ),
-      ShapeVertexGeometry(:final vertices) =>
-        vertices.length <= limits.maximumVertices &&
-            vertices.every((value) => _pointAllowed(value, limits)),
-    };
+Result<ShapeGeometry, StructuredFailure> _captureGeometry(
+  ShapeGeometry geometry,
+  ShapeLimits limits,
+) => switch (geometry) {
+  ShapeLineGeometry(:final start, :final end, :final unknownFields) =>
+    ShapeLineGeometry.create(
+      start: start,
+      end: end,
+      limits: limits,
+      unknownFields: unknownFields,
+    ),
+  ShapeRectangleGeometry(
+    :final localBounds,
+    :final cornerRadius,
+    :final unknownFields,
+  ) =>
+    ShapeRectangleGeometry.create(
+      bounds: localBounds,
+      cornerRadius: cornerRadius,
+      limits: limits,
+      unknownFields: unknownFields,
+    ),
+  ShapeEllipseGeometry(:final localBounds, :final unknownFields) =>
+    ShapeEllipseGeometry.create(
+      bounds: localBounds,
+      limits: limits,
+      unknownFields: unknownFields,
+    ),
+  ShapeVertexGeometry(:final kind, :final vertices, :final unknownFields) =>
+    ShapeVertexGeometry.create(
+      kind: kind,
+      vertices: vertices,
+      limits: limits,
+      unknownFields: unknownFields,
+    ),
+};
 
-bool _styleAllowed(ShapeStyle style, ShapeLimits limits) =>
-    _positive(style.strokeWidth) &&
-    style.strokeWidth <= limits.maximumStrokeWidth &&
-    _positive(style.miterLimit) &&
-    style.miterLimit <= limits.maximumMiterLimit &&
-    style.dashArray.length <= limits.maximumDashValues &&
-    style.dashArray.every(_positive) &&
-    style.dashOffset.isFinite &&
-    style.opacity.isFinite &&
-    style.opacity >= 0 &&
-    style.opacity <= 1 &&
-    _unknownAllowed(style.unknownFields, limits);
+Result<ShapeStyle, StructuredFailure> _captureStyle(
+  ShapeStyle style,
+  ShapeLimits limits,
+) => ShapeStyle.create(
+  strokeEnabled: style.strokeEnabled,
+  strokeColor: style.strokeColor,
+  strokeWidth: style.strokeWidth,
+  cap: style.cap,
+  join: style.join,
+  miterLimit: style.miterLimit,
+  dashArray: style.dashArray,
+  dashOffset: style.dashOffset,
+  fillEnabled: style.fillEnabled,
+  fillColor: style.fillColor,
+  fillRule: style.fillRule,
+  opacity: style.opacity,
+  startArrowhead: style.startArrowhead,
+  endArrowhead: style.endArrowhead,
+  limits: limits,
+  unknownFields: style.unknownFields,
+);
 
 bool _pointAllowed(Point2 point, ShapeLimits limits) =>
     point.x.abs() <= limits.maximumCoordinateMagnitude &&

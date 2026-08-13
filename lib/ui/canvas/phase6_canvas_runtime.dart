@@ -22,6 +22,7 @@ import '../../drawing/hit_testing.dart';
 import '../../drawing/renderer.dart';
 import '../../drawing/tools.dart';
 import 'flutter_pointer_adapter.dart';
+import 'flutter_text_layout_engine.dart';
 import 'phase6_diagnostics.dart';
 
 /// Injected, exception-contained boundary for the debug diagnostics clipboard.
@@ -127,6 +128,7 @@ final class Phase6CanvasRuntime {
     required this.shapeInteractionLimits,
     required this.imageLimits,
     required this.textLimits,
+    required this.textLayoutEngine,
     required this.penStyle,
     required this.geometryResolver,
     required this.geometryCache,
@@ -247,11 +249,12 @@ final class Phase6CanvasRuntime {
       maximumObjects: maximumHitResults,
       maximumStrokes: maximumHitResults,
     );
+    final textLayoutEngine = FlutterTextLayoutEngine(textLimits);
     final objectRegistry = ObjectRegistry.create([
       HandwritingObjectTypeDefinition(handwritingLimits),
       ShapeObjectTypeDefinition(shapeLimits),
       ImageObjectTypeDefinition(imageLimits),
-      TextObjectTypeDefinition(textLimits),
+      TextObjectTypeDefinition(textLimits, textLayoutEngine),
     ]).fold<ObjectRegistry?>(onOk: (value) => value, onErr: (_) => null);
     if (objectRegistry == null || objectRegistry.definitions.length != 4) {
       return Err(_failure('initialization_failed'));
@@ -262,6 +265,7 @@ final class Phase6CanvasRuntime {
       shapeInteractionLimits: shapeInteractionLimits,
       imageLimits: imageLimits,
       textLimits: textLimits,
+      textLayoutEngine: textLayoutEngine,
       geometry: geometry,
       geometryCache: geometryCache,
       maximumRenderingDefinitions: maximumRenderingDefinitions,
@@ -375,6 +379,7 @@ final class Phase6CanvasRuntime {
         shapeInteractionLimits: shapeInteractionLimits,
         imageLimits: imageLimits,
         textLimits: textLimits,
+        textLayoutEngine: textLayoutEngine,
         penStyle: penStyle,
         geometryResolver: geometry,
         geometryCache: geometryCache,
@@ -436,6 +441,9 @@ final class Phase6CanvasRuntime {
 
   /// Built-in Text validation and layout limits.
   final TextLimits textLimits;
+
+  /// Runtime-wide authoritative Flutter Text layout configuration.
+  final TextLayoutEngine textLayoutEngine;
 
   /// Resolved persistent Pen appearance shared by preview and commit.
   final StrokeStyle penStyle;
@@ -570,6 +578,7 @@ _RuntimeComponents? _createRuntimeComponents({
   required ShapeInteractionLimits shapeInteractionLimits,
   required ImageLimits imageLimits,
   required TextLimits textLimits,
+  required TextLayoutEngine textLayoutEngine,
   required StrokeGeometryResolver geometry,
   required HandwritingGeometryCache geometryCache,
   required int maximumRenderingDefinitions,
@@ -588,7 +597,7 @@ _RuntimeComponents? _createRuntimeComponents({
       ),
       ShapeRenderingDefinition(shapeLimits: shapeLimits),
       ImageRenderingDefinition(imageLimits),
-      TextRenderingDefinition(textLimits),
+      TextRenderingDefinition(textLimits, textLayoutEngine),
     ],
     maximumDefinitions: maximumRenderingDefinitions,
   ).fold<RenderingRegistry?>(onOk: (value) => value, onErr: (_) => null);
@@ -604,7 +613,7 @@ _RuntimeComponents? _createRuntimeComponents({
         interactionLimits: shapeInteractionLimits,
       ),
       ImageHitTestingDefinition(imageLimits),
-      TextHitTestingDefinition(textLimits),
+      TextHitTestingDefinition(textLimits, textLayoutEngine),
     ],
     maximumDefinitions: maximumHitTestingDefinitions,
     maximumBehaviorResults: maximumHitBehaviorResults,

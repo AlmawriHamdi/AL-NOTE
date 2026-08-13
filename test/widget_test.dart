@@ -20,6 +20,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/document_model_test_support.dart';
+import 'support/phase3_test_support.dart';
 import 'support/uuid_sequence_generator.dart';
 
 /// Verifies the accessible Phase 6 Canvas shell and pointer route.
@@ -1628,6 +1629,18 @@ void main() {
     },
   );
 
+  testWidgets(
+    'rich Text editing is rejected without lifecycle mutation',
+    (WidgetTester tester) =>
+        _verifyUnsupportedTextDialog(tester, _widgetRichText),
+  );
+
+  testWidgets(
+    'embedded-newline Text is rejected without lifecycle publication',
+    (WidgetTester tester) =>
+        _verifyUnsupportedTextDialog(tester, _widgetEmbeddedNewlineText),
+  );
+
   test('runtime registry ceilings are injected and exact boundaries pass', () {
     final exactGenerator = _RuntimeCountingUuidGenerator();
     expect(
@@ -1712,6 +1725,102 @@ void main() {
   });
 }
 
+Future<void> _verifyUnsupportedTextDialog(
+  WidgetTester tester,
+  TextPayload Function(TextLimits) payloadBuilder,
+) async {
+  final runtime = _runtime();
+  final root = runtime.initialCoordinator.snapshot.root;
+  final page = root.pages.single;
+  final layer = page.layers.whereType<ContentLayer>().single;
+  final payload = payloadBuilder(runtime.textLimits);
+  final object = testObject(
+    id: 9090,
+    typeKey: textObjectTypeKey,
+    schemaVersion: textSchemaVersion,
+    payload: payload.encode(),
+    transform: _ok(
+      AffineTransform2D.restoreFromStorage(const [1, 0, 0, 1, 360, 240]),
+    ),
+  );
+  final seeded = _ok(
+    AtomicObjectCollectionEditRequest.create(
+      documentId: root.id,
+      pageId: page.id,
+      metadata: phase3Metadata(
+        family: 'alnote.commands.object.collection_edit',
+        correlation: 9091,
+      ),
+      preconditions: RevisionPreconditions(
+        pages: {
+          page.id:
+              runtime.initialCoordinator.snapshot.revisions.pages[page.id]!,
+        },
+        layerMembership: {
+          layer.id: runtime
+              .initialCoordinator
+              .snapshot
+              .revisions
+              .layerMembership[layer.id]!,
+        },
+      ),
+      additions: [ObjectCollectionAddition(layerId: layer.id, object: object)],
+      maximumOperations: runtime.maximumCommandOperations,
+    ),
+  );
+  expect(
+    runtime.initialCoordinator.execute(seeded),
+    isA<Ok<CommandCommit, CommandFailure>>(),
+  );
+  await tester.pumpWidget(AlNoteApp(runtime: runtime));
+  await tester.tap(find.text('Save in memory'));
+  await tester.pumpAndSettle();
+  final savedBytes = List<int>.of(_canvasPainter(tester).savedBytes!);
+  final savedRoot = _canvasPainter(tester).savedRoot;
+  await tester.tap(find.text('selection'));
+  await tester.pump();
+  final canvas = find.bySemanticsLabel('Handwriting canvas');
+  final gesture = await tester.startGesture(
+    tester.getTopLeft(canvas) + const Offset(40, 40),
+    kind: PointerDeviceKind.mouse,
+  );
+  await gesture.moveTo(tester.getBottomRight(canvas) - const Offset(40, 40));
+  await gesture.up();
+  await tester.pump();
+  expect(find.byKey(const Key('edit-selected-text')), findsOneWidget);
+  final before = runtime.initialCoordinator.snapshot;
+  final encoded = payload.encode();
+  await tester.tap(find.byKey(const Key('edit-selected-text')));
+  await tester.pumpAndSettle();
+  expect(find.byKey(const Key('text-object-editor')), findsNothing);
+  expect(find.text('Rich text editing unavailable'), findsOneWidget);
+  expect(find.byKey(const Key('edit-selected-text')), findsOneWidget);
+  tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+  await tester.pump();
+  tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  await tester.pump();
+  final after = runtime.initialCoordinator.snapshot;
+  expect(after.root, same(before.root));
+  expect(after.revisions, before.revisions);
+  expect(after.canUndo, before.canUndo);
+  expect(_canvasPainter(tester).savedBytes, savedBytes);
+  expect(_canvasPainter(tester).savedRoot, same(savedRoot));
+  expect(
+    _ok(
+      TextPayload.decode(
+        after.root.pages.single.layers
+            .whereType<ContentLayer>()
+            .single
+            .objects
+            .single
+            .payload,
+        limits: runtime.textLimits,
+      ),
+    ).encode(),
+    encoded,
+  );
+}
+
 Phase6CanvasRuntime _runtime({
   UuidGenerator? uuidGenerator,
   int storageCeiling = 10000000,
@@ -1737,6 +1846,133 @@ Phase6CanvasRuntime _runtime({
     penOpacity: penOpacity,
   ),
 );
+
+TextPayload _widgetRichText(TextLimits limits) {
+  TextCharacterStyle style(double size, int color) => _ok(
+    TextCharacterStyle.create(
+      genericFontFamily: TextGenericFontFamily.sansSerif,
+      fontSize: size,
+      weight: 400,
+      italic: false,
+      underline: false,
+      strikethrough: false,
+      argb: color,
+      limits: limits,
+    ),
+  );
+  final first = style(18, 0xff000000);
+  final second = style(28, 0xffff0000);
+  final paragraphStyle = _ok(
+    TextParagraphStyle.create(
+      alignment: TextAlignment.left,
+      direction: TextParagraphDirection.ltr,
+      lineHeight: 1.2,
+      limits: limits,
+      unknownFields: PreservedMap({
+        'styleFuture': const PreservedBoolean(true),
+      }),
+    ),
+  );
+  final paragraph = _ok(
+    TextParagraph.create(
+      runs: [
+        _ok(TextRun.create(text: 'rich ', style: first, limits: limits)),
+        _ok(
+          TextRun.create(
+            text: 'text',
+            style: second,
+            limits: limits,
+            unknownFields: PreservedMap({
+              'runFuture': const PreservedString('preserved'),
+            }),
+          ),
+        ),
+      ],
+      style: paragraphStyle,
+      limits: limits,
+      unknownFields: PreservedMap({
+        'paragraphFuture': const PreservedBoolean(true),
+      }),
+    ),
+  );
+  return _ok(
+    TextPayload.create(
+      paragraphs: [paragraph],
+      defaultCharacterStyle: first,
+      defaultParagraphStyle: paragraphStyle,
+      boxMode: TextBoxMode.fixedWidthFixedHeight,
+      intrinsicWidth: 120,
+      intrinsicHeight: 120,
+      padding: _ok(
+        TextPadding.create(
+          left: 4,
+          top: 4,
+          right: 4,
+          bottom: 4,
+          limits: limits,
+        ),
+      ),
+      verticalAlignment: TextVerticalAlignment.top,
+      overflowPolicy: TextOverflowPolicy.visible,
+      limits: limits,
+      unknownFields: PreservedMap({
+        'payloadFuture': const PreservedBoolean(true),
+      }),
+    ),
+  );
+}
+
+TextPayload _widgetEmbeddedNewlineText(TextLimits limits) {
+  final style = _ok(
+    TextCharacterStyle.create(
+      genericFontFamily: TextGenericFontFamily.sansSerif,
+      fontSize: 18,
+      weight: 400,
+      italic: false,
+      underline: false,
+      strikethrough: false,
+      argb: 0xff000000,
+      limits: limits,
+    ),
+  );
+  final paragraphStyle = _ok(
+    TextParagraphStyle.create(
+      alignment: TextAlignment.left,
+      direction: TextParagraphDirection.ltr,
+      lineHeight: 1.2,
+      limits: limits,
+    ),
+  );
+  final paragraph = _ok(
+    TextParagraph.create(
+      runs: [_ok(TextRun.create(text: 'a\nb', style: style, limits: limits))],
+      style: paragraphStyle,
+      limits: limits,
+    ),
+  );
+  return _ok(
+    TextPayload.create(
+      paragraphs: [paragraph],
+      defaultCharacterStyle: style,
+      defaultParagraphStyle: paragraphStyle,
+      boxMode: TextBoxMode.fixedWidthFixedHeight,
+      intrinsicWidth: 120,
+      intrinsicHeight: 120,
+      padding: _ok(
+        TextPadding.create(
+          left: 4,
+          top: 4,
+          right: 4,
+          bottom: 4,
+          limits: limits,
+        ),
+      ),
+      verticalAlignment: TextVerticalAlignment.top,
+      overflowPolicy: TextOverflowPolicy.visible,
+      limits: limits,
+    ),
+  );
+}
 
 Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
   UuidGenerator? uuidGenerator,

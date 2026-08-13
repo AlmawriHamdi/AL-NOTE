@@ -19,6 +19,7 @@ import 'package:al_note/drawing/viewport.dart';
 import 'package:al_note/ui/canvas/flutter_image_decoder.dart';
 import 'package:al_note/ui/canvas/flutter_text_layout_engine.dart';
 import 'package:al_note/ui/canvas/phase6_canvas.dart';
+import 'package:flutter/material.dart' as flutter;
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/document_model_test_support.dart';
@@ -195,6 +196,108 @@ void main() {
               geometry.kind != ShapeKind.polyline,
         );
       }
+    });
+
+    test('payload recaptures every geometry under its current limits', () {
+      final geometryUnknown = PreservedMap({
+        'future': PreservedMap({'nested': const PreservedString('kept')}),
+      });
+      final permissive = _shapeLimitsWithUnknownCodeUnits(
+        4096,
+        maximumNodes: 16,
+      );
+      final geometries = <ShapeGeometry>[
+        _ok(
+          ShapeLineGeometry.create(
+            start: _point(0, 0),
+            end: _point(10, 10),
+            limits: permissive,
+            unknownFields: geometryUnknown,
+          ),
+        ),
+        _ok(
+          ShapeRectangleGeometry.create(
+            bounds: _rect(0, 0, 10, 10),
+            limits: permissive,
+            unknownFields: geometryUnknown,
+          ),
+        ),
+        _ok(
+          ShapeEllipseGeometry.create(
+            bounds: _rect(0, 0, 10, 10),
+            limits: permissive,
+            unknownFields: geometryUnknown,
+          ),
+        ),
+        for (final kind in [ShapeKind.polygon, ShapeKind.polyline])
+          _ok(
+            ShapeVertexGeometry.create(
+              kind: kind,
+              vertices: kind == ShapeKind.polygon
+                  ? [_point(0, 0), _point(10, 0), _point(10, 10), _point(0, 10)]
+                  : [_point(0, 0), _point(10, 10)],
+              limits: permissive,
+              unknownFields: geometryUnknown,
+            ),
+          ),
+      ];
+      final exact = _shapeLimitsWithUnknownCodeUnits(
+        16,
+        maximumFields: 1,
+        maximumNodes: 2,
+        maximumDepth: 3,
+      );
+      final noUnknown = _shapeLimitsWithUnknownCodeUnits(
+        20,
+        maximumFields: 0,
+        maximumNodes: 2,
+        maximumDepth: 3,
+      );
+      for (final geometry in geometries) {
+        final accepted = _ok(
+          ShapePayload.create(
+            geometry: geometry,
+            style: _shapeStyle(),
+            limits: exact,
+          ),
+        );
+        expect(accepted.geometry.unknownFields, geometryUnknown);
+        expect(
+          _ok(ShapePayload.decode(accepted.encode(), limits: exact)).encode(),
+          accepted.encode(),
+        );
+        final rejected = ShapePayload.create(
+          geometry: geometry,
+          style: _shapeStyle(),
+          limits: noUnknown,
+        );
+        expect(rejected, isA<Err<ShapePayload, StructuredFailure>>());
+        expect('$rejected', isNot(contains('kept')));
+      }
+
+      final strictVertices = _ok(
+        ShapeLimits.create(
+          maximumVertices: 3,
+          maximumDashValues: 16,
+          maximumUnknownFields: 16,
+          maximumUnknownNodes: 16,
+          maximumNestingDepth: 8,
+          maximumUnknownStringCodeUnits: 4096,
+          maximumCoordinateMagnitude: 10000,
+          maximumStrokeWidth: 100,
+          maximumMiterLimit: 20,
+          maximumCornerRadius: 1000,
+          maximumDerivedSegments: 128,
+        ),
+      );
+      expect(
+        ShapePayload.create(
+          geometry: geometries[3],
+          style: _shapeStyle(),
+          limits: strictVertices,
+        ),
+        isA<Err<ShapePayload, StructuredFailure>>(),
+      );
     });
 
     test('unknown kinds remain preserved and inert in Registry', () {
@@ -1962,6 +2065,50 @@ void main() {
       );
     });
 
+    test('Image byte capture reads each accepted current exactly once', () {
+      final stateful = _StatefulCurrentIterable(_pngFixture);
+      final accepted = ImageHeaderPreflight(
+        _imageLimits,
+      ).inspect(encodedBytes: stateful, mediaType: _mediaType('image/png'));
+      expect(accepted, isA<Ok<ImagePreflightResult, StructuredFailure>>());
+      expect(stateful.currentReads, _pngFixture.length);
+
+      for (final invalid in [-1, 256]) {
+        expect(
+          ImageHeaderPreflight(_imageLimits).inspect(
+            encodedBytes: [invalid],
+            mediaType: _mediaType('image/png'),
+          ),
+          isA<Err<ImagePreflightResult, StructuredFailure>>(),
+        );
+      }
+      expect(
+        ImageHeaderPreflight(_imageLimits).inspect(
+          encodedBytes: _AcceptedCurrentThrowingIterable<int>(),
+          mediaType: _mediaType('image/png'),
+        ),
+        isA<Err<ImagePreflightResult, StructuredFailure>>(),
+      );
+
+      final exactLimits = _imageLimitsWithMaximumBytes(_pngFixture.length);
+      expect(
+        ImageHeaderPreflight(exactLimits).inspect(
+          encodedBytes: _pngFixture,
+          mediaType: _mediaType('image/png'),
+        ),
+        isA<Ok<ImagePreflightResult, StructuredFailure>>(),
+      );
+      final rejectedTail = _RejectedAfterIterable<int>(_pngFixture, 0);
+      expect(
+        ImageHeaderPreflight(exactLimits).inspect(
+          encodedBytes: rejectedTail,
+          mediaType: _mediaType('image/png'),
+        ),
+        isA<Err<ImagePreflightResult, StructuredFailure>>(),
+      );
+      expect(rejectedTail.rejectedCurrentRead, isFalse);
+    });
+
     test('all orientations, crop, fit-down, payload and resource sharing', () {
       for (final orientation in ImageOrientation.values) {
         final payload = _ok(
@@ -2421,7 +2568,10 @@ void main() {
       expect(decoded.logicalText, '$decomposed\nمرحبا 👋');
       expect(decoded.encode(), payload.encode());
       expect(decoded.logicalText, isNot('Café\nمرحبا 👋'));
-      final definition = TextObjectTypeDefinition(_textLimits);
+      final definition = TextObjectTypeDefinition(
+        _textLimits,
+        FlutterTextLayoutEngine(_textLimits),
+      );
       expect(
         definition.validatePayload(payload.encode(), textSchemaVersion).isValid,
         isTrue,
@@ -2436,6 +2586,268 @@ void main() {
         ).text,
         isTrue,
       );
+    });
+
+    test('nested Text unknown changes are deterministic metadata', () {
+      final definition = TextObjectTypeDefinition(
+        _textLimits,
+        FlutterTextLayoutEngine(_textLimits),
+      );
+      final source = _textPayload(['base']);
+      PreservedMap withNestedUnknown({
+        PreservedData? runUnknown,
+        PreservedData? paragraphUnknown,
+        PreservedData? characterUnknown,
+        PreservedData? paragraphStyleUnknown,
+        PreservedData? topUnknown,
+        String? text,
+      }) {
+        final encoded = source.encode();
+        final paragraphs = encoded.values['paragraphs']! as PreservedList;
+        final paragraph = paragraphs.values.single as PreservedMap;
+        final runs = paragraph.values['runs']! as PreservedList;
+        final run = runs.values.single as PreservedMap;
+        final runStyle = run.values['style']! as PreservedMap;
+        final paragraphStyle = paragraph.values['style']! as PreservedMap;
+        final nextRunStyle = PreservedMap({
+          ...runStyle.values,
+          if (characterUnknown != null) 'characterFuture': characterUnknown,
+        });
+        final nextRun = PreservedMap({
+          ...run.values,
+          'text': PreservedString(text ?? source.logicalText),
+          'style': nextRunStyle,
+          if (runUnknown != null) 'runFuture': runUnknown,
+        });
+        final nextParagraph = PreservedMap({
+          ...paragraph.values,
+          'runs': PreservedList([nextRun]),
+          'style': PreservedMap({
+            ...paragraphStyle.values,
+            if (paragraphStyleUnknown != null)
+              'paragraphStyleFuture': paragraphStyleUnknown,
+          }),
+          if (paragraphUnknown != null) 'paragraphFuture': paragraphUnknown,
+        });
+        return PreservedMap({
+          ...encoded.values,
+          'paragraphs': PreservedList([nextParagraph]),
+          if (topUnknown != null) 'topFuture2': topUnknown,
+        });
+      }
+
+      final cases =
+          <({PreservedMap after, bool appearance, bool text, bool geometry})>[
+            (
+              after: withNestedUnknown(
+                runUnknown: const PreservedBoolean(true),
+              ),
+              appearance: false,
+              text: false,
+              geometry: false,
+            ),
+            (
+              after: withNestedUnknown(
+                paragraphUnknown: const PreservedBoolean(true),
+              ),
+              appearance: false,
+              text: false,
+              geometry: false,
+            ),
+            (
+              after: withNestedUnknown(
+                characterUnknown: const PreservedBoolean(true),
+              ),
+              appearance: true,
+              text: false,
+              geometry: false,
+            ),
+            (
+              after: withNestedUnknown(
+                paragraphStyleUnknown: const PreservedBoolean(true),
+              ),
+              appearance: true,
+              text: false,
+              geometry: false,
+            ),
+            (
+              after: withNestedUnknown(
+                topUnknown: const PreservedBoolean(true),
+              ),
+              appearance: false,
+              text: false,
+              geometry: false,
+            ),
+            (
+              after: withNestedUnknown(
+                runUnknown: const PreservedBoolean(true),
+                paragraphUnknown: const PreservedBoolean(true),
+                text: 'changed',
+              ),
+              appearance: false,
+              text: true,
+              geometry: true,
+            ),
+          ];
+      for (final value in cases) {
+        final semantics = _ok(
+          definition.classifyPayloadChange(
+            source.encode(),
+            value.after,
+            textSchemaVersion,
+          ),
+        );
+        expect(semantics.metadata, isTrue);
+        expect(semantics.appearance, value.appearance);
+        expect(semantics.text, value.text);
+        expect(semantics.geometry, value.geometry);
+        expect('$semantics', isNot(contains('Future')));
+      }
+    });
+
+    test('nested Text metadata is authoritative in both command paths', () {
+      final beforePayload = _textPayload(['base']);
+      final encoded = beforePayload.encode();
+      final paragraph =
+          (encoded.values['paragraphs']! as PreservedList).values.single
+              as PreservedMap;
+      final run =
+          (paragraph.values['runs']! as PreservedList).values.single
+              as PreservedMap;
+      final afterData = PreservedMap({
+        ...encoded.values,
+        'paragraphs': PreservedList([
+          PreservedMap({
+            ...paragraph.values,
+            'runs': PreservedList([
+              PreservedMap({
+                ...run.values,
+                'futureRun': const PreservedBoolean(true),
+              }),
+            ]),
+          }),
+        ]),
+      });
+      final afterPayload = _ok(
+        TextPayload.decode(afterData, limits: _textLimits),
+      );
+      final source = testObject(
+        id: 615,
+        typeKey: textObjectTypeKey,
+        schemaVersion: textSchemaVersion,
+        payload: beforePayload.encode(),
+      );
+      const correct = ObjectReplacementChangeCategories(
+        appearance: false,
+        text: false,
+        metadata: true,
+      );
+      expect(
+        TextObjectEditRequest.replace(
+          documentId: DocumentId.fromUuid(testUuid(1)),
+          source: source,
+          payload: afterPayload,
+          limits: _textLimits,
+          layoutEngine: FlutterTextLayoutEngine(_textLimits),
+          metadata: phase3Metadata(correlation: 916),
+          preconditions: RevisionPreconditions(),
+          changeCategories: const ObjectReplacementChangeCategories(
+            appearance: false,
+            text: false,
+            metadata: false,
+          ),
+        ),
+        isA<Err<AtomicObjectReplacementRequest, StructuredFailure>>(),
+      );
+      expect(
+        TextObjectEditRequest.replace(
+          documentId: DocumentId.fromUuid(testUuid(1)),
+          source: source,
+          payload: afterPayload,
+          limits: _textLimits,
+          layoutEngine: FlutterTextLayoutEngine(_textLimits),
+          metadata: phase3Metadata(correlation: 917),
+          preconditions: RevisionPreconditions(),
+          changeCategories: correct,
+        ),
+        isA<Ok<AtomicObjectReplacementRequest, StructuredFailure>>(),
+      );
+
+      final root = testNotebook(
+        sections: [
+          testSection(
+            pages: [
+              testPage(
+                layers: [
+                  testContentLayer(objects: [source]),
+                ],
+              ),
+            ],
+          ),
+        ],
+      );
+      final countingLayout = _CountingTextLayoutEngine(
+        FlutterTextLayoutEngine(_textLimits),
+      );
+      final coordinator = _ok(
+        DocumentMutationCoordinator.create(
+          initialRoot: root,
+          validator: DocumentValidator(
+            testRegistry([
+              TextObjectTypeDefinition(_textLimits, countingLayout),
+            ]),
+          ),
+          uuidGenerator: UuidSequenceGenerator.fromValues([
+            for (var value = 920; value < 940; value++) testUuid(value),
+          ]),
+          historyLimits: _ok(
+            HistoryLimits.create(
+              maximumRetainedCommandCount: 8,
+              maximumEstimatedRetainedBytes: 100000,
+            ),
+          ),
+          retainedCostEstimator: FixedHistoryCostEstimator(100),
+          maximumListeners: 4,
+        ),
+      );
+      final snapshot = coordinator.snapshot;
+      final page = root.pages.single;
+      final layer = page.layers.single;
+      final replacement = testObject(
+        id: 615,
+        typeKey: textObjectTypeKey,
+        schemaVersion: textSchemaVersion,
+        payload: afterPayload.encode(),
+      );
+      final request = _ok(
+        AtomicObjectCollectionEditRequest.create(
+          documentId: root.id,
+          pageId: page.id,
+          metadata: phase3Metadata(
+            family: 'alnote.commands.object.collection_edit',
+            correlation: 918,
+          ),
+          preconditions: RevisionPreconditions(
+            pages: {page.id: snapshot.revisions.pages[page.id]!},
+            layerMembership: {
+              layer.id: snapshot.revisions.layerMembership[layer.id]!,
+            },
+            objects: {source.id: snapshot.revisions.objects[source.id]!},
+          ),
+          replacements: [replacement],
+          replacementChangeCategories: correct,
+          maximumOperations: 1,
+        ),
+      );
+      final committed = _ok(coordinator.execute(request));
+      expect(committed.change.flags.metadata, isTrue);
+      expect(committed.change.flags.appearance, isFalse);
+      expect(committed.change.flags.text, isFalse);
+      final callsAfterExecute = countingLayout.calls;
+      expect(_ok(coordinator.undo()).change.flags.metadata, isTrue);
+      expect(_ok(coordinator.redo()).change.flags.metadata, isTrue);
+      expect(countingLayout.calls, callsAfterExecute);
+      expect('$committed', isNot(contains('futureRun')));
     });
 
     test('grapheme replacement and semantic history barriers are exact', () {
@@ -2514,6 +2926,191 @@ void main() {
         ),
         isFalse,
       );
+    });
+
+    test('pending edits use the evolving staged draft atomically', () {
+      TextEditorSession sessionFor(TextPayload payload) => _ok(
+        TextEditorSession.create(
+          object: testObject(
+            typeKey: textObjectTypeKey,
+            schemaVersion: textSchemaVersion,
+            payload: payload.encode(),
+          ),
+          draft: payload,
+          baseObjectRevision: _revision(0),
+          selection: _ok(TextRange.create(_position(0, 0), _position(0, 0))),
+          typingStyle: payload.defaultCharacterStyle,
+          limits: _textLimits,
+        ),
+      );
+      PendingTextEdit edit(
+        TextEditKind kind,
+        int startParagraph,
+        int start,
+        int endParagraph,
+        int end,
+        String replacement,
+      ) => _ok(
+        PendingTextEdit.create(
+          kind: kind,
+          range: _ok(
+            TextRange.create(
+              _position(startParagraph, start),
+              _position(endParagraph, end),
+            ),
+          ),
+          replacement: replacement,
+          limits: _textLimits,
+        ),
+      );
+
+      final typing = sessionFor(_textPayload(['']));
+      expect(
+        typing.addPending(edit(TextEditKind.insertion, 0, 0, 0, 0, 'a')),
+        isA<Ok<void, StructuredFailure>>(),
+      );
+      expect(typing.draft.logicalText, 'a');
+      expect(
+        typing.addPending(edit(TextEditKind.insertion, 0, 1, 0, 1, 'b')),
+        isA<Ok<void, StructuredFailure>>(),
+      );
+      for (final value in 'cdef'.split('')) {
+        final offset = typing.draft.paragraphs.single.scalarLength;
+        expect(
+          typing.addPending(
+            edit(TextEditKind.insertion, 0, offset, 0, offset, value),
+          ),
+          isA<Ok<void, StructuredFailure>>(),
+        );
+      }
+      expect(typing.draft.logicalText, 'abcdef');
+      expect(typing.pendingEdits, hasLength(6));
+
+      expect(
+        typing.addPending(edit(TextEditKind.backwardDeletion, 0, 5, 0, 6, '')),
+        isA<Ok<void, StructuredFailure>>(),
+      );
+      expect(typing.draft.logicalText, 'abcde');
+      expect(
+        typing.addPending(edit(TextEditKind.forwardDeletion, 0, 0, 0, 1, '')),
+        isA<Ok<void, StructuredFailure>>(),
+      );
+      expect(typing.draft.logicalText, 'bcde');
+      expect(
+        typing.addPending(edit(TextEditKind.insertion, 0, 1, 0, 3, 'X')),
+        isA<Ok<void, StructuredFailure>>(),
+      );
+      expect(typing.draft.logicalText, 'bXe');
+      expect(
+        typing.addPending(edit(TextEditKind.insertion, 0, 2, 0, 2, '\nY')),
+        isA<Ok<void, StructuredFailure>>(),
+      );
+      expect(typing.draft.logicalText, 'bX\nYe');
+
+      final cross = sessionFor(_textPayload(['first', 'second']));
+      expect(
+        cross.addPending(edit(TextEditKind.insertion, 0, 2, 1, 3, 'Z')),
+        isA<Ok<void, StructuredFailure>>(),
+      );
+      expect(cross.draft.logicalText, 'fiZond');
+
+      final unicode = sessionFor(_textPayload(['']));
+      for (final cluster in ['e\u0301', '🇺🇸', '👍🏽', '👩‍💻']) {
+        final offset = unicode.draft.paragraphs.single.scalarLength;
+        expect(
+          unicode.addPending(
+            edit(TextEditKind.insertion, 0, offset, 0, offset, cluster),
+          ),
+          isA<Ok<void, StructuredFailure>>(),
+        );
+      }
+      final beforeDraft = unicode.draft;
+      final beforeSelection = unicode.selection;
+      final beforePending = unicode.pendingEdits;
+      expect(
+        unicode.addPending(edit(TextEditKind.insertion, 0, 1, 0, 1, 'invalid')),
+        isA<Err<void, StructuredFailure>>(),
+      );
+      expect(unicode.draft, same(beforeDraft));
+      expect(unicode.selection, same(beforeSelection));
+      expect(unicode.pendingEdits, beforePending);
+      expect(
+        () => unicode.pendingEdits.add(
+          edit(TextEditKind.insertion, 0, 0, 0, 0, 'x'),
+        ),
+        throwsUnsupportedError,
+      );
+
+      final onePending = _adjustTextLimits(maximumPendingEdits: 1);
+      final boundedDraft = _textPayload(['']);
+      final bounded = _ok(
+        TextEditorSession.create(
+          object: testObject(
+            typeKey: textObjectTypeKey,
+            schemaVersion: textSchemaVersion,
+            payload: boundedDraft.encode(),
+          ),
+          draft: boundedDraft,
+          baseObjectRevision: _revision(0),
+          selection: _ok(TextRange.create(_position(0, 0), _position(0, 0))),
+          typingStyle: boundedDraft.defaultCharacterStyle,
+          limits: onePending,
+        ),
+      );
+      expect(
+        bounded.addPending(edit(TextEditKind.insertion, 0, 0, 0, 0, 'a')),
+        isA<Ok<void, StructuredFailure>>(),
+      );
+      final exactDraft = bounded.draft;
+      final exactSelection = bounded.selection;
+      expect(
+        bounded.addPending(edit(TextEditKind.insertion, 0, 1, 0, 1, 'b')),
+        isA<Err<void, StructuredFailure>>(),
+      );
+      expect(bounded.draft, same(exactDraft));
+      expect(bounded.selection, same(exactSelection));
+      expect(bounded.pendingEdits, hasLength(1));
+    });
+
+    test('IME confirmation uses the evolving staged draft coordinates', () {
+      final payload = _textPayload(['a']);
+      final session = _ok(
+        TextEditorSession.create(
+          object: testObject(
+            typeKey: textObjectTypeKey,
+            schemaVersion: textSchemaVersion,
+            payload: payload.encode(),
+          ),
+          draft: payload,
+          baseObjectRevision: _revision(0),
+          selection: _ok(TextRange.create(_position(0, 1), _position(0, 1))),
+          typingStyle: payload.defaultCharacterStyle,
+          limits: _textLimits,
+        ),
+      );
+      final first = _ok(
+        PendingTextEdit.create(
+          kind: TextEditKind.insertion,
+          range: _ok(TextRange.create(_position(0, 1), _position(0, 1))),
+          replacement: 'b',
+          limits: _textLimits,
+        ),
+      );
+      expect(session.addPending(first), isA<Ok<void, StructuredFailure>>());
+      final composition = _ok(
+        TextComposition.create(
+          range: _ok(TextRange.create(_position(0, 2), _position(0, 2))),
+          text: '👩‍💻',
+          limits: _textLimits,
+        ),
+      );
+      expect(
+        session.updateComposition(composition),
+        isA<Ok<void, StructuredFailure>>(),
+      );
+      expect(session.confirmComposition(), isA<Ok<void, StructuredFailure>>());
+      expect(session.draft.logicalText, 'ab👩‍💻');
+      expect(session.composition, isNull);
     });
 
     test(
@@ -2609,7 +3206,12 @@ void main() {
           DocumentMutationCoordinator.create(
             initialRoot: root,
             validator: DocumentValidator(
-              testRegistry([TextObjectTypeDefinition(_textLimits)]),
+              testRegistry([
+                TextObjectTypeDefinition(
+                  _textLimits,
+                  FlutterTextLayoutEngine(_textLimits),
+                ),
+              ]),
             ),
             uuidGenerator: UuidSequenceGenerator.fromValues([
               for (var value = 900; value < 920; value++) testUuid(value),
@@ -2633,6 +3235,7 @@ void main() {
                 source: source,
                 payload: _textPayload([text]),
                 limits: _textLimits,
+                layoutEngine: FlutterTextLayoutEngine(_textLimits),
                 metadata: phase3Metadata(correlation: correlation),
                 preconditions: RevisionPreconditions(
                   objects: {source.id: base.revisions.objects[source.id]!},
@@ -2641,6 +3244,7 @@ void main() {
                   },
                 ),
                 changeCategories: const ObjectReplacementChangeCategories(
+                  geometry: true,
                   text: true,
                   appearance: false,
                   metadata: false,
@@ -2694,6 +3298,1210 @@ void main() {
       orderedEquals(const [0, 1, 4, 5]),
     );
   });
+
+  test(
+    'shared TextPainter authority fixes fallback locale and lifecycle',
+    () async {
+      final observer = _TextPainterLifecycleEvidence();
+      final factory = FlutterTextPainterFactory(lifecycleObserver: observer);
+      final payload = _configuredTextPayload(
+        genericFamily: TextGenericFontFamily.monospace,
+        preferredFamily: 'Definitely Missing AL NOTE Font',
+        languageHint: 'zh-Hant-TW',
+        width: 92,
+      );
+      final painter = factory.create(
+        payload: payload,
+        paragraph: payload.paragraphs.single,
+        maximumWidth: 92,
+        layerOpacity: 1,
+      );
+      final root = painter.text! as flutter.TextSpan;
+      final run = root.children!.single as flutter.TextSpan;
+      expect(
+        root.style!.fontFamily,
+        payload.defaultCharacterStyle.preferredFontFamily,
+      );
+      expect(root.style!.fontFamilyFallback, ['monospace']);
+      expect(run.style!.fontFamilyFallback, ['monospace']);
+      expect(run.style!.fontSize, 24);
+      expect(run.style!.fontStyle, flutter.FontStyle.italic);
+      expect(
+        run.style!.decoration,
+        flutter.TextDecoration.combine(const [
+          flutter.TextDecoration.underline,
+          flutter.TextDecoration.lineThrough,
+        ]),
+      );
+      expect(painter.locale!.languageCode, 'zh');
+      expect(painter.locale!.scriptCode, 'Hant');
+      expect(painter.locale!.countryCode, 'TW');
+      expect(painter.textWidthBasis, flutter.TextWidthBasis.longestLine);
+      factory.dispose(painter);
+
+      final regionPayload = _configuredTextPayload(languageHint: 'en-US');
+      final regionPainter = factory.create(
+        payload: regionPayload,
+        paragraph: regionPayload.paragraphs.single,
+        maximumWidth: 120,
+        layerOpacity: 1,
+      );
+      expect(regionPainter.locale!.languageCode, 'en');
+      expect(regionPainter.locale!.countryCode, 'US');
+      factory.dispose(regionPainter);
+
+      for (final value in <({String hint, String? script, String? region})>[
+        (hint: 'en-u-ca-gregory', script: null, region: null),
+        (hint: 'sl-rozaj-biske', script: null, region: null),
+        (hint: 'de-CH-1901', script: null, region: 'CH'),
+        (hint: 'zh-Hant-TW-u-nu-hanidec', script: 'Hant', region: 'TW'),
+      ]) {
+        final localePayload = _configuredTextPayload(languageHint: value.hint);
+        final localePainter = factory.create(
+          payload: localePayload,
+          paragraph: localePayload.paragraphs.single,
+          maximumWidth: 120,
+          layerOpacity: 1,
+        );
+        expect(localePainter.locale!.scriptCode, value.script);
+        expect(localePainter.locale!.countryCode, value.region);
+        factory.dispose(localePainter);
+        expect(
+          FlutterTextLayoutEngine(
+            _textLimits,
+            painterFactory: factory,
+          ).layout(TextLayoutRequest(payload: localePayload)),
+          isA<Ok<TextLayoutSnapshot, StructuredFailure>>(),
+        );
+      }
+
+      final sans = _configuredTextPayload(text: 'iiiiiiiiWW', width: 500);
+      final mono = _configuredTextPayload(
+        genericFamily: TextGenericFontFamily.monospace,
+        text: 'iiiiiiiiWW',
+        width: 500,
+      );
+      final sansPainter = factory.create(
+        payload: sans,
+        paragraph: sans.paragraphs.single,
+        maximumWidth: 500,
+        layerOpacity: 1,
+      );
+      final monoPainter = factory.create(
+        payload: mono,
+        paragraph: mono.paragraphs.single,
+        maximumWidth: 500,
+        layerOpacity: 1,
+      );
+      final sansStyle = (sansPainter.text! as flutter.TextSpan).style!;
+      final monoStyle = (monoPainter.text! as flutter.TextSpan).style!;
+      expect(sansStyle.fontFamilyFallback, ['sans-serif']);
+      expect(monoStyle.fontFamilyFallback, ['monospace']);
+      expect(sansStyle.fontFamilyFallback, isNot(monoStyle.fontFamilyFallback));
+      factory.dispose(sansPainter);
+      factory.dispose(monoPainter);
+
+      final snapshot = _ok(
+        FlutterTextLayoutEngine(
+          _textLimits,
+          painterFactory: factory,
+        ).layout(TextLayoutRequest(payload: payload)),
+      );
+      expect(snapshot.paragraphs.single.bounds.height, greaterThan(0));
+      expect(observer.createdCount, observer.disposedCount);
+      expect(observer.doubleDisposed, isFalse);
+      expect(observer.liveCount, 0);
+
+      for (final mode in TextBoxMode.values) {
+        for (final alignment in TextVerticalAlignment.values) {
+          for (final overflow in TextOverflowPolicy.values) {
+            final value = _configuredTextPayload(
+              text: 'wrapped geometry agreement across modes',
+              languageHint: 'zh-Hant-TW',
+              genericFamily: TextGenericFontFamily.monospace,
+              mode: mode,
+              alignment: alignment,
+              overflow: overflow,
+              width: 88,
+              height: 160,
+            );
+            final layout = _ok(
+              FlutterTextLayoutEngine(
+                _textLimits,
+                painterFactory: factory,
+              ).layout(
+                TextLayoutRequest(
+                  payload: value,
+                  range: _ok(
+                    TextRange.create(
+                      _position(0, 0),
+                      _position(0, value.paragraphs.single.scalarLength),
+                    ),
+                  ),
+                ),
+              ),
+            );
+            final paragraphPainter = factory.create(
+              payload: value,
+              paragraph: value.paragraphs.single,
+              maximumWidth:
+                  value.intrinsicWidth -
+                  value.padding.left -
+                  value.padding.right,
+              layerOpacity: 1,
+            );
+            expect(
+              layout.paragraphs.single.bounds.height,
+              math.max(
+                paragraphPainter.height,
+                paragraphPainter.preferredLineHeight,
+              ),
+            );
+            expect(layout.lines, isNotEmpty);
+            expect(layout.caretStops, isNotEmpty);
+            expect(layout.rangeGeometry, isNotEmpty);
+            factory.dispose(paragraphPainter);
+          }
+        }
+      }
+      expect(observer.createdCount, observer.disposedCount);
+      expect(observer.doubleDisposed, isFalse);
+      expect(observer.liveCount, 0);
+
+      final pixelPayload = _configuredTextPayload(
+        text: 'pixel wrapping agreement',
+        genericFamily: TextGenericFontFamily.monospace,
+        languageHint: 'zh-Hant-TW',
+        mode: TextBoxMode.fixedWidthFixedHeight,
+        alignment: TextVerticalAlignment.center,
+        overflow: TextOverflowPolicy.clip,
+        width: 90,
+        height: 120,
+      );
+      final pixelLayout = _ok(
+        FlutterTextLayoutEngine(
+          _textLimits,
+        ).layout(TextLayoutRequest(payload: pixelPayload)),
+      );
+      final primitive = _ok(
+        TextRenderingDefinition(
+          _textLimits,
+          FlutterTextLayoutEngine(_textLimits),
+        ).render(
+          object: testObject(
+            typeKey: textObjectTypeKey,
+            schemaVersion: textSchemaVersion,
+            payload: pixelPayload.encode(),
+          ),
+          viewport: _viewport(),
+          layerOpacity: .7,
+          plane: RenderPlane.committed,
+          limits: _renderingLimits(),
+        ),
+      ).single;
+      expect(
+        await _paintedBytes(primitive),
+        await _paintedTextWithFactory(pixelPayload, pixelLayout, .7),
+      );
+    },
+  );
+
+  test('Text painting multiplies packed alpha by Layer opacity', () async {
+    Future<int> maximumPaintedAlpha(int argb, double layerOpacity) async {
+      final engine = FlutterTextLayoutEngine(_textLimits);
+      final payload = _configuredTextPayload(
+        text: 'M',
+        fontSize: 64,
+        argb: argb,
+        italic: false,
+        underline: false,
+        strikethrough: false,
+        width: 240,
+      );
+      final primitive = _ok(
+        TextRenderingDefinition(_textLimits, engine).render(
+          object: testObject(
+            typeKey: textObjectTypeKey,
+            schemaVersion: textSchemaVersion,
+            payload: payload.encode(),
+            transform: _ok(
+              AffineTransform2D.restoreFromStorage([1, 0, 0, 1, 24, 30]),
+            ),
+          ),
+          viewport: _ok(
+            ViewportSnapshot.create(
+              extent: _ok(ViewExtent.create(width: 600, height: 800)),
+              pageOrigin: _point(0, 0),
+              zoom: 1,
+              minimumZoom: .25,
+              maximumZoom: 8,
+              revision: _revision(0),
+            ),
+          ),
+          layerOpacity: layerOpacity,
+          plane: RenderPlane.committed,
+          limits: _renderingLimits(),
+        ),
+      ).single;
+      final bytes = await _paintedBytes(primitive);
+      var maximum = 0;
+      for (var index = 3; index < bytes.length; index += 4) {
+        maximum = math.max(maximum, bytes[index]);
+      }
+      return maximum;
+    }
+
+    expect(
+      await maximumPaintedAlpha(0x80000000, 1),
+      inInclusiveRange(126, 128),
+    );
+    expect(
+      await maximumPaintedAlpha(0xff000000, .5),
+      inInclusiveRange(126, 128),
+    );
+    expect(await maximumPaintedAlpha(0x80000000, .5), inInclusiveRange(62, 64));
+  });
+
+  test('Text classification compares authoritative layout geometry', () {
+    final engine = FlutterTextLayoutEngine(_textLimits);
+    final definition = TextObjectTypeDefinition(_textLimits, engine);
+    ObjectPayloadChangeSemantics classify(
+      TextPayload before,
+      TextPayload after,
+    ) => _ok(
+      definition.classifyPayloadChange(
+        before.encode(),
+        after.encode(),
+        textSchemaVersion,
+      ),
+    );
+
+    final short = _configuredTextPayload(text: 'short', width: 72);
+    final wrapped = _configuredTextPayload(
+      text: 'short text that wraps over several lines',
+      width: 72,
+    );
+    expect(classify(short, wrapped).geometry, isTrue);
+    expect(classify(wrapped, short).geometry, isTrue);
+
+    final larger = _configuredTextPayload(
+      text: 'short',
+      fontSize: 40,
+      width: 72,
+    );
+    final fontChange = classify(short, larger);
+    expect(fontChange.geometry, isTrue);
+    expect(fontChange.appearance, isTrue);
+
+    final taller = _configuredTextPayload(
+      text: 'short',
+      lineHeight: 2,
+      width: 72,
+    );
+    expect(classify(short, taller).geometry, isTrue);
+
+    final visibleShort = _configuredTextPayload(
+      text: 'one',
+      mode: TextBoxMode.fixedWidthFixedHeight,
+      width: 72,
+      height: 20,
+    );
+    final visibleLong = _configuredTextPayload(
+      text: 'one two three four five six seven',
+      mode: TextBoxMode.fixedWidthFixedHeight,
+      width: 72,
+      height: 20,
+    );
+    expect(classify(visibleShort, visibleLong).geometry, isTrue);
+    expect(classify(visibleLong, visibleShort).geometry, isTrue);
+
+    final clipped = _configuredTextPayload(
+      text: 'one two three four five six seven',
+      mode: TextBoxMode.fixedWidthFixedHeight,
+      overflow: TextOverflowPolicy.clip,
+      width: 72,
+      height: 20,
+    );
+    final clippedLarger = _configuredTextPayload(
+      text: 'one two three four five six seven',
+      fontSize: 40,
+      mode: TextBoxMode.fixedWidthFixedHeight,
+      overflow: TextOverflowPolicy.clip,
+      width: 72,
+      height: 20,
+    );
+    expect(classify(clipped, clippedLarger).geometry, isTrue);
+    final clippedColor = _configuredTextPayload(
+      text: 'one two three four five six seven',
+      argb: 0xffff0000,
+      mode: TextBoxMode.fixedWidthFixedHeight,
+      overflow: TextOverflowPolicy.clip,
+      width: 72,
+      height: 20,
+    );
+    final colorOnly = classify(clipped, clippedColor);
+    expect(colorOnly.geometry, isFalse);
+    expect(colorOnly.appearance, isTrue);
+
+    final everything = _configuredTextPayload(
+      text: 'different wrapped content for every category',
+      fontSize: 42,
+      argb: 0xffff0000,
+      width: 72,
+      payloadUnknown: PreservedMap({'future': const PreservedBoolean(true)}),
+    );
+    final all = classify(short, everything);
+    expect(all.geometry, isTrue);
+    expect(all.appearance, isTrue);
+    expect(all.text, isTrue);
+    expect(all.metadata, isTrue);
+
+    final unavailable = _CountingTextLayoutEngine(engine, fail: true);
+    final failure = TextObjectTypeDefinition(_textLimits, unavailable)
+        .classifyPayloadChange(
+          short.encode(),
+          wrapped.encode(),
+          textSchemaVersion,
+        );
+    expect(
+      failure,
+      isA<Err<ObjectPayloadChangeSemantics, StructuredFailure>>(),
+    );
+    expect('$failure', isNot(contains('short')));
+
+    final source = testObject(
+      id: 966,
+      typeKey: textObjectTypeKey,
+      schemaVersion: textSchemaVersion,
+      payload: short.encode(),
+    );
+    final categories = ObjectReplacementChangeCategories(
+      geometry: all.geometry,
+      appearance: all.appearance,
+      text: all.text,
+      metadata: all.metadata,
+    );
+    expect(
+      TextObjectEditRequest.replace(
+        documentId: DocumentId.fromUuid(testUuid(1)),
+        source: source,
+        payload: everything,
+        limits: _textLimits,
+        layoutEngine: engine,
+        metadata: phase3Metadata(correlation: 967),
+        preconditions: RevisionPreconditions(),
+        changeCategories: categories,
+      ),
+      isA<Ok<AtomicObjectReplacementRequest, StructuredFailure>>(),
+    );
+    expect(
+      TextObjectEditRequest.replace(
+        documentId: DocumentId.fromUuid(testUuid(1)),
+        source: source,
+        payload: everything,
+        limits: _textLimits,
+        layoutEngine: engine,
+        metadata: phase3Metadata(correlation: 968),
+        preconditions: RevisionPreconditions(),
+        changeCategories: const ObjectReplacementChangeCategories(
+          appearance: true,
+          text: true,
+          metadata: true,
+        ),
+      ),
+      isA<Err<AtomicObjectReplacementRequest, StructuredFailure>>(),
+    );
+    expect(
+      TextObjectEditRequest.replace(
+        documentId: DocumentId.fromUuid(testUuid(1)),
+        source: source,
+        payload: everything,
+        limits: _textLimits,
+        layoutEngine: unavailable,
+        metadata: phase3Metadata(correlation: 969),
+        preconditions: RevisionPreconditions(),
+        changeCategories: categories,
+      ),
+      isA<Err<AtomicObjectReplacementRequest, StructuredFailure>>(),
+    );
+
+    final counting = _CountingTextLayoutEngine(engine);
+    final rootDocument = testNotebook(
+      sections: [
+        testSection(
+          pages: [
+            testPage(
+              layers: [
+                testContentLayer(objects: [source]),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+    final registry = testRegistry([
+      TextObjectTypeDefinition(_textLimits, counting),
+    ]);
+    final coordinator = _coordinatorFor(rootDocument, registry);
+    final initial = coordinator.snapshot;
+    final page = rootDocument.pages.single;
+    final layer = page.layers.single;
+    final replacement = testObject(
+      id: 966,
+      typeKey: textObjectTypeKey,
+      schemaVersion: textSchemaVersion,
+      payload: everything.encode(),
+    );
+    AtomicObjectCollectionEditRequest collection(
+      ObjectReplacementChangeCategories claims,
+      int correlation,
+    ) => _ok(
+      AtomicObjectCollectionEditRequest.create(
+        documentId: rootDocument.id,
+        pageId: page.id,
+        metadata: phase3Metadata(
+          family: 'alnote.commands.object.collection_edit',
+          correlation: correlation,
+        ),
+        preconditions: RevisionPreconditions(
+          pages: {page.id: initial.revisions.pages[page.id]!},
+          layerMembership: {
+            layer.id: initial.revisions.layerMembership[layer.id]!,
+          },
+          objects: {source.id: initial.revisions.objects[source.id]!},
+        ),
+        replacements: [replacement],
+        replacementChangeCategories: claims,
+        maximumOperations: 1,
+      ),
+    );
+    expect(
+      coordinator.execute(
+        collection(
+          const ObjectReplacementChangeCategories(
+            appearance: true,
+            text: true,
+            metadata: true,
+          ),
+          975,
+        ),
+      ),
+      isA<Err<CommandCommit, CommandFailure>>(),
+    );
+    expect(coordinator.snapshot.root, same(initial.root));
+    expect(coordinator.snapshot.canUndo, isFalse);
+    final commit = _ok(coordinator.execute(collection(categories, 976)));
+    expect(commit.change.flags.geometry, isTrue);
+    expect(commit.change.flags.appearance, isTrue);
+    expect(commit.change.flags.text, isTrue);
+    expect(commit.change.flags.metadata, isTrue);
+    final callsAfterCommit = counting.calls;
+    final undo = _ok(coordinator.undo());
+    final redo = _ok(coordinator.redo());
+    for (final evidence in [undo, redo]) {
+      expect(evidence.change.flags.geometry, isTrue);
+      expect(evidence.change.flags.appearance, isTrue);
+      expect(evidence.change.flags.text, isTrue);
+      expect(evidence.change.flags.metadata, isTrue);
+    }
+    expect(counting.calls, callsAfterCommit);
+  });
+
+  test('Text classification is total when authoritative bounds are equal', () {
+    final base = _configuredTextPayload(
+      text: 'a\nb',
+      mode: TextBoxMode.fixedWidthFixedHeight,
+      height: 120,
+    );
+    final snapshot = _ok(
+      FlutterTextLayoutEngine(
+        _textLimits,
+      ).layout(TextLayoutRequest(payload: base)),
+    );
+    final fixed = _FixedTextLayoutEngine(snapshot);
+    final definition = TextObjectTypeDefinition(_textLimits, fixed);
+    PreservedDouble number(double value) => _ok(PreservedDouble.create(value));
+    TextPayload changed(Map<String, PreservedData> overrides) => _ok(
+      TextPayload.decode(
+        PreservedMap({...base.encode().values, ...overrides}),
+        limits: _textLimits,
+      ),
+    );
+
+    final padding = base.encode().values['padding']! as PreservedMap;
+    final explicitParagraphs = _textPayload(['a', 'b']);
+    final oneParagraph = _textPayload(['ab']);
+    final paragraph = oneParagraph.paragraphs.single;
+    final splitRuns = _ok(
+      TextPayload.create(
+        paragraphs: [
+          _ok(
+            TextParagraph.create(
+              runs: [
+                _ok(
+                  TextRun.create(
+                    text: 'a',
+                    style: paragraph.runs.single.style,
+                    limits: _textLimits,
+                  ),
+                ),
+                _ok(
+                  TextRun.create(
+                    text: 'b',
+                    style: paragraph.runs.single.style,
+                    limits: _textLimits,
+                  ),
+                ),
+              ],
+              style: paragraph.style,
+              limits: _textLimits,
+            ),
+          ),
+        ],
+        defaultCharacterStyle: oneParagraph.defaultCharacterStyle,
+        defaultParagraphStyle: oneParagraph.defaultParagraphStyle,
+        boxMode: oneParagraph.boxMode,
+        intrinsicWidth: oneParagraph.intrinsicWidth,
+        intrinsicHeight: oneParagraph.intrinsicHeight,
+        padding: oneParagraph.padding,
+        verticalAlignment: oneParagraph.verticalAlignment,
+        overflowPolicy: oneParagraph.overflowPolicy,
+        limits: _textLimits,
+        unknownFields: oneParagraph.unknownFields,
+      ),
+    );
+    final cases = <TextPayload>[
+      changed({'boxMode': const PreservedString('fixedWidthAutoHeight')}),
+      changed({'intrinsicWidth': number(121)}),
+      changed({'intrinsicHeight': number(121)}),
+      changed({
+        'padding': PreservedMap({...padding.values, 'left': number(7)}),
+      }),
+      changed({'verticalAlignment': const PreservedString('bottom')}),
+      changed({'overflowPolicy': const PreservedString('clip')}),
+      explicitParagraphs,
+    ];
+    for (final after in cases) {
+      final semantics = _ok(
+        definition.classifyPayloadChange(
+          base.encode(),
+          after.encode(),
+          textSchemaVersion,
+        ),
+      );
+      expect(semantics.geometry, isFalse);
+      expect(semantics.metadata, isTrue);
+      expect(
+        semantics.geometry ||
+            semantics.appearance ||
+            semantics.text ||
+            semantics.metadata,
+        isTrue,
+      );
+    }
+    final runBoundary = _ok(
+      definition.classifyPayloadChange(
+        oneParagraph.encode(),
+        splitRuns.encode(),
+        textSchemaVersion,
+      ),
+    );
+    expect(runBoundary.geometry, isFalse);
+    expect(runBoundary.text, isFalse);
+    expect(runBoundary.metadata, isTrue);
+    expect(oneParagraph.encode(), isNot(splitRuns.encode()));
+    expect(fixed.calls, 2 * (cases.length + 1));
+
+    final configurationAfter = cases.first;
+    final source = testObject(
+      id: 977,
+      typeKey: textObjectTypeKey,
+      schemaVersion: textSchemaVersion,
+      payload: base.encode(),
+    );
+    const metadataOnly = ObjectReplacementChangeCategories(
+      appearance: false,
+      text: false,
+      metadata: true,
+    );
+    expect(
+      TextObjectEditRequest.replace(
+        documentId: DocumentId.fromUuid(testUuid(1)),
+        source: source,
+        payload: configurationAfter,
+        limits: _textLimits,
+        layoutEngine: fixed,
+        metadata: phase3Metadata(correlation: 978),
+        preconditions: RevisionPreconditions(),
+        changeCategories: metadataOnly,
+      ),
+      isA<Ok<AtomicObjectReplacementRequest, StructuredFailure>>(),
+    );
+    expect(
+      TextObjectEditRequest.replace(
+        documentId: DocumentId.fromUuid(testUuid(1)),
+        source: source,
+        payload: configurationAfter,
+        limits: _textLimits,
+        layoutEngine: fixed,
+        metadata: phase3Metadata(correlation: 979),
+        preconditions: RevisionPreconditions(),
+        changeCategories: const ObjectReplacementChangeCategories(
+          appearance: false,
+          text: false,
+          metadata: false,
+        ),
+      ),
+      isA<Err<AtomicObjectReplacementRequest, StructuredFailure>>(),
+    );
+
+    final root = testNotebook(
+      sections: [
+        testSection(
+          pages: [
+            testPage(
+              layers: [
+                testContentLayer(objects: [source]),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+    final registry = testRegistry([
+      TextObjectTypeDefinition(_textLimits, fixed),
+    ]);
+    final coordinator = _coordinatorFor(root, registry);
+    final initial = coordinator.snapshot;
+    final page = root.pages.single;
+    final layer = page.layers.single;
+    final replacement = testObject(
+      id: 977,
+      typeKey: textObjectTypeKey,
+      schemaVersion: textSchemaVersion,
+      payload: configurationAfter.encode(),
+    );
+    AtomicObjectCollectionEditRequest collection(
+      ObjectReplacementChangeCategories claims,
+      int correlation,
+    ) => _ok(
+      AtomicObjectCollectionEditRequest.create(
+        documentId: root.id,
+        pageId: page.id,
+        metadata: phase3Metadata(
+          family: 'alnote.commands.object.collection_edit',
+          correlation: correlation,
+        ),
+        preconditions: RevisionPreconditions(
+          pages: {page.id: initial.revisions.pages[page.id]!},
+          layerMembership: {
+            layer.id: initial.revisions.layerMembership[layer.id]!,
+          },
+          objects: {source.id: initial.revisions.objects[source.id]!},
+        ),
+        replacements: [replacement],
+        replacementChangeCategories: claims,
+        maximumOperations: 1,
+      ),
+    );
+    expect(
+      coordinator.execute(
+        collection(
+          const ObjectReplacementChangeCategories(
+            appearance: false,
+            text: false,
+            metadata: false,
+          ),
+          980,
+        ),
+      ),
+      isA<Err<CommandCommit, CommandFailure>>(),
+    );
+    expect(coordinator.snapshot.root, same(initial.root));
+    final committed = _ok(coordinator.execute(collection(metadataOnly, 981)));
+    expect(committed.change.flags.geometry, isFalse);
+    expect(committed.change.flags.metadata, isTrue);
+    final callsAfterCommit = fixed.calls;
+    expect(_ok(coordinator.undo()).change.flags.metadata, isTrue);
+    expect(_ok(coordinator.redo()).change.flags.metadata, isTrue);
+    expect(fixed.calls, callsAfterCommit);
+  });
+
+  test('Text derived geometry rejects overflow and underflow redacted', () {
+    TextPayload? payloadFor(double fontSize, double lineHeight) {
+      final character = TextCharacterStyle.create(
+        genericFontFamily: TextGenericFontFamily.sansSerif,
+        fontSize: fontSize,
+        weight: 400,
+        italic: false,
+        underline: false,
+        strikethrough: false,
+        argb: 0xff000000,
+        limits: _textLimits,
+      );
+      final paragraphStyle = TextParagraphStyle.create(
+        alignment: TextAlignment.left,
+        direction: TextParagraphDirection.ltr,
+        lineHeight: lineHeight,
+        limits: _textLimits,
+      );
+      if (character is! Ok<TextCharacterStyle, StructuredFailure> ||
+          paragraphStyle is! Ok<TextParagraphStyle, StructuredFailure>) {
+        return null;
+      }
+      final run = _ok(
+        TextRun.create(text: 'x', style: character.value, limits: _textLimits),
+      );
+      final paragraph = _ok(
+        TextParagraph.create(
+          runs: [run],
+          style: paragraphStyle.value,
+          limits: _textLimits,
+        ),
+      );
+      return TextPayload.create(
+        paragraphs: [paragraph],
+        defaultCharacterStyle: character.value,
+        defaultParagraphStyle: paragraphStyle.value,
+        boxMode: TextBoxMode.fixedWidthAutoHeight,
+        intrinsicWidth: 100,
+        intrinsicHeight: null,
+        padding: _zeroTextPadding(),
+        verticalAlignment: TextVerticalAlignment.top,
+        overflowPolicy: TextOverflowPolicy.visible,
+        limits: _textLimits,
+      ).fold<TextPayload?>(onOk: (value) => value, onErr: (_) => null);
+    }
+
+    expect(payloadFor(2, double.maxFinite), isNull);
+    expect(payloadFor(double.minPositive, double.minPositive), isNull);
+    final exact = payloadFor(2, double.maxFinite / 4);
+    expect(exact, isNotNull);
+    expect(exact!.bounds.bottom.isFinite, isTrue);
+    final base = _textPayload(['x']);
+    final hostileStyle = _ok(
+      TextParagraphStyle.create(
+        alignment: TextAlignment.left,
+        direction: TextParagraphDirection.ltr,
+        lineHeight: double.maxFinite,
+        limits: _textLimits,
+      ),
+    );
+    final hostileParagraph = _ok(
+      TextParagraph.create(
+        runs: base.paragraphs.single.runs,
+        style: hostileStyle,
+        limits: _textLimits,
+      ),
+    );
+    final failure = TextPayload.create(
+      paragraphs: [hostileParagraph],
+      defaultCharacterStyle: base.defaultCharacterStyle,
+      defaultParagraphStyle: hostileStyle,
+      boxMode: TextBoxMode.fixedWidthAutoHeight,
+      intrinsicWidth: 100,
+      intrinsicHeight: null,
+      padding: _zeroTextPadding(),
+      verticalAlignment: TextVerticalAlignment.top,
+      overflowPolicy: TextOverflowPolicy.visible,
+      limits: _textLimits,
+    );
+    expect(failure, isA<Err<TextPayload, StructuredFailure>>());
+    expect('$failure', isNot(contains(double.maxFinite.toString())));
+  });
+
+  test('Text layout authority aligns rich wrapping and overflow exactly', () {
+    TextLayoutSnapshot layout(
+      TextVerticalAlignment alignment,
+      TextOverflowPolicy overflow, {
+      TextBoxMode mode = TextBoxMode.fixedWidthFixedHeight,
+      double height = 80,
+    }) => _ok(
+      FlutterTextLayoutEngine(_textLimits).layout(
+        TextLayoutRequest(
+          payload: _richLayoutPayload(
+            alignment: alignment,
+            overflow: overflow,
+            mode: mode,
+            height: height,
+          ),
+          range: _ok(TextRange.create(_position(0, 0), _position(0, 12))),
+        ),
+      ),
+    );
+
+    final top = layout(TextVerticalAlignment.top, TextOverflowPolicy.visible);
+    final center = layout(
+      TextVerticalAlignment.center,
+      TextOverflowPolicy.visible,
+      height: 240,
+    );
+    final bottom = layout(
+      TextVerticalAlignment.bottom,
+      TextOverflowPolicy.visible,
+      height: 240,
+    );
+    expect(top.paragraphs.first.origin.y, 5);
+    expect(center.paragraphs.first.origin.y, greaterThan(5));
+    expect(
+      bottom.paragraphs.first.origin.y,
+      greaterThan(center.paragraphs.first.origin.y),
+    );
+    expect(
+      bottom.paragraphs.first.origin.y - center.paragraphs.first.origin.y,
+      closeTo(
+        center.paragraphs.first.origin.y - top.paragraphs.first.origin.y,
+        0.001,
+      ),
+    );
+    expect(top.lines, hasLength(greaterThan(1)));
+    expect(top.lines.expand((line) => line.fragments), isNotEmpty);
+    expect(top.caretStops, isNotEmpty);
+    expect(top.rangeGeometry, isNotEmpty);
+
+    final clipped = layout(
+      TextVerticalAlignment.top,
+      TextOverflowPolicy.clip,
+      height: 24,
+    );
+    final visible = layout(
+      TextVerticalAlignment.top,
+      TextOverflowPolicy.visible,
+      height: 24,
+    );
+    expect(clipped.overflowed, isTrue);
+    expect(clipped.logicalBounds.bottom, 24);
+    expect(clipped.visualBounds.bottom, lessThanOrEqualTo(24));
+    expect(
+      [
+        ...clipped.lines.map((value) => value.bounds),
+        ...clipped.rangeGeometry,
+      ].every((bounds) => bounds.bottom <= 24),
+      isTrue,
+    );
+    expect(visible.visualBounds.bottom, greaterThan(24));
+    expect(visible.lines.length, greaterThan(clipped.lines.length));
+
+    final auto = layout(
+      TextVerticalAlignment.top,
+      TextOverflowPolicy.visible,
+      mode: TextBoxMode.autoSize,
+    );
+    final autoHeight = layout(
+      TextVerticalAlignment.top,
+      TextOverflowPolicy.visible,
+      mode: TextBoxMode.fixedWidthAutoHeight,
+    );
+    expect(auto.logicalBounds.width, lessThanOrEqualTo(64));
+    expect(auto.logicalBounds.height, autoHeight.logicalBounds.height);
+    expect(autoHeight.logicalBounds.width, 64);
+    final oneLine = _adjustTextLimits(maximumLayoutLines: 1);
+    expect(
+      FlutterTextLayoutEngine(oneLine).layout(
+        TextLayoutRequest(
+          payload: _richLayoutPayload(
+            alignment: TextVerticalAlignment.top,
+            overflow: TextOverflowPolicy.visible,
+            mode: TextBoxMode.fixedWidthAutoHeight,
+          ),
+        ),
+      ),
+      isA<Err<TextLayoutSnapshot, StructuredFailure>>(),
+    );
+  });
+
+  test('Text render hit and Selection share full-affine visual geometry', () {
+    final engine = FlutterTextLayoutEngine(_textLimits);
+    final payload = _richLayoutPayload(
+      alignment: TextVerticalAlignment.top,
+      overflow: TextOverflowPolicy.visible,
+      height: 24,
+    );
+    final transform = _ok(
+      AffineTransform2D.restoreFromStorage([1.5, .35, .6, 1.2, 20, 30]),
+    );
+    final object = testObject(
+      id: 965,
+      typeKey: textObjectTypeKey,
+      schemaVersion: textSchemaVersion,
+      payload: payload.encode(),
+      transform: transform,
+    );
+    final local = _ok(
+      engine.layout(TextLayoutRequest(payload: payload)),
+    ).visualBounds;
+    final pageBounds = _transformedBounds(local, transform);
+    final viewport = _ok(
+      ViewportSnapshot.create(
+        extent: _ok(ViewExtent.create(width: 1200, height: 1600)),
+        pageOrigin: _point(0, 0),
+        zoom: 2,
+        minimumZoom: .25,
+        maximumZoom: 8,
+        revision: _revision(0),
+      ),
+    );
+    final primitive =
+        _ok(
+              TextRenderingDefinition(_textLimits, engine).render(
+                object: object,
+                viewport: viewport,
+                layerOpacity: .75,
+                plane: RenderPlane.committed,
+                limits: _renderingLimits(),
+              ),
+            ).single
+            as TextBoxPrimitive;
+    expect(primitive.layout.visualBounds, local);
+    expect(
+      primitive.bounds,
+      _rect(
+        pageBounds.left * 2,
+        pageBounds.top * 2,
+        pageBounds.right * 2,
+        pageBounds.bottom * 2,
+      ),
+    );
+    final localCenter = _point(
+      (local.left + local.right) / 2,
+      (local.top + local.bottom) / 2,
+    );
+    final pageCenter = _ok(transform.applyToPoint(localCenter));
+    expect(
+      _ok(
+        TextHitTestingDefinition(_textLimits, engine).wholePoint(
+          object: object,
+          pagePosition: pageCenter,
+          pageTolerance: 0,
+        ),
+      ),
+      isTrue,
+    );
+    final root = testNotebook(
+      sections: [
+        testSection(
+          pages: [
+            testPage(
+              layers: [
+                testContentLayer(objects: [object]),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+    final registry = testRegistry([
+      TextObjectTypeDefinition(_textLimits, engine),
+    ]);
+    final coordinator = _coordinatorFor(root, registry);
+    final selection = SelectionController(
+      objectRegistry: registry,
+      coalescingBoundarySink: coordinator,
+      maximumTargets: 1,
+    );
+    _ok(
+      selection.replace(
+        root: root,
+        targets: [
+          SelectionTarget.wholeObject(
+            pageId: root.pages.single.id,
+            objectId: object.id,
+          ),
+        ],
+      ),
+    );
+    expect(selection.state.aggregateBounds, pageBounds);
+  });
+
+  test('minimal dialog representability never flattens rich Text', () {
+    final simple = _textPayload(['simple']);
+    final rich = _richLayoutPayload(
+      alignment: TextVerticalAlignment.top,
+      overflow: TextOverflowPolicy.visible,
+      mode: TextBoxMode.fixedWidthAutoHeight,
+    );
+    expect(simple.isSimpleDialogEditable, isTrue);
+    expect(rich.isSimpleDialogEditable, isFalse);
+    final embedded = _textPayload(['a\nb']);
+    final explicit = _textPayload(['a', 'b']);
+    expect(embedded.logicalText, explicit.logicalText);
+    expect(embedded.paragraphs, hasLength(1));
+    expect(explicit.paragraphs, hasLength(2));
+    expect(embedded.isSimpleDialogEditable, isFalse);
+    expect(explicit.isSimpleDialogEditable, isTrue);
+    expect(embedded.encode(), isNot(explicit.encode()));
+    expect(
+      _ok(TextPayload.decode(embedded.encode(), limits: _textLimits)).encode(),
+      embedded.encode(),
+    );
+    expect(
+      _ok(TextPayload.decode(explicit.encode(), limits: _textLimits)).encode(),
+      explicit.encode(),
+    );
+    final before = rich.encode();
+    expect(
+      _ok(TextPayload.decode(before, limits: _textLimits)).encode(),
+      before,
+    );
+
+    final encoded = simple.encode();
+    final paragraph =
+        ((encoded.values['paragraphs']! as PreservedList).values.single
+            as PreservedMap);
+    final run =
+        ((paragraph.values['runs']! as PreservedList).values.single
+            as PreservedMap);
+    for (final changed in [
+      PreservedMap({...run.values, 'runFuture': const PreservedBoolean(true)}),
+      PreservedMap({
+        ...paragraph.values,
+        'paragraphFuture': const PreservedBoolean(true),
+      }),
+    ]) {
+      final candidate = changed.values.containsKey('runs')
+          ? PreservedMap({
+              ...encoded.values,
+              'paragraphs': PreservedList([changed]),
+            })
+          : PreservedMap({
+              ...encoded.values,
+              'paragraphs': PreservedList([
+                PreservedMap({
+                  ...paragraph.values,
+                  'runs': PreservedList([changed]),
+                }),
+              ]),
+            });
+      expect(
+        _ok(
+          TextPayload.decode(candidate, limits: _textLimits),
+        ).isSimpleDialogEditable,
+        isFalse,
+      );
+    }
+  });
+
+  test(
+    'explicit simple paragraphs preserve structure through history and reopen',
+    () {
+      final engine = FlutterTextLayoutEngine(_textLimits);
+      final beforePayload = _textPayload(['a', 'b']);
+      final afterPayload = _textPayload(['aa', 'bb']);
+      final source = testObject(
+        id: 970,
+        typeKey: textObjectTypeKey,
+        schemaVersion: textSchemaVersion,
+        payload: beforePayload.encode(),
+      );
+      final root = testNotebook(
+        sections: [
+          testSection(
+            pages: [
+              testPage(
+                layers: [
+                  testContentLayer(objects: [source]),
+                ],
+              ),
+            ],
+          ),
+        ],
+      );
+      final registry = testRegistry([
+        TextObjectTypeDefinition(_textLimits, engine),
+      ]);
+      final coordinator = _coordinatorFor(root, registry);
+      final snapshot = coordinator.snapshot;
+      final layer = root.pages.single.layers.single;
+      final semantics = _ok(
+        TextObjectTypeDefinition(_textLimits, engine).classifyPayloadChange(
+          beforePayload.encode(),
+          afterPayload.encode(),
+          textSchemaVersion,
+        ),
+      );
+      final request = _ok(
+        TextObjectEditRequest.replace(
+          documentId: root.id,
+          source: source,
+          payload: afterPayload,
+          limits: _textLimits,
+          layoutEngine: engine,
+          metadata: phase3Metadata(correlation: 971),
+          preconditions: RevisionPreconditions(
+            objects: {source.id: snapshot.revisions.objects[source.id]!},
+            layerMembership: {
+              layer.id: snapshot.revisions.layerMembership[layer.id]!,
+            },
+          ),
+          changeCategories: ObjectReplacementChangeCategories(
+            geometry: semantics.geometry,
+            appearance: semantics.appearance,
+            text: semantics.text,
+            metadata: semantics.metadata,
+          ),
+        ),
+      );
+      _ok(coordinator.execute(request));
+      final changed = coordinator.snapshot.root;
+      expect(
+        _ok(
+          TextPayload.decode(
+            changed.pages.single.layers.single.objects.single.payload,
+            limits: _textLimits,
+          ),
+        ).paragraphs,
+        hasLength(2),
+      );
+      _ok(coordinator.undo());
+      expect(coordinator.snapshot.root, root);
+      _ok(coordinator.redo());
+      expect(coordinator.snapshot.root, changed);
+
+      final bytes = _ok(
+        AlnotePackageCodec(objectRegistry: registry).encode(
+          _ok(
+            AlnotePackageSnapshot.create(
+              document: changed,
+              resources: const [],
+            ),
+          ),
+          limits: phase4Limits(),
+        ),
+      );
+      final opened = AlnotePackageReader(objectRegistry: registry).openBytes(
+        bytes,
+        limits: phase4Limits(),
+        cancellationToken: CancellationController().token,
+      );
+      expect(opened, isA<Completed<OpenedAlnotePackage, StructuredFailure>>());
+      final reopened =
+          (opened as Completed<OpenedAlnotePackage, StructuredFailure>).value
+              .materializeDocument(
+                cancellationToken: CancellationController().token,
+              );
+      expect(reopened, isA<Completed<DocumentRoot, StructuredFailure>>());
+      final reopenedPayload = _ok(
+        TextPayload.decode(
+          (reopened as Completed<DocumentRoot, StructuredFailure>)
+              .value
+              .pages
+              .single
+              .layers
+              .single
+              .objects
+              .single
+              .payload,
+          limits: _textLimits,
+        ),
+      );
+      expect(reopenedPayload.encode(), afterPayload.encode());
+      expect(reopenedPayload.paragraphs, hasLength(2));
+      expect(
+        reopenedPayload.paragraphs.every((value) => value.runs.length == 1),
+        isTrue,
+      );
+    },
+  );
 
   test('unknown keys and strings share one bounded surrogate-safe budget', () {
     final exact = PreservedMap({
@@ -3045,6 +4853,190 @@ ObjectEnvelope _shapeObject(int id) {
   );
 }
 
+TextPadding _zeroTextPadding() => _ok(
+  TextPadding.create(left: 0, top: 0, right: 0, bottom: 0, limits: _textLimits),
+);
+
+TextLimits _adjustTextLimits({
+  int? maximumLayoutLines,
+  int? maximumPendingEdits,
+}) => _ok(
+  TextLimits.create(
+    maximumParagraphs: _textLimits.maximumParagraphs,
+    maximumRunsPerParagraph: _textLimits.maximumRunsPerParagraph,
+    maximumScalarsPerRun: _textLimits.maximumScalarsPerRun,
+    maximumTotalScalars: _textLimits.maximumTotalScalars,
+    maximumFontFamilyScalars: _textLimits.maximumFontFamilyScalars,
+    maximumLanguageHintScalars: _textLimits.maximumLanguageHintScalars,
+    maximumUnknownFields: _textLimits.maximumUnknownFields,
+    maximumUnknownNodes: _textLimits.maximumUnknownNodes,
+    maximumNestingDepth: _textLimits.maximumNestingDepth,
+    maximumUnknownStringCodeUnits: _textLimits.maximumUnknownStringCodeUnits,
+    maximumFontSize: _textLimits.maximumFontSize,
+    maximumBoxDimension: _textLimits.maximumBoxDimension,
+    maximumPadding: _textLimits.maximumPadding,
+    maximumLayoutLines: maximumLayoutLines ?? _textLimits.maximumLayoutLines,
+    maximumLayoutFragments: _textLimits.maximumLayoutFragments,
+    maximumCaretStops: _textLimits.maximumCaretStops,
+    maximumRangeRectangles: _textLimits.maximumRangeRectangles,
+    maximumPendingEdits: maximumPendingEdits ?? _textLimits.maximumPendingEdits,
+  ),
+);
+
+TextPayload _richLayoutPayload({
+  required TextVerticalAlignment alignment,
+  required TextOverflowPolicy overflow,
+  TextBoxMode mode = TextBoxMode.fixedWidthFixedHeight,
+  double height = 80,
+}) {
+  TextCharacterStyle character(double size, int color) => _ok(
+    TextCharacterStyle.create(
+      genericFontFamily: TextGenericFontFamily.sansSerif,
+      fontSize: size,
+      weight: 400,
+      italic: false,
+      underline: false,
+      strikethrough: false,
+      argb: color,
+      limits: _textLimits,
+    ),
+  );
+
+  final small = character(10, 0xff000000);
+  final large = character(28, 0xffff0000);
+  final paragraphStyle = _ok(
+    TextParagraphStyle.create(
+      alignment: TextAlignment.left,
+      direction: TextParagraphDirection.ltr,
+      lineHeight: 1.4,
+      limits: _textLimits,
+    ),
+  );
+  final emptyStyle = _ok(
+    TextParagraphStyle.create(
+      alignment: TextAlignment.right,
+      direction: TextParagraphDirection.ltr,
+      lineHeight: 1.1,
+      limits: _textLimits,
+    ),
+  );
+  final paragraph = _ok(
+    TextParagraph.create(
+      runs: [
+        _ok(
+          TextRun.create(
+            text: 'small wrap ',
+            style: small,
+            limits: _textLimits,
+          ),
+        ),
+        _ok(TextRun.create(text: 'BIG', style: large, limits: _textLimits)),
+      ],
+      style: paragraphStyle,
+      limits: _textLimits,
+    ),
+  );
+  final empty = _ok(
+    TextParagraph.create(
+      runs: const [],
+      style: emptyStyle,
+      limits: _textLimits,
+    ),
+  );
+  return _ok(
+    TextPayload.create(
+      paragraphs: [paragraph, empty],
+      defaultCharacterStyle: small,
+      defaultParagraphStyle: paragraphStyle,
+      boxMode: mode,
+      intrinsicWidth: 64,
+      intrinsicHeight: mode == TextBoxMode.fixedWidthFixedHeight
+          ? height
+          : null,
+      padding: _ok(
+        TextPadding.create(
+          left: 4,
+          top: 5,
+          right: 4,
+          bottom: 6,
+          limits: _textLimits,
+        ),
+      ),
+      verticalAlignment: alignment,
+      overflowPolicy: overflow,
+      limits: _textLimits,
+    ),
+  );
+}
+
+TextPayload _configuredTextPayload({
+  String text = 'MMMM MMMM MMMM',
+  double fontSize = 24,
+  double lineHeight = 1.2,
+  int argb = 0xff000000,
+  bool italic = true,
+  bool underline = true,
+  bool strikethrough = true,
+  TextGenericFontFamily genericFamily = TextGenericFontFamily.sansSerif,
+  String? preferredFamily,
+  String? languageHint,
+  TextBoxMode mode = TextBoxMode.fixedWidthAutoHeight,
+  TextOverflowPolicy overflow = TextOverflowPolicy.visible,
+  TextVerticalAlignment alignment = TextVerticalAlignment.top,
+  double width = 120,
+  double height = 80,
+  PreservedMap? payloadUnknown,
+}) {
+  final character = _ok(
+    TextCharacterStyle.create(
+      preferredFontFamily: preferredFamily,
+      genericFontFamily: genericFamily,
+      fontSize: fontSize,
+      weight: 500,
+      italic: italic,
+      underline: underline,
+      strikethrough: strikethrough,
+      argb: argb,
+      limits: _textLimits,
+    ),
+  );
+  final paragraphStyle = _ok(
+    TextParagraphStyle.create(
+      alignment: TextAlignment.left,
+      direction: TextParagraphDirection.ltr,
+      lineHeight: lineHeight,
+      languageHint: languageHint,
+      limits: _textLimits,
+    ),
+  );
+  final paragraph = _ok(
+    TextParagraph.create(
+      runs: [
+        _ok(TextRun.create(text: text, style: character, limits: _textLimits)),
+      ],
+      style: paragraphStyle,
+      limits: _textLimits,
+    ),
+  );
+  return _ok(
+    TextPayload.create(
+      paragraphs: [paragraph],
+      defaultCharacterStyle: character,
+      defaultParagraphStyle: paragraphStyle,
+      boxMode: mode,
+      intrinsicWidth: width,
+      intrinsicHeight: mode == TextBoxMode.fixedWidthFixedHeight
+          ? height
+          : null,
+      padding: _zeroTextPadding(),
+      verticalAlignment: alignment,
+      overflowPolicy: overflow,
+      limits: _textLimits,
+      unknownFields: payloadUnknown,
+    ),
+  );
+}
+
 TextPayload _textPayload(List<String> paragraphs) {
   final character = _ok(
     TextCharacterStyle.create(
@@ -3153,6 +5145,22 @@ ImageLimits _imageLimitsWithUnknownCodeUnits(
   ),
 );
 
+ImageLimits _imageLimitsWithMaximumBytes(int maximumEncodedBytes) => _ok(
+  ImageLimits.create(
+    maximumEncodedBytes: maximumEncodedBytes,
+    maximumHeaderBytes: 33,
+    maximumMarkers: 32,
+    maximumPixelDimension: 4096,
+    maximumPixelCount: 4000000,
+    maximumAlternativeTextScalars: 128,
+    maximumUnknownFields: 16,
+    maximumUnknownNodes: 1024,
+    maximumNestingDepth: 8,
+    maximumUnknownStringCodeUnits: 4096,
+    maximumDocumentDimension: 10000,
+  ),
+);
+
 TextLimits _textLimitsWithUnknownCodeUnits(
   int maximum, {
   int maximumFields = 16,
@@ -3208,7 +5216,7 @@ ObjectRegistry _registry() => _ok(
   ObjectRegistry.create([
     ShapeObjectTypeDefinition(_shapeLimits),
     ImageObjectTypeDefinition(_imageLimits),
-    TextObjectTypeDefinition(_textLimits),
+    TextObjectTypeDefinition(_textLimits, FlutterTextLayoutEngine(_textLimits)),
   ]),
 );
 
@@ -3346,6 +5354,100 @@ final class _AcceptedCurrentThrowingIterator<T> implements Iterator<T> {
   T get current => throw StateError('hostile current secret');
   @override
   bool moveNext() => !moved && (moved = true);
+}
+
+final class _StatefulCurrentIterable extends Iterable<int> {
+  _StatefulCurrentIterable(this.values);
+  final List<int> values;
+  int currentReads = 0;
+  @override
+  Iterator<int> get iterator => _StatefulCurrentIterator(this);
+}
+
+final class _StatefulCurrentIterator implements Iterator<int> {
+  _StatefulCurrentIterator(this.owner);
+  final _StatefulCurrentIterable owner;
+  var index = -1;
+  var readAtIndex = false;
+  @override
+  int get current {
+    owner.currentReads += 1;
+    if (readAtIndex) return 256;
+    readAtIndex = true;
+    return owner.values[index];
+  }
+
+  @override
+  bool moveNext() {
+    index += 1;
+    readAtIndex = false;
+    return index < owner.values.length;
+  }
+}
+
+final class _TextPainterLifecycleEvidence
+    implements FlutterTextPainterLifecycleObserver {
+  final Set<flutter.TextPainter> _live = {};
+  final Set<flutter.TextPainter> _disposed = {};
+  int createdCount = 0;
+  int disposedCount = 0;
+  bool doubleDisposed = false;
+
+  int get liveCount => _live.length;
+
+  @override
+  void created(flutter.TextPainter painter) {
+    createdCount += 1;
+    _live.add(painter);
+  }
+
+  @override
+  void disposed(flutter.TextPainter painter) {
+    disposedCount += 1;
+    if (!_live.remove(painter) || !_disposed.add(painter)) {
+      doubleDisposed = true;
+    }
+  }
+}
+
+final class _CountingTextLayoutEngine implements TextLayoutEngine {
+  _CountingTextLayoutEngine(this.delegate, {this.fail = false});
+
+  final TextLayoutEngine delegate;
+  final bool fail;
+  int calls = 0;
+
+  @override
+  Result<TextLayoutSnapshot, StructuredFailure> layout(
+    TextLayoutRequest request,
+  ) {
+    calls += 1;
+    return fail
+        ? Err(
+            StructuredFailure(
+              code: 'test.text.layout_unavailable',
+              category: FailureCategory.dependency,
+              retryDisposition: RetryDisposition.never,
+              message: 'Text layout is unavailable.',
+            ),
+          )
+        : delegate.layout(request);
+  }
+}
+
+final class _FixedTextLayoutEngine implements TextLayoutEngine {
+  _FixedTextLayoutEngine(this.snapshot);
+
+  final TextLayoutSnapshot snapshot;
+  int calls = 0;
+
+  @override
+  Result<TextLayoutSnapshot, StructuredFailure> layout(
+    TextLayoutRequest request,
+  ) {
+    calls += 1;
+    return Ok(snapshot);
+  }
 }
 
 final class _FakeImageHandle implements DecodedImageHandle {
@@ -3526,6 +5628,64 @@ Future<List<int>> _paintedBytes(ScenePrimitive primitive) async {
   final recorder = ui.PictureRecorder();
   final canvas = ui.Canvas(recorder);
   paintScenePrimitiveForTesting(canvas, primitive);
+  final image = await recorder.endRecording().toImage(256, 256);
+  try {
+    final bytes = await image.toByteData(
+      format: ui.ImageByteFormat.rawStraightRgba,
+    );
+    if (bytes == null) throw StateError('Pixel evidence unavailable.');
+    return bytes.buffer.asUint8List().toList(growable: false);
+  } finally {
+    image.dispose();
+  }
+}
+
+Future<List<int>> _paintedTextWithFactory(
+  TextPayload payload,
+  TextLayoutSnapshot layout,
+  double layerOpacity,
+) async {
+  final recorder = ui.PictureRecorder();
+  final canvas = ui.Canvas(recorder);
+  final painters = <flutter.TextPainter>[];
+  const factory = FlutterTextPainterFactory();
+  canvas.save();
+  if (payload.boxMode == TextBoxMode.fixedWidthFixedHeight &&
+      payload.overflowPolicy == TextOverflowPolicy.clip) {
+    canvas.clipRect(
+      ui.Rect.fromLTRB(
+        layout.logicalBounds.left,
+        layout.logicalBounds.top,
+        layout.logicalBounds.right,
+        layout.logicalBounds.bottom,
+      ),
+    );
+  }
+  try {
+    final maximumWidth = math.max<double>(
+      0,
+      payload.intrinsicWidth - payload.padding.left - payload.padding.right,
+    );
+    for (final paragraph in payload.paragraphs) {
+      painters.add(
+        factory.create(
+          payload: payload,
+          paragraph: paragraph,
+          maximumWidth: maximumWidth,
+          layerOpacity: layerOpacity,
+        ),
+      );
+    }
+    for (var index = 0; index < painters.length; index++) {
+      final origin = layout.paragraphs[index].origin;
+      painters[index].paint(canvas, ui.Offset(origin.x, origin.y));
+    }
+  } finally {
+    for (final painter in painters) {
+      factory.dispose(painter);
+    }
+    canvas.restore();
+  }
   final image = await recorder.endRecording().toImage(256, 256);
   try {
     final bytes = await image.toByteData(

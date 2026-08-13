@@ -1329,12 +1329,14 @@ Result<List<int>, StructuredFailure> _captureBytes(
   try {
     final iterator = source.iterator;
     while (iterator.moveNext()) {
-      if (values.length >= maximum ||
-          iterator.current < 0 ||
-          iterator.current > 255) {
+      if (values.length >= maximum) {
         return Err(_failure('encoded_byte_limit'));
       }
-      values.add(iterator.current);
+      final value = iterator.current;
+      if (value < 0 || value > 255) {
+        return Err(_failure('encoded_byte_limit'));
+      }
+      values.add(value);
     }
   } on Object {
     return Err(_failure('invalid_iterable'));

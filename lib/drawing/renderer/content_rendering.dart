@@ -52,10 +52,13 @@ final class ImageRenderingDefinition implements ObjectRenderingDefinition {
 /// Built-in Text rendering definition producing a semantic layout primitive.
 final class TextRenderingDefinition implements ObjectRenderingDefinition {
   /// Creates a definition with explicit Text limits.
-  const TextRenderingDefinition(this.textLimits);
+  const TextRenderingDefinition(this.textLimits, this.layoutEngine);
 
   /// Text payload and layout limits.
   final TextLimits textLimits;
+
+  /// Shared bounded layout authority.
+  final TextLayoutEngine layoutEngine;
   @override
   ObjectTypeKey get typeKey => textObjectTypeKey;
   @override
@@ -71,8 +74,14 @@ final class TextRenderingDefinition implements ObjectRenderingDefinition {
         object.typeSchemaVersion != textSchemaVersion ||
         payload is! Ok<TextPayload, StructuredFailure>)
       return Err(_failure('invalid_text'));
+    final layout = layoutEngine.layout(
+      TextLayoutRequest(payload: payload.value),
+    );
+    if (layout is! Ok<TextLayoutSnapshot, StructuredFailure>) {
+      return Err(_failure('layout_unavailable'));
+    }
     final transform = _localToView(object, viewport);
-    final bounds = _viewBounds(payload.value.bounds, object, viewport);
+    final bounds = _viewBounds(layout.value.visualBounds, object, viewport);
     if (transform == null || bounds == null)
       return Err(_failure('transform_unavailable'));
     final primitive = TextBoxPrimitive.create(
@@ -80,6 +89,7 @@ final class TextRenderingDefinition implements ObjectRenderingDefinition {
       bounds: bounds,
       opacity: layerOpacity,
       payload: payload.value,
+      layout: layout.value,
       localToViewCoefficients: transform,
     );
     return primitive is Ok<TextBoxPrimitive, StructuredFailure>

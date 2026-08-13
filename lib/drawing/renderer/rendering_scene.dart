@@ -527,6 +527,7 @@ final class TextBoxPrimitive extends ScenePrimitive {
     required super.bounds,
     required super.opacity,
     required this.payload,
+    required this.layout,
     required List<double> localToViewCoefficients,
   }) : localToViewCoefficients = List<double>.unmodifiable(
          localToViewCoefficients,
@@ -539,6 +540,7 @@ final class TextBoxPrimitive extends ScenePrimitive {
     required Rect2 bounds,
     required double opacity,
     required TextPayload payload,
+    required TextLayoutSnapshot layout,
     required Iterable<double> localToViewCoefficients,
   }) {
     final captured = _capture(
@@ -549,6 +551,7 @@ final class TextBoxPrimitive extends ScenePrimitive {
     if (captured is! Ok<List<double>, StructuredFailure> ||
         captured.value.length != 6 ||
         captured.value.any((value) => !value.isFinite) ||
+        layout.paragraphs.length != payload.paragraphs.length ||
         !opacity.isFinite ||
         opacity < 0 ||
         opacity > 1) {
@@ -556,12 +559,20 @@ final class TextBoxPrimitive extends ScenePrimitive {
         _failure('invalid_text_primitive', FailureCategory.validation),
       );
     }
+    for (var index = 0; index < layout.paragraphs.length; index++) {
+      if (layout.paragraphs[index].paragraphIndex != index) {
+        return Err(
+          _failure('invalid_text_primitive', FailureCategory.validation),
+        );
+      }
+    }
     return Ok(
       TextBoxPrimitive._(
         plane: plane,
         bounds: bounds,
         opacity: opacity,
         payload: payload,
+        layout: layout,
         localToViewCoefficients: captured.value,
       ),
     );
@@ -569,6 +580,9 @@ final class TextBoxPrimitive extends ScenePrimitive {
 
   /// Validated persistent Text payload.
   final TextPayload payload;
+
+  /// Bounded authoritative local layout and paint-position evidence.
+  final TextLayoutSnapshot layout;
 
   /// Local-to-view affine coefficients in AL NOTE storage order.
   final List<double> localToViewCoefficients;

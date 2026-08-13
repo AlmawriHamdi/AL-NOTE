@@ -33,21 +33,27 @@ final class ImageHitTestingDefinition extends _BoundsHitTestingDefinition {
 /// Bounds-based built-in Text hit testing.
 final class TextHitTestingDefinition extends _BoundsHitTestingDefinition {
   /// Creates a definition with explicit Text limits.
-  const TextHitTestingDefinition(this.textLimits);
+  const TextHitTestingDefinition(this.textLimits, this.layoutEngine);
 
   /// Text payload limits.
   final TextLimits textLimits;
+
+  /// Shared bounded layout authority.
+  final TextLayoutEngine layoutEngine;
   @override
   ObjectTypeKey get typeKey => textObjectTypeKey;
   @override
-  Rect2? localBounds(ObjectEnvelope object) =>
-      object.typeKey == textObjectTypeKey &&
-          object.typeSchemaVersion == textSchemaVersion
-      ? TextPayload.decode(
-          object.payload,
-          limits: textLimits,
-        ).fold<Rect2?>(onOk: (value) => value.bounds, onErr: (_) => null)
-      : null;
+  Rect2? localBounds(ObjectEnvelope object) {
+    if (object.typeKey != textObjectTypeKey ||
+        object.typeSchemaVersion != textSchemaVersion) {
+      return null;
+    }
+    final payload = TextPayload.decode(object.payload, limits: textLimits);
+    if (payload is! Ok<TextPayload, StructuredFailure>) return null;
+    return layoutEngine
+        .layout(TextLayoutRequest(payload: payload.value))
+        .fold<Rect2?>(onOk: (value) => value.visualBounds, onErr: (_) => null);
+  }
 }
 
 abstract base class _BoundsHitTestingDefinition
