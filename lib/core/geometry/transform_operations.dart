@@ -88,6 +88,7 @@ final class ScaleTransformOperation2D extends TransformOperation2D {
     required this.scaleX,
     required this.scaleY,
     required this.pivot,
+    required this.orientationRadians,
   });
 
   /// Creates positive scaling about [pivot].
@@ -99,8 +100,9 @@ final class ScaleTransformOperation2D extends TransformOperation2D {
     required double scaleX,
     required double scaleY,
     required Point2 pivot,
+    double orientationRadians = 0,
   }) {
-    if (!scaleX.isFinite || !scaleY.isFinite) {
+    if (!scaleX.isFinite || !scaleY.isFinite || !orientationRadians.isFinite) {
       return Err<ScaleTransformOperation2D, StructuredFailure>(
         _transformFailure(
           code: 'core.geometry.non_finite_scale',
@@ -126,7 +128,12 @@ final class ScaleTransformOperation2D extends TransformOperation2D {
       );
     }
     return Ok<ScaleTransformOperation2D, StructuredFailure>(
-      ScaleTransformOperation2D._(scaleX: scaleX, scaleY: scaleY, pivot: pivot),
+      ScaleTransformOperation2D._(
+        scaleX: scaleX,
+        scaleY: scaleY,
+        pivot: pivot,
+        orientationRadians: orientationRadians,
+      ),
     );
   }
 
@@ -139,16 +146,21 @@ final class ScaleTransformOperation2D extends TransformOperation2D {
   /// The page-space pivot held fixed by the scaling.
   final Point2 pivot;
 
+  /// Orientation of the scale axes in page space. Zero preserves the
+  /// historical page-horizontal/page-vertical behavior.
+  final double orientationRadians;
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is ScaleTransformOperation2D &&
           other.scaleX == scaleX &&
           other.scaleY == scaleY &&
-          other.pivot == pivot;
+          other.pivot == pivot &&
+          other.orientationRadians == orientationRadians;
 
   @override
-  int get hashCode => Object.hash(scaleX, scaleY, pivot);
+  int get hashCode => Object.hash(scaleX, scaleY, pivot, orientationRadians);
 }
 
 StructuredFailure _transformFailure({

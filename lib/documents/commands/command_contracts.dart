@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import '../../core/geometry/affine_transform_2d.dart';
 import '../../core/geometry/geometry_values.dart';
 import '../../core/geometry/transform_operations.dart';
 import '../../core/identity/namespaced_identifier.dart';
@@ -141,6 +142,18 @@ enum CommandOrigin { user, undo, redo }
 
 /// The only Phase 3 public execution category.
 enum CommandPolicy { interactiveContentEdit }
+
+/// Closed numeric-only execution stages for optional local diagnostics.
+enum CommandExecutionDiagnosticStage {
+  preparationValidation,
+  historyAccounting,
+  publicationObservers,
+}
+
+/// Optional synchronous diagnostic sink. Implementations must not throw;
+/// coordinator callers defensively contain sink failures regardless.
+typedef CommandExecutionDiagnosticSink =
+    void Function(CommandExecutionDiagnosticStage stage, int elapsedMicros);
 
 /// An explicit event that prevents history coalescing across it.
 enum CoalescingBoundary {
@@ -404,6 +417,76 @@ final class AtomicObjectCollectionEditRequest extends CommandRequest {
   final ObjectReplacementChangeCategories replacementChangeCategories;
 }
 
+/// Local Text-box corner retained while its intrinsic dimensions change.
+enum TextBoxResizePreservedAnchor {
+  topLeft,
+  topCenter,
+  topRight,
+  centerLeft,
+  center,
+  centerRight,
+  bottomLeft,
+  bottomCenter,
+  bottomRight,
+}
+
+/// Closed authority kind for an intrinsic Text-box transform adjustment.
+enum TextBoxResizeTransformKind { resize, visibleContentFit }
+
+/// Narrow transform evidence for one intrinsic Text-box resize.
+///
+/// This value is not self-authorizing. The Text request builder and mutation
+/// coordinator both recompute and exactly validate the permitted transform.
+final class TextBoxResizeTransformEvidence {
+  const TextBoxResizeTransformEvidence._(
+    this.kind,
+    this.preservedAnchor,
+    this.replacementTransform,
+  );
+
+  /// Captures immutable proposed evidence for later independent validation.
+  static TextBoxResizeTransformEvidence create({
+    required TextBoxResizePreservedAnchor preservedAnchor,
+    required AffineTransform2D replacementTransform,
+  }) => TextBoxResizeTransformEvidence._(
+    TextBoxResizeTransformKind.resize,
+    preservedAnchor,
+    replacementTransform,
+  );
+
+  /// Captures a proposed canonical visible-content fit for revalidation.
+  static TextBoxResizeTransformEvidence visibleContentFit({
+    required TextBoxResizePreservedAnchor preservedAnchor,
+    required AffineTransform2D replacementTransform,
+  }) => TextBoxResizeTransformEvidence._(
+    TextBoxResizeTransformKind.visibleContentFit,
+    preservedAnchor,
+    replacementTransform,
+  );
+
+  /// Narrow validation path requested by this evidence.
+  final TextBoxResizeTransformKind kind;
+
+  /// Opposite local corner that must remain fixed in Page space.
+  final TextBoxResizePreservedAnchor preservedAnchor;
+
+  /// Proposed replacement transform, never printed by diagnostics.
+  final AffineTransform2D replacementTransform;
+
+  @override
+  bool operator ==(Object other) =>
+      other is TextBoxResizeTransformEvidence &&
+      other.kind == kind &&
+      other.preservedAnchor == preservedAnchor &&
+      other.replacementTransform == replacementTransform;
+
+  @override
+  int get hashCode => Object.hash(kind, preservedAnchor, replacementTransform);
+
+  @override
+  String toString() => '$runtimeType(validated: false)';
+}
+
 /// An atomic ordered set of whole-Object replacements.
 final class AtomicObjectReplacementRequest extends CommandRequest {
   AtomicObjectReplacementRequest._({
@@ -411,6 +494,7 @@ final class AtomicObjectReplacementRequest extends CommandRequest {
     required super.metadata,
     required super.preconditions,
     required this.changeCategories,
+    required this.textBoxResizeTransform,
     required List<ObjectId> targetIds,
     required List<ObjectEnvelope> replacements,
   }) : targetIds = List<ObjectId>.unmodifiable(targetIds),
@@ -425,10 +509,13 @@ final class AtomicObjectReplacementRequest extends CommandRequest {
     required Iterable<ObjectId> targetIds,
     required Iterable<ObjectEnvelope> replacements,
     required ObjectReplacementChangeCategories changeCategories,
+    TextBoxResizeTransformEvidence? textBoxResizeTransform,
   }) {
     final targets = List<ObjectId>.of(targetIds);
     final values = List<ObjectEnvelope>.of(replacements);
-    if (targets.isEmpty || targets.length != values.length) {
+    if (targets.isEmpty ||
+        targets.length != values.length ||
+        (textBoxResizeTransform != null && targets.length != 1)) {
       return Err(_requestFailure('invalid_replacement_count'));
     }
     if (targets.toSet().length != targets.length) {
@@ -454,6 +541,7 @@ final class AtomicObjectReplacementRequest extends CommandRequest {
         metadata: metadata,
         preconditions: preconditions,
         changeCategories: changeCategories,
+        textBoxResizeTransform: textBoxResizeTransform,
         targetIds: targets,
         replacements: values,
       ),
@@ -469,6 +557,9 @@ final class AtomicObjectReplacementRequest extends CommandRequest {
   /// Required declared payload semantics.
   final ObjectReplacementChangeCategories changeCategories;
 
+  /// Narrow, independently revalidated evidence for one Text-box resize.
+  final TextBoxResizeTransformEvidence? textBoxResizeTransform;
+
   @override
   bool operator ==(Object other) =>
       other is AtomicObjectReplacementRequest &&
@@ -476,6 +567,7 @@ final class AtomicObjectReplacementRequest extends CommandRequest {
       other.metadata == metadata &&
       other.preconditions == preconditions &&
       other.changeCategories == changeCategories &&
+      other.textBoxResizeTransform == textBoxResizeTransform &&
       _listEquals(other.targetIds, targetIds) &&
       _listEquals(other.replacements, replacements);
   @override
@@ -484,6 +576,7 @@ final class AtomicObjectReplacementRequest extends CommandRequest {
     metadata,
     preconditions,
     changeCategories,
+    textBoxResizeTransform,
     Object.hashAll(targetIds),
     Object.hashAll(replacements),
   );

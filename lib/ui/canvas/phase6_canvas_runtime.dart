@@ -152,7 +152,13 @@ final class Phase6CanvasRuntime {
     required this.maximumCommandOperations,
     required this.maximumListeners,
     required this.maximumPenSamples,
+    required this.maximumPenPreviewLayers,
     required this.maximumEraserPoints,
+    required this.minimumInteractiveSelectionExtentViewPixels,
+    required this.selectionHandleHitSizeViewPixels,
+    required this.maximumCommittedPaintChunks,
+    required this.maximumCommittedPaintChunkObjects,
+    required this.maximumCommittedPaintChunkPrimitives,
     required this.diagnosticTrace,
     required this.debugClipboard,
     required this.nativePictureObserver,
@@ -183,7 +189,13 @@ final class Phase6CanvasRuntime {
     required int maximumCommandOperations,
     required int maximumListeners,
     required int maximumPenSamples,
+    required int maximumPenPreviewLayers,
     required int maximumEraserPoints,
+    required double minimumInteractiveSelectionExtentViewPixels,
+    required double selectionHandleHitSizeViewPixels,
+    required int maximumCommittedPaintChunks,
+    required int maximumCommittedPaintChunkObjects,
+    required int maximumCommittedPaintChunkPrimitives,
     required Phase6DiagnosticTrace diagnosticTrace,
     required Phase6DebugClipboard debugClipboard,
     required Phase6NativePictureObserver nativePictureObserver,
@@ -202,7 +214,11 @@ final class Phase6CanvasRuntime {
       maximumCommandOperations,
       maximumListeners,
       maximumPenSamples,
+      maximumPenPreviewLayers,
       maximumEraserPoints,
+      maximumCommittedPaintChunks,
+      maximumCommittedPaintChunkObjects,
+      maximumCommittedPaintChunkPrimitives,
     ];
     final requiredElements = _multiplyCost(
       maximumPenSamples,
@@ -228,6 +244,17 @@ final class Phase6CanvasRuntime {
             Revision.maximumValue,
           );
     if (ceilings.any((value) => value <= 0 || value > Revision.maximumValue) ||
+        !minimumInteractiveSelectionExtentViewPixels.isFinite ||
+        minimumInteractiveSelectionExtentViewPixels < 24 ||
+        minimumInteractiveSelectionExtentViewPixels > 256 ||
+        !selectionHandleHitSizeViewPixels.isFinite ||
+        selectionHandleHitSizeViewPixels < 12 ||
+        selectionHandleHitSizeViewPixels > 64 ||
+        maximumCommittedPaintChunks > 256 ||
+        maximumCommittedPaintChunkObjects > 256 ||
+        maximumCommittedPaintChunkPrimitives >
+            renderingLimits.maximumPrimitives ||
+        maximumPenPreviewLayers > 64 ||
         maximumRenderingDefinitions < 4 ||
         maximumHitTestingDefinitions < 4 ||
         maximumTools < 5 ||
@@ -419,7 +446,15 @@ final class Phase6CanvasRuntime {
         maximumCommandOperations: maximumCommandOperations,
         maximumListeners: maximumListeners,
         maximumPenSamples: maximumPenSamples,
+        maximumPenPreviewLayers: maximumPenPreviewLayers,
         maximumEraserPoints: maximumEraserPoints,
+        minimumInteractiveSelectionExtentViewPixels:
+            minimumInteractiveSelectionExtentViewPixels,
+        selectionHandleHitSizeViewPixels: selectionHandleHitSizeViewPixels,
+        maximumCommittedPaintChunks: maximumCommittedPaintChunks,
+        maximumCommittedPaintChunkObjects: maximumCommittedPaintChunkObjects,
+        maximumCommittedPaintChunkPrimitives:
+            maximumCommittedPaintChunkPrimitives,
         diagnosticTrace: diagnosticTrace,
         debugClipboard: debugClipboard,
         nativePictureObserver: nativePictureObserver,
@@ -471,7 +506,25 @@ final class Phase6CanvasRuntime {
   final int maximumCommandOperations;
   final int maximumListeners;
   final int maximumPenSamples;
+
+  /// Maximum independently raster-cached frozen Pen preview layers.
+  final int maximumPenPreviewLayers;
   final int maximumEraserPoints;
+
+  /// Minimum usable oriented Selection width and height in View pixels.
+  final double minimumInteractiveSelectionExtentViewPixels;
+
+  /// Diameter of each bounded Selection resize hit zone in View pixels.
+  final double selectionHandleHitSizeViewPixels;
+
+  /// Maximum retained committed-paint RepaintBoundary chunks.
+  final int maximumCommittedPaintChunks;
+
+  /// Maximum Object scenes grouped into one committed-paint chunk.
+  final int maximumCommittedPaintChunkObjects;
+
+  /// Maximum committed primitives replayed by one chunk painter.
+  final int maximumCommittedPaintChunkPrimitives;
 
   /// Injected bounded debug/test diagnostic trace.
   final Phase6DiagnosticTrace diagnosticTrace;

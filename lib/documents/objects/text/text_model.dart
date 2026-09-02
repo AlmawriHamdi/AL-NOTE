@@ -742,9 +742,132 @@ final class TextPayload {
   }
 }
 
+TextPayload? _textPayloadWithDimensions(
+  TextPayload source,
+  double width,
+  double? height,
+  TextLimits limits,
+) => TextPayload.create(
+  paragraphs: source.paragraphs,
+  defaultCharacterStyle: source.defaultCharacterStyle,
+  defaultParagraphStyle: source.defaultParagraphStyle,
+  boxMode: source.boxMode,
+  intrinsicWidth: width,
+  intrinsicHeight: height,
+  padding: source.padding,
+  verticalAlignment: source.verticalAlignment,
+  overflowPolicy: source.overflowPolicy,
+  limits: limits,
+  unknownFields: source.unknownFields,
+).fold<TextPayload?>(onOk: (value) => value, onErr: (_) => null);
+
+bool _sameTextLayoutLineRanges(
+  TextLayoutSnapshot first,
+  TextLayoutSnapshot second,
+) {
+  if (first.paragraphs.length != second.paragraphs.length ||
+      first.lines.length != second.lines.length) {
+    return false;
+  }
+  for (var line = 0; line < first.lines.length; line += 1) {
+    final left = first.lines[line].fragments;
+    final right = second.lines[line].fragments;
+    if (left.length != right.length) return false;
+    for (var fragment = 0; fragment < left.length; fragment += 1) {
+      final firstRange = left[fragment].range;
+      final secondRange = right[fragment].range;
+      if (firstRange.start != secondRange.start ||
+          firstRange.end != secondRange.end) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+double? _textLayoutContentHeight(TextLayoutSnapshot layout) {
+  var height = 0.0;
+  for (final paragraph in layout.paragraphs) {
+    final paragraphHeight = paragraph.bounds.height;
+    if (!paragraphHeight.isFinite || paragraphHeight <= 0) return null;
+    height += paragraphHeight;
+    if (!height.isFinite) return null;
+  }
+  return height > 0 ? height : null;
+}
+
+bool _textFitDimensionsAreStable(
+  TextPayload payload,
+  TextLayoutSnapshot layout,
+) {
+  final contentHeight = _textLayoutContentHeight(layout);
+  if (contentHeight == null) return false;
+  final paintedWidth = layout.lines.fold<double>(
+    1,
+    (value, line) => math.max(value, line.bounds.width),
+  );
+  if (!paintedWidth.isFinite || paintedWidth <= 0) return false;
+  final stableWidth = math.min(
+    payload.intrinsicWidth,
+    payload.padding.left + paintedWidth + payload.padding.right + 1,
+  );
+  final stableHeight = payload.intrinsicHeight == null
+      ? null
+      : math.min(
+          payload.intrinsicHeight!,
+          payload.padding.top + contentHeight + payload.padding.bottom + 1,
+        );
+  return stableWidth == payload.intrinsicWidth &&
+      stableHeight == payload.intrinsicHeight;
+}
+
+IntrinsicHorizontalAnchor? _uniformTextHorizontalAnchor(TextPayload payload) {
+  IntrinsicHorizontalAnchor? result;
+  for (final paragraph in payload.paragraphs) {
+    final anchor = _textHorizontalAnchor(paragraph);
+    if (result != null && result != anchor) return null;
+    result = anchor;
+  }
+  return result;
+}
+
+IntrinsicHorizontalAnchor _textHorizontalAnchor(TextParagraph paragraph) {
+  final rtl = _textParagraphIsRtl(paragraph);
+  return switch (paragraph.style.alignment) {
+    TextAlignment.left ||
+    TextAlignment.justified => IntrinsicHorizontalAnchor.left,
+    TextAlignment.center => IntrinsicHorizontalAnchor.center,
+    TextAlignment.right => IntrinsicHorizontalAnchor.right,
+    TextAlignment.start =>
+      rtl ? IntrinsicHorizontalAnchor.right : IntrinsicHorizontalAnchor.left,
+    TextAlignment.end =>
+      rtl ? IntrinsicHorizontalAnchor.left : IntrinsicHorizontalAnchor.right,
+  };
+}
+
+bool _textParagraphIsRtl(TextParagraph paragraph) {
+  if (paragraph.style.direction == TextParagraphDirection.rtl) return true;
+  if (paragraph.style.direction == TextParagraphDirection.ltr) return false;
+  for (final rune in paragraph.logicalText.runes) {
+    if (rune >= 0x0590 && rune <= 0x08ff ||
+        rune >= 0xfb1d && rune <= 0xfdff ||
+        rune >= 0xfe70 && rune <= 0xfeff) {
+      return true;
+    }
+    if (rune >= 0x0041 && rune <= 0x005a || rune >= 0x0061 && rune <= 0x007a) {
+      return false;
+    }
+  }
+  return false;
+}
+
 /// Built-in Registry definition for `alnote.text` schema 1.
 final class TextObjectTypeDefinition
-    implements ObjectTypeDefinition, ObjectPayloadChangeClassifier {
+    implements
+        ObjectTypeDefinition,
+        ObjectPayloadChangeClassifier,
+        IntrinsicBoxResizeValidator,
+        IntrinsicVisibleContentFitValidator {
   /// Creates a definition with explicit Text limits.
   const TextObjectTypeDefinition(this.limits, this.layoutEngine);
 
@@ -794,6 +917,184 @@ final class TextObjectTypeDefinition
     }
   }
 
+  /// Fits a committed intrinsic box to authoritative visible content.
+  ///
+  /// Paragraphs, runs, styles, directions, padding, overflow policy, and all
+  /// preserved unknown data remain unchanged. Only intrinsic dimensions may
+  /// change, and the final layout must retain the probe's exact logical line
+  /// ranges without overflow.
+  Result<TextPayload, StructuredFailure> fitVisibleContent(TextPayload draft) {
+    try {
+      final initial = layoutEngine.layout(TextLayoutRequest(payload: draft));
+      if (initial is! Ok<TextLayoutSnapshot, StructuredFailure>) {
+        return Err(_failure('fit_layout_unavailable'));
+      }
+      final initialContentHeight = _textLayoutContentHeight(initial.value);
+      if (initialContentHeight == null) {
+        return Err(_failure('fit_unrepresentable'));
+      }
+      final expandedHeight = draft.intrinsicHeight == null
+          ? null
+          : math.max(
+              draft.intrinsicHeight!,
+              draft.padding.top +
+                  initialContentHeight +
+                  draft.padding.bottom +
+                  1,
+            );
+      final probe = expandedHeight == draft.intrinsicHeight
+          ? draft
+          : _textPayloadWithDimensions(
+              draft,
+              draft.intrinsicWidth,
+              expandedHeight,
+              limits,
+            );
+      if (probe == null) return Err(_failure('fit_unrepresentable'));
+      final probeLayout = layoutEngine.layout(
+        TextLayoutRequest(payload: probe),
+      );
+      if (probeLayout is! Ok<TextLayoutSnapshot, StructuredFailure>) {
+        return Err(_failure('fit_layout_unavailable'));
+      }
+      final contentHeight = _textLayoutContentHeight(probeLayout.value);
+      if (contentHeight == null) return Err(_failure('fit_unrepresentable'));
+      final paintedWidth = probeLayout.value.lines.fold<double>(
+        1,
+        (value, line) => math.max(value, line.bounds.width),
+      );
+      if (!paintedWidth.isFinite || paintedWidth <= 0) {
+        return Err(_failure('fit_unrepresentable'));
+      }
+      final fittedWidth = math.min(
+        draft.intrinsicWidth,
+        draft.padding.left + paintedWidth + draft.padding.right + 1,
+      );
+      final fittedHeight = draft.intrinsicHeight == null
+          ? null
+          : math.min(
+              expandedHeight!,
+              draft.padding.top + contentHeight + draft.padding.bottom + 1,
+            );
+      final candidate = _textPayloadWithDimensions(
+        draft,
+        fittedWidth,
+        fittedHeight,
+        limits,
+      );
+      if (candidate == null) return Err(_failure('fit_unrepresentable'));
+      final candidateLayout = layoutEngine.layout(
+        TextLayoutRequest(payload: candidate),
+      );
+      if (candidateLayout is! Ok<TextLayoutSnapshot, StructuredFailure> ||
+          candidateLayout.value.overflowed ||
+          !_sameTextLayoutLineRanges(
+            probeLayout.value,
+            candidateLayout.value,
+          ) ||
+          !_textFitDimensionsAreStable(candidate, candidateLayout.value)) {
+        return Err(_failure('fit_unstable'));
+      }
+      return Ok(candidate);
+    } on Object {
+      return Err(_failure('fit_layout_unavailable'));
+    }
+  }
+
+  @override
+  Result<IntrinsicVisibleContentFitChange, StructuredFailure>
+  validateIntrinsicVisibleContentFit(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  ) {
+    if (schemaVersion != textSchemaVersion) {
+      return Err(_failure('invalid_fit'));
+    }
+    final source = TextPayload.decode(before, limits: limits);
+    final replacement = TextPayload.decode(after, limits: limits);
+    if (source is! Ok<TextPayload, StructuredFailure> ||
+        replacement is! Ok<TextPayload, StructuredFailure>) {
+      return Err(_failure('invalid_fit'));
+    }
+    final unfittedReplacement = _textPayloadWithDimensions(
+      replacement.value,
+      source.value.intrinsicWidth,
+      source.value.intrinsicHeight,
+      limits,
+    );
+    if (unfittedReplacement == null) return Err(_failure('invalid_fit'));
+    final fitted = fitVisibleContent(unfittedReplacement);
+    final horizontal = _uniformTextHorizontalAnchor(replacement.value);
+    if (fitted is! Ok<TextPayload, StructuredFailure> ||
+        fitted.value.encode() != replacement.value.encode() ||
+        horizontal == null) {
+      return Err(_failure('invalid_fit'));
+    }
+    final resize = validateIntrinsicBoxResize(before, after, schemaVersion);
+    if (resize is! Ok<IntrinsicBoxResizeChange, StructuredFailure>) {
+      return Err(_failure('invalid_fit'));
+    }
+    return Ok(
+      IntrinsicVisibleContentFitChange(
+        resize: resize.value,
+        horizontalAnchor: horizontal,
+        verticalAnchor: switch (replacement.value.verticalAlignment) {
+          TextVerticalAlignment.top => IntrinsicVerticalAnchor.top,
+          TextVerticalAlignment.center => IntrinsicVerticalAnchor.center,
+          TextVerticalAlignment.bottom => IntrinsicVerticalAnchor.bottom,
+        },
+      ),
+    );
+  }
+
+  @override
+  Result<IntrinsicBoxResizeChange, StructuredFailure>
+  validateIntrinsicBoxResize(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  ) {
+    if (schemaVersion != textSchemaVersion) {
+      return Err(_failure('invalid_resize'));
+    }
+    final source = TextPayload.decode(before, limits: limits);
+    final replacement = TextPayload.decode(after, limits: limits);
+    if (source is! Ok<TextPayload, StructuredFailure> ||
+        replacement is! Ok<TextPayload, StructuredFailure> ||
+        (source.value.intrinsicHeight == null) !=
+            (replacement.value.intrinsicHeight == null)) {
+      return Err(_failure('invalid_resize'));
+    }
+    return IntrinsicBoxResizeChange.create(
+      beforeWidth: source.value.intrinsicWidth,
+      beforeHeight: source.value.intrinsicHeight,
+      afterWidth: replacement.value.intrinsicWidth,
+      afterHeight: replacement.value.intrinsicHeight,
+    ).mapError((_) => _failure('invalid_resize'));
+  }
+
+  @override
+  Result<bool, StructuredFailure> changesIntrinsicBoxDimensions(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  ) {
+    if (schemaVersion != textSchemaVersion) {
+      return Err(_failure('invalid_resize'));
+    }
+    final source = TextPayload.decode(before, limits: limits);
+    final replacement = TextPayload.decode(after, limits: limits);
+    if (source is! Ok<TextPayload, StructuredFailure> ||
+        replacement is! Ok<TextPayload, StructuredFailure>) {
+      return Err(_failure('invalid_resize'));
+    }
+    return Ok(
+      source.value.intrinsicWidth != replacement.value.intrinsicWidth ||
+          source.value.intrinsicHeight != replacement.value.intrinsicHeight,
+    );
+  }
+
   @override
   Result<Rect2, StructuredFailure> intrinsicGeometry(
     PreservedData payload,
@@ -808,7 +1109,7 @@ final class TextObjectTypeDefinition
     }
     return layoutEngine
         .layout(TextLayoutRequest(payload: decoded.value))
-        .map((value) => value.visualBounds);
+        .map((value) => value.logicalBounds);
   }
 
   @override

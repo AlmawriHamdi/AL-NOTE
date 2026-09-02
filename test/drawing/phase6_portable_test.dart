@@ -62,6 +62,150 @@ void main() {
     );
   });
 
+  test('viewport panning is bounded, finite, and revision-only', () {
+    final view = _viewport();
+    final pageBounds = _rect(0, 0, 200, 100);
+    final panned = _ok(
+      view.pannedByViewDelta(
+        viewDelta: _ok(Vector2.create(x: 20, y: 10)),
+        pageBounds: pageBounds,
+        minimumReachablePixels: 48,
+        expectedRevision: view.revision,
+      ),
+    );
+    expect(panned.pageOrigin, _point(0, 15));
+    expect(panned.zoom, view.zoom);
+    expect(panned.revision, _revision(view.revision.value + 1));
+
+    final farLeading = _ok(
+      panned.pannedByViewDelta(
+        viewDelta: _ok(Vector2.create(x: 1e12, y: 1e12)),
+        pageBounds: pageBounds,
+        minimumReachablePixels: 48,
+        expectedRevision: panned.revision,
+      ),
+    );
+    expect(farLeading.pageOrigin, _point(-76, -26));
+    final farTrailing = _ok(
+      farLeading.pannedByViewDelta(
+        viewDelta: _ok(Vector2.create(x: -1e12, y: -1e12)),
+        pageBounds: pageBounds,
+        minimumReachablePixels: 48,
+        expectedRevision: farLeading.revision,
+      ),
+    );
+    expect(farTrailing.pageOrigin, _point(176, 76));
+    expect(
+      view.pannedByViewDelta(
+        viewDelta: _ok(Vector2.create(x: 1, y: 1)),
+        pageBounds: pageBounds,
+        minimumReachablePixels: 48,
+        expectedRevision: _revision(9),
+      ),
+      isA<Err<Object?, Object?>>(),
+    );
+    expect(
+      view.pannedByViewDelta(
+        viewDelta: _ok(Vector2.create(x: 1, y: 1)),
+        pageBounds: pageBounds,
+        minimumReachablePixels: double.nan,
+        expectedRevision: view.revision,
+      ),
+      isA<Err<Object?, Object?>>(),
+    );
+    expect(view.revision, _revision(0));
+  });
+
+  test('viewport panning orders narrow feasible intervals without churn', () {
+    for (final dimensions in <(double, double, Rect2)>[
+      (40, 30, _rect(0, 0, 200, 100)),
+      (95, 95, _rect(0, 0, 10, 8)),
+      (12, 18, _rect(0, 0, 2, 3)),
+    ]) {
+      final extent = _ok(
+        ViewExtent.create(width: dimensions.$1, height: dimensions.$2),
+      );
+      final viewport = _ok(
+        ViewportSnapshot.create(
+          extent: extent,
+          pageOrigin: _point(0, 0),
+          zoom: 1,
+          minimumZoom: .25,
+          maximumZoom: 8,
+          revision: _revision(0),
+        ),
+      );
+      ViewportSnapshot current = viewport;
+      for (final delta in <Vector2>[
+        _ok(Vector2.create(x: double.maxFinite, y: double.maxFinite)),
+        _ok(Vector2.create(x: -double.maxFinite, y: -double.maxFinite)),
+        _ok(Vector2.create(x: 48, y: -48)),
+      ]) {
+        final moved = current.pannedByViewDelta(
+          viewDelta: delta,
+          pageBounds: dimensions.$3,
+          minimumReachablePixels: 48,
+          expectedRevision: current.revision,
+        );
+        expect(moved, isA<Ok<ViewportSnapshot, StructuredFailure>>());
+        current = _ok(moved);
+        expect(current.pageOrigin.x.isFinite, isTrue);
+        expect(current.pageOrigin.y.isFinite, isTrue);
+      }
+      final exactBoundary = _ok(
+        current.pannedByViewDelta(
+          viewDelta: _ok(Vector2.create(x: 0, y: 0)),
+          pageBounds: dimensions.$3,
+          minimumReachablePixels: 48,
+          expectedRevision: current.revision,
+        ),
+      );
+      expect(exactBoundary, same(current));
+      expect(exactBoundary.revision, current.revision);
+    }
+  });
+
+  test('viewport panning rejects hostile bounds and revision overflow', () {
+    final viewport = _ok(
+      ViewportSnapshot.create(
+        extent: _ok(ViewExtent.create(width: 40, height: 30)),
+        pageOrigin: _point(0, 0),
+        zoom: 1,
+        minimumZoom: .25,
+        maximumZoom: 8,
+        revision: _revision(Revision.maximumValue),
+      ),
+    );
+    expect(
+      viewport.pannedByViewDelta(
+        viewDelta: _ok(Vector2.create(x: -1, y: -1)),
+        pageBounds: _rect(0, 0, 200, 100),
+        minimumReachablePixels: 48,
+        expectedRevision: viewport.revision,
+      ),
+      isA<Err<ViewportSnapshot, StructuredFailure>>(),
+    );
+    expect(
+      _ok(
+        ViewportSnapshot.create(
+          extent: viewport.extent,
+          pageOrigin: viewport.pageOrigin,
+          zoom: 8,
+          minimumZoom: .25,
+          maximumZoom: 8,
+          revision: viewport.revision,
+        ),
+      ).pannedByViewDelta(
+        viewDelta: _ok(Vector2.create(x: 1, y: 1)),
+        pageBounds: _rect(-8e307, -8e307, 8e307, 8e307),
+        minimumReachablePixels: 48,
+        expectedRevision: viewport.revision,
+      ),
+      isA<Err<ViewportSnapshot, StructuredFailure>>(),
+    );
+    expect(viewport.revision, _revision(Revision.maximumValue));
+  });
+
   test('binding conflicts fail closed and touch is suppressed', () {
     final id = _ok(InteractionActionId.parse('alnote.actions.pen'));
     final binding = InteractionBinding(
@@ -824,6 +968,301 @@ void main() {
   });
 
   test(
+    'Pen identity snapshot is incremental evidence, never final authority',
+    () {
+      final root = testNotebook(
+        sections: [
+          testSection(
+            pages: [
+              testPage(layers: [testContentLayer()]),
+            ],
+          ),
+        ],
+      );
+      final coordinator = _ok(
+        DocumentMutationCoordinator.create(
+          initialRoot: root,
+          validator: DocumentValidator(_objectRegistry()),
+          uuidGenerator: UuidSequenceGenerator.fromValues([
+            for (var value = 810; value < 830; value += 1) testUuid(value),
+          ]),
+          historyLimits: _ok(
+            HistoryLimits.create(
+              maximumRetainedCommandCount: 8,
+              maximumEstimatedRetainedBytes: 10000,
+            ),
+          ),
+          retainedCostEstimator: FixedHistoryCostEstimator(1),
+          maximumListeners: 1,
+        ),
+      );
+      final page = root.pages.single;
+      final layer = page.layers.single;
+      final historic = _object(700, [_sample(1, 1, 0), _sample(2, 2, 1)]);
+
+      AtomicObjectCollectionEditRequest edit({
+        List<ObjectCollectionAddition> additions = const [],
+        List<ObjectId> removals = const [],
+      }) {
+        final snapshot = coordinator.snapshot;
+        return _ok(
+          AtomicObjectCollectionEditRequest.create(
+            documentId: snapshot.root.id,
+            pageId: page.id,
+            metadata: CommandMetadata(
+              family: CommandFamily.objectCollectionEdit,
+              correlationId: CommandCorrelationId.fromUuid(
+                testUuid(840 + coordinator.retainedHistoryCount),
+              ),
+              description: 'Identity authority evidence',
+            ),
+            preconditions: RevisionPreconditions(
+              pages: {page.id: snapshot.revisions.pages[page.id]!},
+              layerMembership: {
+                layer.id: snapshot.revisions.layerMembership[layer.id]!,
+              },
+              objects: {
+                for (final id in removals) id: snapshot.revisions.objects[id]!,
+              },
+            ),
+            additions: additions,
+            removals: removals,
+            maximumOperations: 1,
+          ),
+        );
+      }
+
+      expect(
+        coordinator.execute(
+          edit(
+            additions: [
+              ObjectCollectionAddition(layerId: layer.id, object: historic),
+            ],
+          ),
+        ),
+        isA<Ok<CommandCommit, CommandFailure>>(),
+      );
+      expect(
+        coordinator.execute(edit(removals: [historic.id])),
+        isA<Ok<CommandCommit, CommandFailure>>(),
+      );
+      expect(coordinator.undo(), isA<Ok<CommandCommit, CommandFailure>>());
+      expect(
+        coordinator.snapshot.revisions.objects.containsKey(historic.id),
+        isTrue,
+      );
+      expect(coordinator.redo(), isA<Ok<CommandCommit, CommandFailure>>());
+      final afterRemoval = coordinator.snapshot;
+      final callerEvidence = _ok(
+        PenDocumentIdentitySnapshot.capture(
+          root: afterRemoval.root,
+          handwritingLimits: _limits,
+          maximumIdentities: 128,
+        ),
+      );
+      expect(callerEvidence.contains(historic.id.uuid), isFalse);
+      final pen = _ok(
+        PenGestureSession.start(
+          down: _event(PointerPhase.down, time: 10),
+          document: afterRemoval,
+          pageId: page.id,
+          layerId: layer.id,
+          viewport: _viewport(origin: _point(0, 0), zoom: 1),
+          preset: PenPreset.fromStyle(_payload(historic).strokes.single.style),
+          maximumSamples: 4,
+          handwritingLimits: _limits,
+          uuidGenerator: UuidSequenceGenerator.fromValues([
+            historic.id.uuid,
+            testUuid(870),
+            testUuid(871),
+          ]),
+          maximumCommandOperations: 1,
+          identitySnapshot: callerEvidence,
+        ),
+      );
+      final request = _ok(
+        pen.finish(
+          _event(PointerPhase.up, time: 11, x: 1),
+          latestDocument: afterRemoval,
+          viewportRevision: _revision(0),
+          pointerOwnerAtTerminal: 1,
+        ),
+      );
+      expect(request.additions.single.object.id, historic.id);
+      final beforeRejectedPublish = coordinator.snapshot;
+      expect(coordinator.execute(request), isA<Err<Object?, Object?>>());
+      expect(coordinator.snapshot.root, same(beforeRejectedPublish.root));
+      expect(coordinator.snapshot.revisions, beforeRejectedPublish.revisions);
+
+      final reopened = _ok(
+        DocumentMutationCoordinator.create(
+          initialRoot: _rootWithObject(historic),
+          validator: DocumentValidator(_objectRegistry()),
+          uuidGenerator: UuidSequenceGenerator.fromValues([
+            testUuid(880),
+            testUuid(881),
+            testUuid(882),
+          ]),
+          historyLimits: _ok(
+            HistoryLimits.create(
+              maximumRetainedCommandCount: 4,
+              maximumEstimatedRetainedBytes: 10000,
+            ),
+          ),
+          retainedCostEstimator: FixedHistoryCostEstimator(1),
+          maximumListeners: 1,
+        ),
+      );
+      final reopenedPage = reopened.snapshot.root.pages.single;
+      final reopenedLayer = reopenedPage.layers.single;
+      final reopenedRemoval = _ok(
+        AtomicObjectCollectionEditRequest.create(
+          documentId: reopened.snapshot.root.id,
+          pageId: reopenedPage.id,
+          metadata: CommandMetadata(
+            family: CommandFamily.objectCollectionEdit,
+            correlationId: CommandCorrelationId.fromUuid(testUuid(883)),
+            description: 'Reopened baseline removal',
+          ),
+          preconditions: RevisionPreconditions(
+            pages: {
+              reopenedPage.id:
+                  reopened.snapshot.revisions.pages[reopenedPage.id]!,
+            },
+            layerMembership: {
+              reopenedLayer.id: reopened
+                  .snapshot
+                  .revisions
+                  .layerMembership[reopenedLayer.id]!,
+            },
+            objects: {
+              historic.id: reopened.snapshot.revisions.objects[historic.id]!,
+            },
+          ),
+          removals: [historic.id],
+          maximumOperations: 1,
+        ),
+      );
+      expect(
+        reopened.execute(reopenedRemoval),
+        isA<Ok<CommandCommit, CommandFailure>>(),
+      );
+      final reopenedSnapshot = reopened.snapshot;
+      final forbiddenReuse = _ok(
+        AtomicObjectCollectionEditRequest.create(
+          documentId: reopenedSnapshot.root.id,
+          pageId: reopenedPage.id,
+          metadata: CommandMetadata(
+            family: CommandFamily.objectCollectionEdit,
+            correlationId: CommandCorrelationId.fromUuid(testUuid(884)),
+            description: 'Forbidden reopened reuse',
+          ),
+          preconditions: RevisionPreconditions(
+            pages: {
+              reopenedPage.id:
+                  reopenedSnapshot.revisions.pages[reopenedPage.id]!,
+            },
+            layerMembership: {
+              reopenedLayer.id:
+                  reopenedSnapshot.revisions.layerMembership[reopenedLayer.id]!,
+            },
+          ),
+          additions: [
+            ObjectCollectionAddition(
+              layerId: reopenedLayer.id,
+              object: historic,
+            ),
+          ],
+          maximumOperations: 1,
+        ),
+      );
+      expect(reopened.execute(forbiddenReuse), isA<Err<Object?, Object?>>());
+      expect(reopened.snapshot.root, same(reopenedSnapshot.root));
+    },
+  );
+
+  test(
+    'committed Pen append rerenders only the addition and rejects drift',
+    () {
+      final first = _object(3, [_sample(1, 1, 0), _sample(3, 3, 1)]);
+      final second = _object(4, [_sample(5, 5, 0), _sample(7, 7, 1)]);
+      final previousPage = testPage(
+        layers: [
+          testContentLayer(objects: [first]),
+        ],
+      );
+      final nextPage = testPage(
+        layers: [
+          testContentLayer(objects: [first, second]),
+        ],
+      );
+      final rendering = _CountingRenderingDefinition(
+        HandwritingRenderingDefinition(
+          handwritingLimits: _limits,
+          geometryResolver: StrokeGeometryResolver(_geometryLimits()),
+        ),
+      );
+      final builder = PageSceneBuilder(
+        objectRegistry: _objectRegistry(),
+        renderingRegistry: _ok(
+          RenderingRegistry.create([rendering], maximumDefinitions: 1),
+        ),
+        limits: _renderingLimits(),
+      );
+      final viewport = _viewport(origin: _point(0, 0), zoom: 1);
+      final previous = _ok(
+        builder.buildCommitted(
+          page: previousPage,
+          viewport: viewport,
+          documentRevision: _revision(0),
+        ),
+      );
+      expect(rendering.calls, 1);
+      final appended = _ok(
+        builder.appendCommittedObject(
+          previous: previous,
+          page: nextPage,
+          viewport: viewport,
+          previousDocumentRevision: _revision(0),
+          documentRevision: _revision(1),
+          addedObjectId: second.id,
+        ),
+      );
+      expect(rendering.calls, 2, reason: 'only the added Object is rendered');
+      expect(appended.objects, hasLength(2));
+      expect(appended.objects.first, same(previous.objects.first));
+
+      final driftedPage = testPage(
+        layers: [
+          testContentLayer(objects: [_copyObject(first), second]),
+        ],
+      );
+      expect(
+        builder.appendCommittedObject(
+          previous: previous,
+          page: driftedPage,
+          viewport: viewport,
+          previousDocumentRevision: _revision(0),
+          documentRevision: _revision(1),
+          addedObjectId: second.id,
+        ),
+        isA<Err<Object?, Object?>>(),
+      );
+      expect(
+        builder.appendCommittedObject(
+          previous: previous,
+          page: nextPage,
+          viewport: viewport,
+          previousDocumentRevision: _revision(9),
+          documentRevision: _revision(10),
+          addedObjectId: second.id,
+        ),
+        isA<Err<Object?, Object?>>(),
+      );
+    },
+  );
+
+  test(
     'hit behavior output is iterator-bounded without consulting List length',
     () {
       final ids = [
@@ -1154,6 +1593,127 @@ void main() {
     expect(generator.calls, 1);
     expect(plan.processedSegmentCount, 3);
     expect(plan.geometryCheckCount, checksBeforeTerminal);
+  });
+
+  test(
+    'whole Eraser saturates operations and publishes accepted order once',
+    () {
+      final objects = [
+        _object(210, [_sample(0, 0, 0), _sample(10, 0, 10)]),
+        _object(211, [_sample(0, 10, 0), _sample(10, 10, 10)]),
+        _object(212, [_sample(0, 20, 0), _sample(10, 20, 10)]),
+      ];
+      final root = testNotebook(
+        sections: [
+          testSection(
+            pages: [
+              testPage(layers: [testContentLayer(objects: objects)]),
+            ],
+          ),
+        ],
+      );
+      final coordinator = _coordinator(root);
+      final plan = _ok(
+        WholeEraseGesturePlan.prepare(
+          document: coordinator.snapshot,
+          pageId: root.pages.single.id,
+          radius: .2,
+          handwritingLimits: _limits,
+          objectRegistry: _objectRegistry(),
+          geometryResolver: StrokeGeometryResolver(_geometryLimits()),
+          maximumObjects: 8,
+          maximumStrokes: 8,
+          maximumPoints: 32,
+          maximumTargets: 8,
+          maximumOperations: 2,
+        ),
+      );
+      expect(_ok(plan.acceptPoint(_point(5, 0))).limitReached, isFalse);
+      expect(_ok(plan.acceptPoint(_point(5, 10))).limitReached, isFalse);
+      final acceptedPreview = plan.previews;
+      expect(acceptedPreview.map((value) => value.objectId), [
+        objects[0].id,
+        objects[1].id,
+      ]);
+      expect(_ok(plan.acceptPoint(_point(5, 20))).limitReached, isTrue);
+      for (var index = 0; index < 20; index += 1) {
+        expect(
+          _ok(plan.acceptPoint(_point(5, 21 + index.toDouble()))).limitReached,
+          isTrue,
+        );
+      }
+      expect(plan.commandOperationCount, 2);
+      expect(plan.affectedStrokeCount, 2);
+      expect(plan.rejectedExcessTargetCount, 1);
+      expect(plan.previews.map((value) => value.objectId), [
+        objects[0].id,
+        objects[1].id,
+      ]);
+      final generator = _CountingUuidGenerator();
+      final request = _ok(plan.createRequest(uuidGenerator: generator));
+      expect(request.removals, [objects[0].id, objects[1].id]);
+      expect(generator.calls, 1);
+      final before = coordinator.snapshot.root;
+      expect(
+        coordinator.execute(request),
+        isA<Ok<CommandCommit, CommandFailure>>(),
+      );
+      final after = coordinator.snapshot.root;
+      expect(after.pages.single.layers.single.objects, [objects[2]]);
+      expect(coordinator.undo(), isA<Ok<CommandCommit, CommandFailure>>());
+      expect(coordinator.snapshot.root, before);
+      expect(coordinator.redo(), isA<Ok<CommandCommit, CommandFailure>>());
+      expect(coordinator.snapshot.root, after);
+    },
+  );
+
+  test('whole Eraser retains exactly 64 of more than 64 Pen Objects', () {
+    final objects = [
+      for (var index = 0; index < 66; index += 1)
+        _object(300 + index, [
+          _sample(0, index * 4.0, 0),
+          _sample(10, index * 4.0, 10),
+        ]),
+    ];
+    final root = testNotebook(
+      sections: [
+        testSection(
+          pages: [
+            testPage(layers: [testContentLayer(objects: objects)]),
+          ],
+        ),
+      ],
+    );
+    final coordinator = _coordinator(root);
+    final plan = _ok(
+      WholeEraseGesturePlan.prepare(
+        document: coordinator.snapshot,
+        pageId: root.pages.single.id,
+        radius: .2,
+        handwritingLimits: _limits,
+        objectRegistry: _objectRegistry(),
+        geometryResolver: StrokeGeometryResolver(_geometryLimits()),
+        maximumObjects: 66,
+        maximumStrokes: 66,
+        maximumPoints: 100,
+        maximumTargets: 66,
+        maximumOperations: 64,
+      ),
+    );
+    for (var index = 0; index < 64; index += 1) {
+      expect(
+        _ok(plan.acceptPoint(_point(5, index * 4.0))).limitReached,
+        isFalse,
+      );
+    }
+    expect(plan.commandOperationCount, 64);
+    expect(_ok(plan.acceptPoint(_point(5, 256))).limitReached, isTrue);
+    expect(_ok(plan.acceptPoint(_point(5, 260))).limitReached, isTrue);
+    expect(plan.commandOperationCount, 64);
+    final request = _ok(
+      plan.createRequest(uuidGenerator: _CountingUuidGenerator()),
+    );
+    expect(request.removals, objects.take(64).map((value) => value.id));
   });
 
   test(

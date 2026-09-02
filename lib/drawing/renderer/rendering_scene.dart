@@ -900,12 +900,23 @@ final class RenderSnapshot {
 final class CommittedObjectScene {
   /// Creates immutable Object-local committed rendering evidence.
   CommittedObjectScene._({
-    required this.objectId,
+    required this.object,
+    required this.layerId,
+    required this.layerOpacity,
     required Iterable<ScenePrimitive> primitives,
   }) : primitives = List<ScenePrimitive>.unmodifiable(primitives);
 
   /// Identity of the Object that produced [primitives].
-  final ObjectId objectId;
+  ObjectId get objectId => object.id;
+
+  /// Exact immutable Object instance that produced [primitives].
+  final ObjectEnvelope object;
+
+  /// Exact owning Layer identity used for rendering.
+  final LayerId layerId;
+
+  /// Exact owning Layer opacity used for rendering.
+  final double layerOpacity;
 
   /// Committed primitives produced for this Object in registry order.
   final List<ScenePrimitive> primitives;
@@ -1050,7 +1061,9 @@ final class PageSceneBuilder {
           }
           objects.add(
             CommittedObjectScene._(
-              objectId: object.id,
+              object: object,
+              layerId: layer.id,
+              layerOpacity: layer.opacity,
               primitives: objectPrimitives,
             ),
           );
@@ -1063,6 +1076,114 @@ final class PageSceneBuilder {
         viewportRevision: viewport.revision,
         pageClip: clip,
         objects: objects,
+      ),
+    );
+  }
+
+  /// Appends one newly committed Object while retaining every unchanged
+  /// Object scene by identity. This narrow path is revision-bound and rejects
+  /// replacements, removals, viewport changes, or missing authoritative order.
+  Result<CommittedPageScene, StructuredFailure> appendCommittedObject({
+    required CommittedPageScene previous,
+    required DocumentPage page,
+    required ViewportSnapshot viewport,
+    required Revision previousDocumentRevision,
+    required Revision documentRevision,
+    required ObjectId addedObjectId,
+  }) {
+    if (previous.documentRevision != previousDocumentRevision ||
+        previous.viewportRevision != viewport.revision ||
+        documentRevision == previousDocumentRevision) {
+      return Err(_failure('stale_committed_scene', FailureCategory.state));
+    }
+    final oldScenes = <ObjectId, CommittedObjectScene>{
+      for (final scene in previous.objects) scene.objectId: scene,
+    };
+    ObjectEnvelope? addition;
+    ContentLayer? additionLayer;
+    for (final layer in page.layers.whereType<ContentLayer>()) {
+      for (final object in layer.objects) {
+        if (object.id != addedObjectId) continue;
+        if (addition != null) {
+          return Err(_failure('invalid_increment', FailureCategory.validation));
+        }
+        addition = object;
+        additionLayer = layer;
+      }
+    }
+    if (addition == null ||
+        additionLayer == null ||
+        oldScenes.containsKey(addedObjectId) ||
+        !addition.visible ||
+        !additionLayer.visible ||
+        additionLayer.opacity == 0) {
+      return Err(_failure('invalid_increment', FailureCategory.validation));
+    }
+    final resolution = objectRegistry.resolve(addition);
+    final definition = renderingRegistry.definitions[addition.typeKey];
+    if (resolution is! SupportedObjectResolution || definition == null) {
+      return Err(_failure('invalid_increment', FailureCategory.validation));
+    }
+    final rendered = definition.render(
+      object: addition,
+      viewport: viewport,
+      layerOpacity: additionLayer.opacity,
+      plane: RenderPlane.committed,
+      limits: limits,
+    );
+    if (rendered is! Ok<List<ScenePrimitive>, StructuredFailure> ||
+        rendered.value.any(
+          (primitive) => primitive.plane != RenderPlane.committed,
+        )) {
+      return Err(_failure('renderer_unavailable', FailureCategory.dependency));
+    }
+    final addedPrimitives = rendered.value
+        .where((primitive) => _intersects(primitive.bounds, previous.pageClip))
+        .toList(growable: false);
+    if (addedPrimitives.isEmpty) {
+      return Err(_failure('invalid_increment', FailureCategory.validation));
+    }
+    final addedScene = CommittedObjectScene._(
+      object: addition,
+      layerId: additionLayer.id,
+      layerOpacity: additionLayer.opacity,
+      primitives: addedPrimitives,
+    );
+    final ordered = <CommittedObjectScene>[];
+    var primitiveCount = 0;
+    var retainedOldSceneCount = 0;
+    for (final layer in page.layers.whereType<ContentLayer>()) {
+      if (!layer.visible || layer.opacity == 0) continue;
+      for (final object in layer.objects) {
+        if (!object.visible) continue;
+        final scene = object.id == addedObjectId
+            ? addedScene
+            : oldScenes[object.id];
+        if (scene == null) continue;
+        if (object.id != addedObjectId &&
+            (!identical(scene.object, object) ||
+                scene.layerId != layer.id ||
+                scene.layerOpacity != layer.opacity)) {
+          return Err(_failure('invalid_increment', FailureCategory.validation));
+        }
+        if (object.id != addedObjectId) retainedOldSceneCount += 1;
+        primitiveCount += scene.primitives.length;
+        if (primitiveCount > limits.maximumPrimitives) {
+          return Err(_failure('primitive_count', FailureCategory.resource));
+        }
+        ordered.add(scene);
+      }
+    }
+    if (retainedOldSceneCount != oldScenes.length ||
+        !ordered.contains(addedScene)) {
+      return Err(_failure('invalid_increment', FailureCategory.validation));
+    }
+    return Ok(
+      CommittedPageScene._(
+        documentRevision: documentRevision,
+        viewportRevision: viewport.revision,
+        pageClip: previous.pageClip,
+        objects: ordered,
       ),
     );
   }

@@ -165,6 +165,75 @@ final class ViewportSnapshot {
     );
   }
 
+  /// Pans by a View-space drag while retaining a reachable portion of Page.
+  ///
+  /// A positive drag moves Page content toward the positive View direction,
+  /// so the Page-space origin moves in the opposite direction. The retained
+  /// margin is expressed in logical pixels and is clamped to the available
+  /// extent, which keeps both oversized and fitted Pages recoverable.
+  Result<ViewportSnapshot, StructuredFailure> pannedByViewDelta({
+    required Vector2 viewDelta,
+    required Rect2 pageBounds,
+    required double minimumReachablePixels,
+    required Revision expectedRevision,
+  }) {
+    if (expectedRevision != revision) return Err(_failure('stale_revision'));
+    if (!minimumReachablePixels.isFinite || minimumReachablePixels <= 0) {
+      return Err(_failure('invalid_pan_margin'));
+    }
+    final pageDx = -viewDelta.x / zoom;
+    final pageDy = -viewDelta.y / zoom;
+    if (!pageDx.isFinite || !pageDy.isFinite) {
+      return Err(_failure('invalid_pan_delta'));
+    }
+    final renderedPageWidth = pageBounds.width * zoom;
+    final renderedPageHeight = pageBounds.height * zoom;
+    if (!renderedPageWidth.isFinite ||
+        !renderedPageHeight.isFinite ||
+        renderedPageWidth <= 0 ||
+        renderedPageHeight <= 0) {
+      return Err(_failure('unrepresentable_pan_bounds'));
+    }
+    final retainedX = minimumReachablePixels
+        .clamp(0, extent.width)
+        .clamp(0, renderedPageWidth);
+    final retainedY = minimumReachablePixels
+        .clamp(0, extent.height)
+        .clamp(0, renderedPageHeight);
+    final firstX = pageBounds.left - (extent.width - retainedX) / zoom;
+    final secondX = pageBounds.right - retainedX / zoom;
+    final firstY = pageBounds.top - (extent.height - retainedY) / zoom;
+    final secondY = pageBounds.bottom - retainedY / zoom;
+    if (!firstX.isFinite ||
+        !secondX.isFinite ||
+        !firstY.isFinite ||
+        !secondY.isFinite) {
+      return Err(_failure('unrepresentable_pan_bounds'));
+    }
+    final minimumX = firstX <= secondX ? firstX : secondX;
+    final maximumX = firstX <= secondX ? secondX : firstX;
+    final minimumY = firstY <= secondY ? firstY : secondY;
+    final maximumY = firstY <= secondY ? secondY : firstY;
+    final proposedX = pageOrigin.x + pageDx;
+    final proposedY = pageOrigin.y + pageDy;
+    if (!proposedX.isFinite || !proposedY.isFinite) {
+      return Err(_failure('invalid_pan_delta'));
+    }
+    final candidateX = proposedX.clamp(minimumX, maximumX);
+    final candidateY = proposedY.clamp(minimumY, maximumY);
+    if (candidateX == pageOrigin.x && candidateY == pageOrigin.y) {
+      return Ok(this);
+    }
+    final delta = Vector2.create(
+      x: candidateX - pageOrigin.x,
+      y: candidateY - pageOrigin.y,
+    );
+    if (delta is! Ok<Vector2, StructuredFailure>) {
+      return Err(_failure('invalid_pan_delta'));
+    }
+    return translated(pageDelta: delta.value, expectedRevision: revision);
+  }
+
   /// Zooms while keeping the Page point beneath [viewPivot] fixed.
   Result<ViewportSnapshot, StructuredFailure> zoomedAbout({
     required double newZoom,

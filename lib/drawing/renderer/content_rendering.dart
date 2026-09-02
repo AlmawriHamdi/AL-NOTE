@@ -80,16 +80,44 @@ final class TextRenderingDefinition implements ObjectRenderingDefinition {
     if (layout is! Ok<TextLayoutSnapshot, StructuredFailure>) {
       return Err(_failure('layout_unavailable'));
     }
+    return renderPrepared(
+      object: object,
+      payload: payload.value,
+      layout: layout.value,
+      viewport: viewport,
+      layerOpacity: layerOpacity,
+      plane: plane,
+      limits: limits,
+    );
+  }
+
+  /// Renders validated immutable local layout without invoking layout again.
+  /// Callers must key cached evidence to the authoritative payload and layout
+  /// authority before using this path.
+  Result<List<ScenePrimitive>, StructuredFailure> renderPrepared({
+    required ObjectEnvelope object,
+    required TextPayload payload,
+    required TextLayoutSnapshot layout,
+    required ViewportSnapshot viewport,
+    required double layerOpacity,
+    required RenderPlane plane,
+    required RenderingLimits limits,
+  }) {
+    if (object.typeKey != textObjectTypeKey ||
+        object.typeSchemaVersion != textSchemaVersion ||
+        object.payload != payload.encode()) {
+      return Err(_failure('invalid_prepared_text'));
+    }
     final transform = _localToView(object, viewport);
-    final bounds = _viewBounds(layout.value.visualBounds, object, viewport);
+    final bounds = _viewBounds(layout.visualBounds, object, viewport);
     if (transform == null || bounds == null)
       return Err(_failure('transform_unavailable'));
     final primitive = TextBoxPrimitive.create(
       plane: plane,
       bounds: bounds,
       opacity: layerOpacity,
-      payload: payload.value,
-      layout: layout.value,
+      payload: payload,
+      layout: layout,
       localToViewCoefficients: transform,
     );
     return primitive is Ok<TextBoxPrimitive, StructuredFailure>

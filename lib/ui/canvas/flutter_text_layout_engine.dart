@@ -327,7 +327,10 @@ class FlutterTextPainterFactory {
     );
     try {
       _notifyCreated(painter);
-      painter.layout(maxWidth: maximumWidth);
+      painter.layout(
+        minWidth: payload.boxMode == TextBoxMode.autoSize ? 0 : maximumWidth,
+        maxWidth: maximumWidth,
+      );
       return painter;
     } on Object {
       dispose(painter);

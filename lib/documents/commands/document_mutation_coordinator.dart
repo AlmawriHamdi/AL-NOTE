@@ -16,6 +16,7 @@ import '../model/document_validator.dart';
 import '../model/identifiers.dart';
 import '../objects/object_envelope.dart';
 import '../objects/object_registry.dart';
+import '../objects/text/text_model.dart';
 import '../resources/resources.dart';
 import 'command_contracts.dart';
 import 'revision_snapshot.dart';
@@ -309,13 +310,16 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   }
 
   /// Executes one typed request synchronously and atomically.
-  Result<CommandCommit, CommandFailure> execute(CommandRequest request) {
+  Result<CommandCommit, CommandFailure> execute(
+    CommandRequest request, {
+    CommandExecutionDiagnosticSink? diagnostics,
+  }) {
     if (_mutationActive) {
       return Err(_failure('reentrant_mutation', FailureCategory.state));
     }
     _mutationActive = true;
     try {
-      return _executeInsideBoundary(request);
+      return _executeInsideBoundary(request, diagnostics);
     } finally {
       _mutationActive = false;
     }
@@ -323,7 +327,9 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
 
   Result<CommandCommit, CommandFailure> _executeInsideBoundary(
     CommandRequest request,
+    CommandExecutionDiagnosticSink? diagnostics,
   ) {
+    final preparationClock = Stopwatch()..start();
     if (request.documentId != _root.id) {
       return Err(_failure('wrong_document', FailureCategory.validation));
     }
@@ -343,8 +349,14 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
       AtomicWholeObjectTransformRequest() => _prepareTransform(request),
       AtomicObjectCollectionEditRequest() => _prepareCollectionEdit(request),
     };
+    preparationClock.stop();
+    _recordExecutionDiagnostic(
+      diagnostics,
+      CommandExecutionDiagnosticStage.preparationValidation,
+      preparationClock.elapsedMicroseconds,
+    );
     return prepared.fold(
-      onOk: (value) => _publishPrepared(value, request),
+      onOk: (value) => _publishPrepared(value, request, diagnostics),
       onErr: Err<CommandCommit, CommandFailure>.new,
     );
   }
@@ -629,6 +641,14 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         return Err(_failure('target_not_editable', FailureCategory.state));
       }
       final replacement = replacements[location.object.id]!;
+      if (!_replacementTransformContractValid(
+        request,
+        location.object,
+        replacement,
+        eligible,
+      )) {
+        return Err(_failure('invalid_replacement', FailureCategory.validation));
+      }
       final replacementEligible = _editableResolution(
         location.layer,
         replacement,
@@ -638,7 +658,11 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
           ? null
           : _objectBounds(replacement);
       if (replacement.id != location.object.id ||
-          !_replacementPreservesCommonEnvelope(location.object, replacement) ||
+          !_replacementPreservesCommonEnvelope(
+            location.object,
+            replacement,
+            allowTransformChange: request.textBoxResizeTransform != null,
+          ) ||
           replacementEligible == null ||
           afterBounds == null ||
           !_boundsAreReachable(location.page, afterBounds)) {
@@ -824,7 +848,9 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   Result<CommandCommit, CommandFailure> _publishPrepared(
     _Prepared prepared,
     CommandRequest request,
+    CommandExecutionDiagnosticSink? diagnostics,
   ) {
+    final publicationClock = Stopwatch()..start();
     final nextRevisions = _advancedRevisions(prepared);
     if (nextRevisions == null) {
       return Err(_failure('revision_overflow', FailureCategory.resource));
@@ -838,7 +864,14 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     final nextIdentity =
         (identityResult as Ok<ContentIdentity, CommandFailure>).value;
 
+    final historyClock = Stopwatch()..start();
     final historyResult = _planHistory(prepared, request, nextIdentity);
+    historyClock.stop();
+    _recordExecutionDiagnostic(
+      diagnostics,
+      CommandExecutionDiagnosticStage.historyAccounting,
+      historyClock.elapsedMicroseconds,
+    );
     final historyFailure = historyResult.fold<CommandFailure?>(
       onOk: (_) => null,
       onErr: (failure) => failure,
@@ -866,9 +899,28 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     _historyCursor = historyPlan.cursor;
     _coalescingBoundaryPending = false;
     final observerFailures = _notify(change);
+    publicationClock.stop();
+    _recordExecutionDiagnostic(
+      diagnostics,
+      CommandExecutionDiagnosticStage.publicationObservers,
+      publicationClock.elapsedMicroseconds - historyClock.elapsedMicroseconds,
+    );
     return Ok(
       CommandCommit(change: change, observerFailureCount: observerFailures),
     );
+  }
+
+  void _recordExecutionDiagnostic(
+    CommandExecutionDiagnosticSink? sink,
+    CommandExecutionDiagnosticStage stage,
+    int elapsedMicros,
+  ) {
+    if (sink == null) return;
+    try {
+      sink(stage, elapsedMicros < 0 ? 0 : elapsedMicros);
+    } on Object {
+      // Debug accounting cannot affect command semantics.
+    }
   }
 
   Result<_HistoryPlan, CommandFailure> _planHistory(
@@ -1392,16 +1444,205 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
 
   bool _replacementPreservesCommonEnvelope(
     ObjectEnvelope before,
-    ObjectEnvelope after,
-  ) =>
+    ObjectEnvelope after, {
+    bool allowTransformChange = false,
+  }) =>
       before.id == after.id &&
       before.typeKey == after.typeKey &&
       before.envelopeVersion == after.envelopeVersion &&
       before.typeSchemaVersion == after.typeSchemaVersion &&
-      before.transform == after.transform &&
+      (allowTransformChange || before.transform == after.transform) &&
       before.visible == after.visible &&
       before.locked == after.locked &&
       before.extensionData == after.extensionData;
+
+  bool _replacementTransformContractValid(
+    AtomicObjectReplacementRequest request,
+    ObjectEnvelope before,
+    ObjectEnvelope after,
+    SupportedObjectResolution resolution,
+  ) {
+    final evidence = request.textBoxResizeTransform;
+    if (evidence == null) {
+      if (before.transform != after.transform) return false;
+      return !_changesTextBoxDimensions(before, after, resolution);
+    }
+    if (request.targetIds.length != 1 ||
+        before.typeKey != textObjectTypeKey ||
+        before.typeSchemaVersion != textSchemaVersion ||
+        after.typeKey != textObjectTypeKey ||
+        after.typeSchemaVersion != textSchemaVersion ||
+        !resolution.supportsIntrinsicBoxResizeValidation ||
+        resolution.definition is! IntrinsicBoxResizeValidator) {
+      return false;
+    }
+    final capabilities = resolution.definition.capabilities;
+    if (!capabilities.resizable ||
+        (before.transform != after.transform && !capabilities.movable) ||
+        evidence.replacementTransform != after.transform ||
+        !_sameLinearTransform(before.transform, after.transform)) {
+      return false;
+    }
+    final validator = resolution.definition as IntrinsicBoxResizeValidator;
+    try {
+      IntrinsicBoxResizeChange resize;
+      if (evidence.kind == TextBoxResizeTransformKind.visibleContentFit) {
+        if (!resolution.supportsIntrinsicVisibleContentFitValidation ||
+            resolution.definition is! IntrinsicVisibleContentFitValidator) {
+          return false;
+        }
+        final fit =
+            (resolution.definition as IntrinsicVisibleContentFitValidator)
+                .validateIntrinsicVisibleContentFit(
+                  before.payload,
+                  after.payload,
+                  before.typeSchemaVersion,
+                );
+        if (fit is! Ok<IntrinsicVisibleContentFitChange, StructuredFailure> ||
+            _textResizeAnchor(
+                  fit.value.horizontalAnchor,
+                  fit.value.verticalAnchor,
+                ) !=
+                evidence.preservedAnchor) {
+          return false;
+        }
+        resize = fit.value.resize;
+      } else {
+        if (!_isCornerTextResizeAnchor(evidence.preservedAnchor)) return false;
+        final change = validator.validateIntrinsicBoxResize(
+          before.payload,
+          after.payload,
+          before.typeSchemaVersion,
+        );
+        if (change is! Ok<IntrinsicBoxResizeChange, StructuredFailure>) {
+          return false;
+        }
+        resize = change.value;
+      }
+      final expected = _expectedTextResizeTransform(
+        before.transform,
+        resize,
+        evidence.preservedAnchor,
+      );
+      return expected != null && expected == after.transform;
+    } on Object {
+      return false;
+    }
+  }
+
+  bool _changesTextBoxDimensions(
+    ObjectEnvelope before,
+    ObjectEnvelope after,
+    SupportedObjectResolution resolution,
+  ) {
+    if (before.typeKey != textObjectTypeKey ||
+        before.typeSchemaVersion != textSchemaVersion ||
+        after.typeKey != textObjectTypeKey ||
+        after.typeSchemaVersion != textSchemaVersion) {
+      return false;
+    }
+    if (!resolution.supportsIntrinsicBoxResizeValidation ||
+        resolution.definition is! IntrinsicBoxResizeValidator) {
+      return true;
+    }
+    try {
+      final changed = (resolution.definition as IntrinsicBoxResizeValidator)
+          .changesIntrinsicBoxDimensions(
+            before.payload,
+            after.payload,
+            before.typeSchemaVersion,
+          );
+      return changed is Ok<bool, StructuredFailure> ? changed.value : true;
+    } on Object {
+      return true;
+    }
+  }
+
+  bool _sameLinearTransform(AffineTransform2D before, AffineTransform2D after) {
+    final left = before.storageCoefficients;
+    final right = after.storageCoefficients;
+    return left[0] == right[0] &&
+        left[1] == right[1] &&
+        left[2] == right[2] &&
+        left[3] == right[3];
+  }
+
+  AffineTransform2D? _expectedTextResizeTransform(
+    AffineTransform2D source,
+    IntrinsicBoxResizeChange change,
+    TextBoxResizePreservedAnchor anchor,
+  ) {
+    final horizontalFactor = switch (anchor) {
+      TextBoxResizePreservedAnchor.topLeft ||
+      TextBoxResizePreservedAnchor.centerLeft ||
+      TextBoxResizePreservedAnchor.bottomLeft => 0.0,
+      TextBoxResizePreservedAnchor.topCenter ||
+      TextBoxResizePreservedAnchor.center ||
+      TextBoxResizePreservedAnchor.bottomCenter => 0.5,
+      TextBoxResizePreservedAnchor.topRight ||
+      TextBoxResizePreservedAnchor.centerRight ||
+      TextBoxResizePreservedAnchor.bottomRight => 1.0,
+    };
+    final verticalFactor = switch (anchor) {
+      TextBoxResizePreservedAnchor.topLeft ||
+      TextBoxResizePreservedAnchor.topCenter ||
+      TextBoxResizePreservedAnchor.topRight => 0.0,
+      TextBoxResizePreservedAnchor.centerLeft ||
+      TextBoxResizePreservedAnchor.center ||
+      TextBoxResizePreservedAnchor.centerRight => 0.5,
+      TextBoxResizePreservedAnchor.bottomLeft ||
+      TextBoxResizePreservedAnchor.bottomCenter ||
+      TextBoxResizePreservedAnchor.bottomRight => 1.0,
+    };
+    final dx = (change.beforeWidth - change.afterWidth) * horizontalFactor;
+    final beforeHeight = change.beforeHeight;
+    final afterHeight = change.afterHeight;
+    if ((beforeHeight == null) != (afterHeight == null)) return null;
+    final dy = beforeHeight != null
+        ? (beforeHeight - afterHeight!) * verticalFactor
+        : 0.0;
+    final delta = Vector2.create(x: dx, y: dy);
+    if (delta is! Ok<Vector2, StructuredFailure>) return null;
+    final localTranslation = AffineTransform2D.fromOperation(
+      TranslationTransformOperation2D(delta.value),
+    );
+    if (localTranslation is! Ok<AffineTransform2D, StructuredFailure>) {
+      return null;
+    }
+    return localTranslation.value
+        .then(source)
+        .fold(onOk: (value) => value, onErr: (_) => null);
+  }
+
+  bool _isCornerTextResizeAnchor(TextBoxResizePreservedAnchor anchor) =>
+      anchor == TextBoxResizePreservedAnchor.topLeft ||
+      anchor == TextBoxResizePreservedAnchor.topRight ||
+      anchor == TextBoxResizePreservedAnchor.bottomLeft ||
+      anchor == TextBoxResizePreservedAnchor.bottomRight;
+
+  TextBoxResizePreservedAnchor _textResizeAnchor(
+    IntrinsicHorizontalAnchor horizontal,
+    IntrinsicVerticalAnchor vertical,
+  ) => switch ((horizontal, vertical)) {
+    (IntrinsicHorizontalAnchor.left, IntrinsicVerticalAnchor.top) =>
+      TextBoxResizePreservedAnchor.topLeft,
+    (IntrinsicHorizontalAnchor.center, IntrinsicVerticalAnchor.top) =>
+      TextBoxResizePreservedAnchor.topCenter,
+    (IntrinsicHorizontalAnchor.right, IntrinsicVerticalAnchor.top) =>
+      TextBoxResizePreservedAnchor.topRight,
+    (IntrinsicHorizontalAnchor.left, IntrinsicVerticalAnchor.center) =>
+      TextBoxResizePreservedAnchor.centerLeft,
+    (IntrinsicHorizontalAnchor.center, IntrinsicVerticalAnchor.center) =>
+      TextBoxResizePreservedAnchor.center,
+    (IntrinsicHorizontalAnchor.right, IntrinsicVerticalAnchor.center) =>
+      TextBoxResizePreservedAnchor.centerRight,
+    (IntrinsicHorizontalAnchor.left, IntrinsicVerticalAnchor.bottom) =>
+      TextBoxResizePreservedAnchor.bottomLeft,
+    (IntrinsicHorizontalAnchor.center, IntrinsicVerticalAnchor.bottom) =>
+      TextBoxResizePreservedAnchor.bottomCenter,
+    (IntrinsicHorizontalAnchor.right, IntrinsicVerticalAnchor.bottom) =>
+      TextBoxResizePreservedAnchor.bottomRight,
+  };
 }
 
 final class _Location {

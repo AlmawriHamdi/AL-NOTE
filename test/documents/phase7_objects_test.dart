@@ -4393,108 +4393,271 @@ void main() {
     );
   });
 
-  test('Text render hit and Selection share full-affine visual geometry', () {
-    final engine = FlutterTextLayoutEngine(_textLimits);
-    final payload = _richLayoutPayload(
-      alignment: TextVerticalAlignment.top,
-      overflow: TextOverflowPolicy.visible,
-      height: 24,
-    );
-    final transform = _ok(
-      AffineTransform2D.restoreFromStorage([1.5, .35, .6, 1.2, 20, 30]),
-    );
-    final object = testObject(
-      id: 965,
-      typeKey: textObjectTypeKey,
-      schemaVersion: textSchemaVersion,
-      payload: payload.encode(),
-      transform: transform,
-    );
-    final local = _ok(
-      engine.layout(TextLayoutRequest(payload: payload)),
-    ).visualBounds;
-    final pageBounds = _transformedBounds(local, transform);
-    final viewport = _ok(
-      ViewportSnapshot.create(
-        extent: _ok(ViewExtent.create(width: 1200, height: 1600)),
-        pageOrigin: _point(0, 0),
-        zoom: 2,
-        minimumZoom: .25,
-        maximumZoom: 8,
-        revision: _revision(0),
-      ),
-    );
-    final primitive =
-        _ok(
-              TextRenderingDefinition(_textLimits, engine).render(
-                object: object,
-                viewport: viewport,
-                layerOpacity: .75,
-                plane: RenderPlane.committed,
-                limits: _renderingLimits(),
-              ),
-            ).single
-            as TextBoxPrimitive;
-    expect(primitive.layout.visualBounds, local);
-    expect(
-      primitive.bounds,
-      _rect(
-        pageBounds.left * 2,
-        pageBounds.top * 2,
-        pageBounds.right * 2,
-        pageBounds.bottom * 2,
-      ),
-    );
-    final localCenter = _point(
-      (local.left + local.right) / 2,
-      (local.top + local.bottom) / 2,
-    );
-    final pageCenter = _ok(transform.applyToPoint(localCenter));
-    expect(
-      _ok(
-        TextHitTestingDefinition(_textLimits, engine).wholePoint(
-          object: object,
-          pagePosition: pageCenter,
-          pageTolerance: 0,
+  test(
+    'Text render remains visual while hit and Selection use intrinsic box',
+    () {
+      final engine = FlutterTextLayoutEngine(_textLimits);
+      final payload = _richLayoutPayload(
+        alignment: TextVerticalAlignment.top,
+        overflow: TextOverflowPolicy.visible,
+        height: 24,
+      );
+      final transform = _ok(
+        AffineTransform2D.restoreFromStorage([1.5, .35, .6, 1.2, 20, 30]),
+      );
+      final object = testObject(
+        id: 965,
+        typeKey: textObjectTypeKey,
+        schemaVersion: textSchemaVersion,
+        payload: payload.encode(),
+        transform: transform,
+      );
+      final layout = _ok(engine.layout(TextLayoutRequest(payload: payload)));
+      final visualLocal = layout.visualBounds;
+      final intrinsicLocal = layout.logicalBounds;
+      final visualPageBounds = _transformedBounds(visualLocal, transform);
+      final intrinsicPageBounds = _transformedBounds(intrinsicLocal, transform);
+      final viewport = _ok(
+        ViewportSnapshot.create(
+          extent: _ok(ViewExtent.create(width: 1200, height: 1600)),
+          pageOrigin: _point(0, 0),
+          zoom: 2,
+          minimumZoom: .25,
+          maximumZoom: 8,
+          revision: _revision(0),
         ),
-      ),
-      isTrue,
-    );
-    final root = testNotebook(
-      sections: [
-        testSection(
-          pages: [
-            testPage(
-              layers: [
-                testContentLayer(objects: [object]),
-              ],
+      );
+      final primitive =
+          _ok(
+                TextRenderingDefinition(_textLimits, engine).render(
+                  object: object,
+                  viewport: viewport,
+                  layerOpacity: .75,
+                  plane: RenderPlane.committed,
+                  limits: _renderingLimits(),
+                ),
+              ).single
+              as TextBoxPrimitive;
+      expect(primitive.layout.visualBounds, visualLocal);
+      expect(
+        primitive.bounds,
+        _rect(
+          visualPageBounds.left * 2,
+          visualPageBounds.top * 2,
+          visualPageBounds.right * 2,
+          visualPageBounds.bottom * 2,
+        ),
+      );
+      final localCenter = _point(
+        (intrinsicLocal.left + intrinsicLocal.right) / 2,
+        (intrinsicLocal.top + intrinsicLocal.bottom) / 2,
+      );
+      final pageCenter = _ok(transform.applyToPoint(localCenter));
+      expect(
+        _ok(
+          TextHitTestingDefinition(_textLimits, engine).wholePoint(
+            object: object,
+            pagePosition: pageCenter,
+            pageTolerance: 0,
+          ),
+        ),
+        isTrue,
+      );
+      final root = testNotebook(
+        sections: [
+          testSection(
+            pages: [
+              testPage(
+                layers: [
+                  testContentLayer(objects: [object]),
+                ],
+              ),
+            ],
+          ),
+        ],
+      );
+      final registry = testRegistry([
+        TextObjectTypeDefinition(_textLimits, engine),
+      ]);
+      final coordinator = _coordinatorFor(root, registry);
+      final selection = SelectionController(
+        objectRegistry: registry,
+        coalescingBoundarySink: coordinator,
+        maximumTargets: 1,
+      );
+      _ok(
+        selection.replace(
+          root: root,
+          targets: [
+            SelectionTarget.wholeObject(
+              pageId: root.pages.single.id,
+              objectId: object.id,
             ),
           ],
         ),
-      ],
-    );
-    final registry = testRegistry([
-      TextObjectTypeDefinition(_textLimits, engine),
-    ]);
-    final coordinator = _coordinatorFor(root, registry);
-    final selection = SelectionController(
-      objectRegistry: registry,
-      coalescingBoundarySink: coordinator,
-      maximumTargets: 1,
-    );
-    _ok(
-      selection.replace(
-        root: root,
-        targets: [
-          SelectionTarget.wholeObject(
-            pageId: root.pages.single.id,
-            objectId: object.id,
+      );
+      expect(selection.state.aggregateBounds, intrinsicPageBounds);
+    },
+  );
+
+  test(
+    'Text fit changes only dimensions for rich styled and unknown payloads',
+    () {
+      final engine = FlutterTextLayoutEngine(_textLimits);
+      final definition = TextObjectTypeDefinition(_textLimits, engine);
+      for (final source in [
+        _richLayoutPayload(
+          alignment: TextVerticalAlignment.top,
+          overflow: TextOverflowPolicy.clip,
+          height: 240,
+        ),
+        _textPayload(['first paragraph', 'second paragraph', '']),
+      ]) {
+        final fitted = _ok(definition.fitVisibleContent(source));
+        final expected = _ok(
+          TextPayload.create(
+            paragraphs: source.paragraphs,
+            defaultCharacterStyle: source.defaultCharacterStyle,
+            defaultParagraphStyle: source.defaultParagraphStyle,
+            boxMode: source.boxMode,
+            intrinsicWidth: fitted.intrinsicWidth,
+            intrinsicHeight: fitted.intrinsicHeight,
+            padding: source.padding,
+            verticalAlignment: source.verticalAlignment,
+            overflowPolicy: source.overflowPolicy,
+            limits: _textLimits,
+            unknownFields: source.unknownFields,
           ),
-        ],
-      ),
-    );
-    expect(selection.state.aggregateBounds, pageBounds);
-  });
+        );
+        expect(fitted.encode(), expected.encode());
+        expect(fitted.logicalText, source.logicalText);
+        expect(fitted.paragraphs.length, source.paragraphs.length);
+        expect(fitted.intrinsicWidth, lessThanOrEqualTo(source.intrinsicWidth));
+        expect(
+          fitted.intrinsicWidth != source.intrinsicWidth ||
+              fitted.intrinsicHeight != source.intrinsicHeight,
+          isTrue,
+        );
+        expect(
+          _ok(engine.layout(TextLayoutRequest(payload: fitted))).overflowed,
+          isFalse,
+        );
+      }
+
+      final failing = _CountingTextLayoutEngine(engine, fail: true);
+      final rejected = TextObjectTypeDefinition(
+        _textLimits,
+        failing,
+      ).fitVisibleContent(_textPayload(['SECRET-fit-source']));
+      expect(rejected, isA<Err<TextPayload, StructuredFailure>>());
+      expect(rejected.toString(), isNot(contains('SECRET')));
+      expect(failing.calls, 1);
+    },
+  );
+
+  test(
+    'Text fit is tight idempotent and anchor-stable for every alignment axis',
+    () {
+      final engine = FlutterTextLayoutEngine(_textLimits);
+      final definition = TextObjectTypeDefinition(_textLimits, engine);
+      final transform = _ok(
+        AffineTransform2D.restoreFromStorage([
+          math.cos(.63),
+          math.sin(.63),
+          -math.sin(.63) + .17,
+          math.cos(.63),
+          173,
+          89,
+        ]),
+      );
+
+      double horizontalFactor(TextAlignment alignment) => switch (alignment) {
+        TextAlignment.left => 0,
+        TextAlignment.center => .5,
+        TextAlignment.right => 1,
+        _ => throw StateError('Unexpected test alignment.'),
+      };
+      double verticalFactor(TextVerticalAlignment alignment) =>
+          switch (alignment) {
+            TextVerticalAlignment.top => 0,
+            TextVerticalAlignment.center => .5,
+            TextVerticalAlignment.bottom => 1,
+          };
+      Point2 contentAnchor(Rect2 bounds, double horizontal, double vertical) =>
+          _point(
+            bounds.left + bounds.width * horizontal,
+            bounds.top + bounds.height * vertical,
+          );
+
+      for (final horizontal in const [
+        TextAlignment.left,
+        TextAlignment.center,
+        TextAlignment.right,
+      ]) {
+        for (final vertical in TextVerticalAlignment.values) {
+          final source = _configuredTextPayload(
+            text: 'one stable line',
+            fontSize: 21,
+            mode: TextBoxMode.fixedWidthFixedHeight,
+            overflow: TextOverflowPolicy.clip,
+            width: 420,
+            height: 310,
+            horizontalAlignment: horizontal,
+            alignment: vertical,
+          );
+          final beforeLayout = _ok(
+            engine.layout(TextLayoutRequest(payload: source)),
+          );
+          final fitted = _ok(definition.fitVisibleContent(source));
+          final fittedAgain = _ok(definition.fitVisibleContent(fitted));
+          final afterLayout = _ok(
+            engine.layout(TextLayoutRequest(payload: fitted)),
+          );
+          expect(fitted.intrinsicWidth, lessThan(source.intrinsicWidth));
+          expect(fitted.intrinsicHeight, lessThan(source.intrinsicHeight!));
+          expect(afterLayout.overflowed, isFalse);
+          expect(fittedAgain.encode(), fitted.encode());
+
+          final validated = _ok(
+            definition.validateIntrinsicVisibleContentFit(
+              source.encode(),
+              fitted.encode(),
+              textSchemaVersion,
+            ),
+          );
+          final hx = horizontalFactor(horizontal);
+          final vy = verticalFactor(vertical);
+          expect(validated.horizontalAnchor.index, (hx * 2).round());
+          expect(validated.verticalAnchor.index, (vy * 2).round());
+          final delta = _vector(
+            (source.intrinsicWidth - fitted.intrinsicWidth) * hx,
+            (source.intrinsicHeight! - fitted.intrinsicHeight!) * vy,
+          );
+          final translated = _ok(
+            AffineTransform2D.fromOperation(
+              TranslationTransformOperation2D(delta),
+            ),
+          );
+          final fittedTransform = _ok(translated.then(transform));
+          final beforeAnchor = _ok(
+            transform.applyToPoint(
+              contentAnchor(beforeLayout.visualBounds, hx, vy),
+            ),
+          );
+          final afterAnchor = _ok(
+            fittedTransform.applyToPoint(
+              contentAnchor(afterLayout.visualBounds, hx, vy),
+            ),
+          );
+          final reason =
+              '$horizontal/$vertical '
+              '${beforeLayout.visualBounds}/${afterLayout.visualBounds}';
+          expect(afterAnchor.x, closeTo(beforeAnchor.x, 1e-9), reason: reason);
+          expect(afterAnchor.y, closeTo(beforeAnchor.y, 1e-9), reason: reason);
+        }
+      }
+    },
+  );
 
   test('minimal dialog representability never flattens rich Text', () {
     TextPayload simplePayload(List<String> sources) {
@@ -4983,6 +5146,749 @@ void main() {
     }
   });
 
+  test('Text resize request accepts exact unchanged-transform dimensions', () {
+    final before = _textPayload(['resize']);
+    final after = _ok(
+      TextPayload.create(
+        paragraphs: before.paragraphs,
+        defaultCharacterStyle: before.defaultCharacterStyle,
+        defaultParagraphStyle: before.defaultParagraphStyle,
+        boxMode: before.boxMode,
+        intrinsicWidth: before.intrinsicWidth + 40,
+        intrinsicHeight: before.intrinsicHeight! + 20,
+        padding: before.padding,
+        verticalAlignment: before.verticalAlignment,
+        overflowPolicy: before.overflowPolicy,
+        limits: _textLimits,
+        unknownFields: before.unknownFields,
+      ),
+    );
+    final source = testObject(
+      id: 990,
+      typeKey: textObjectTypeKey,
+      schemaVersion: textSchemaVersion,
+      payload: before.encode(),
+    );
+    final definition = TextObjectTypeDefinition(
+      _textLimits,
+      FlutterTextLayoutEngine(_textLimits),
+    );
+    final root = testNotebook(
+      sections: [
+        testSection(
+          pages: [
+            testPage(
+              layers: [
+                testContentLayer(objects: [source]),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+    final coordinator = _coordinatorFor(root, testRegistry([definition]));
+    final snapshot = coordinator.snapshot;
+    final layer = root.pages.single.layers.single;
+    final semantics = _ok(
+      definition.classifyPayloadChange(
+        before.encode(),
+        after.encode(),
+        textSchemaVersion,
+      ),
+    );
+    final result = TextObjectEditRequest.replace(
+      documentId: root.id,
+      source: source,
+      payload: after,
+      limits: _textLimits,
+      layoutEngine: definition.layoutEngine,
+      metadata: phase3Metadata(correlation: 991),
+      preconditions: RevisionPreconditions(
+        objects: {source.id: snapshot.revisions.objects[source.id]!},
+        layerMembership: {
+          layer.id: snapshot.revisions.layerMembership[layer.id]!,
+        },
+      ),
+      changeCategories: ObjectReplacementChangeCategories(
+        geometry: semantics.geometry,
+        appearance: semantics.appearance,
+        text: semantics.text,
+        metadata: semantics.metadata,
+      ),
+      textBoxResizeTransform: TextBoxResizeTransformEvidence.create(
+        preservedAnchor: TextBoxResizePreservedAnchor.topLeft,
+        replacementTransform: source.transform,
+      ),
+    );
+    expect(
+      result,
+      isA<Ok<AtomicObjectReplacementRequest, StructuredFailure>>(),
+    );
+    final request =
+        (result as Ok<AtomicObjectReplacementRequest, StructuredFailure>).value;
+    final replacement = request.replacements.single;
+    final resolved = testRegistry([definition]).resolve(source);
+    expect(resolved, isA<SupportedObjectResolution>());
+    expect(
+      (resolved as SupportedObjectResolution)
+          .supportsIntrinsicBoxResizeValidation,
+      isTrue,
+    );
+    expect(replacement.transform, source.transform);
+    expect(
+      request.textBoxResizeTransform!.replacementTransform,
+      source.transform,
+    );
+    expect(
+      _ok(
+        TextPayload.create(
+          paragraphs: before.paragraphs,
+          defaultCharacterStyle: before.defaultCharacterStyle,
+          defaultParagraphStyle: before.defaultParagraphStyle,
+          boxMode: before.boxMode,
+          intrinsicWidth: after.intrinsicWidth,
+          intrinsicHeight: after.intrinsicHeight,
+          padding: before.padding,
+          verticalAlignment: before.verticalAlignment,
+          overflowPolicy: before.overflowPolicy,
+          limits: _textLimits,
+          unknownFields: before.unknownFields,
+        ),
+      ).encode(),
+      after.encode(),
+    );
+    expect(
+      coordinator.execute(request),
+      isA<Ok<CommandCommit, CommandFailure>>(),
+    );
+    expect(
+      coordinator
+          .snapshot
+          .root
+          .pages
+          .single
+          .layers
+          .single
+          .objects
+          .single
+          .transform,
+      source.transform,
+    );
+    final changed = coordinator.snapshot.root;
+    _ok(coordinator.undo());
+    expect(coordinator.snapshot.root, root);
+    _ok(coordinator.redo());
+    expect(coordinator.snapshot.root, changed);
+  });
+
+  test(
+    'canonical Text fit validates alignment translation at both boundaries',
+    () {
+      const secret = 'SECRET-canonical-fit';
+      final engine = FlutterTextLayoutEngine(_textLimits);
+      final definition = TextObjectTypeDefinition(_textLimits, engine);
+      final before = _configuredTextPayload(
+        text: secret,
+        fontSize: 22,
+        mode: TextBoxMode.fixedWidthFixedHeight,
+        overflow: TextOverflowPolicy.clip,
+        width: 380,
+        height: 260,
+        horizontalAlignment: TextAlignment.right,
+        alignment: TextVerticalAlignment.bottom,
+      );
+      final after = _ok(definition.fitVisibleContent(before));
+      final sourceTransform = _ok(
+        AffineTransform2D.restoreFromStorage([
+          math.cos(.47),
+          math.sin(.47),
+          -math.sin(.47) + .13,
+          math.cos(.47),
+          141,
+          72,
+        ]),
+      );
+      final delta = _vector(
+        before.intrinsicWidth - after.intrinsicWidth,
+        before.intrinsicHeight! - after.intrinsicHeight!,
+      );
+      final localTranslation = _ok(
+        AffineTransform2D.fromOperation(TranslationTransformOperation2D(delta)),
+      );
+      final fittedTransform = _ok(localTranslation.then(sourceTransform));
+      final source = testObject(
+        id: 9911,
+        typeKey: textObjectTypeKey,
+        schemaVersion: textSchemaVersion,
+        payload: before.encode(),
+        transform: sourceTransform,
+      );
+      final root = testNotebook(
+        sections: [
+          testSection(
+            pages: [
+              testPage(
+                layers: [
+                  testContentLayer(objects: [source]),
+                ],
+              ),
+            ],
+          ),
+        ],
+      );
+      final registry = testRegistry([definition]);
+      final coordinator = _coordinatorFor(root, registry);
+      final initial = coordinator.snapshot;
+      final layer = root.pages.single.layers.single;
+      final preconditions = RevisionPreconditions(
+        objects: {source.id: initial.revisions.objects[source.id]!},
+        layerMembership: {
+          layer.id: initial.revisions.layerMembership[layer.id]!,
+        },
+      );
+      final semantics = _ok(
+        definition.classifyPayloadChange(
+          before.encode(),
+          after.encode(),
+          textSchemaVersion,
+        ),
+      );
+      final categories = ObjectReplacementChangeCategories(
+        geometry: semantics.geometry,
+        appearance: semantics.appearance,
+        text: semantics.text,
+        metadata: semantics.metadata,
+      );
+      final validEvidence = TextBoxResizeTransformEvidence.visibleContentFit(
+        preservedAnchor: TextBoxResizePreservedAnchor.bottomRight,
+        replacementTransform: fittedTransform,
+      );
+      final valid = TextObjectEditRequest.replace(
+        documentId: root.id,
+        source: source,
+        payload: after,
+        limits: _textLimits,
+        layoutEngine: engine,
+        metadata: phase3Metadata(correlation: 9911),
+        preconditions: preconditions,
+        changeCategories: categories,
+        textBoxResizeTransform: validEvidence,
+      );
+      expect(
+        valid,
+        isA<Ok<AtomicObjectReplacementRequest, StructuredFailure>>(),
+      );
+
+      for (final invalid in [
+        TextBoxResizeTransformEvidence.visibleContentFit(
+          preservedAnchor: TextBoxResizePreservedAnchor.center,
+          replacementTransform: fittedTransform,
+        ),
+        TextBoxResizeTransformEvidence.visibleContentFit(
+          preservedAnchor: TextBoxResizePreservedAnchor.bottomRight,
+          replacementTransform: sourceTransform,
+        ),
+      ]) {
+        final rejected = TextObjectEditRequest.replace(
+          documentId: root.id,
+          source: source,
+          payload: after,
+          limits: _textLimits,
+          layoutEngine: engine,
+          metadata: phase3Metadata(correlation: 9912),
+          preconditions: preconditions,
+          changeCategories: categories,
+          textBoxResizeTransform: invalid,
+        );
+        expect(
+          rejected,
+          isA<Err<AtomicObjectReplacementRequest, StructuredFailure>>(),
+        );
+        expect('$rejected $invalid', isNot(contains(secret)));
+      }
+
+      final malformedReplacement = _ok(
+        ObjectEnvelope.create(
+          id: source.id,
+          typeKey: source.typeKey,
+          envelopeVersion: source.envelopeVersion,
+          typeSchemaVersion: source.typeSchemaVersion,
+          transform: sourceTransform,
+          visible: source.visible,
+          locked: source.locked,
+          payload: after.encode(),
+          extensionData: source.extensionData,
+        ),
+      );
+      final malformed = _ok(
+        AtomicObjectReplacementRequest.create(
+          documentId: root.id,
+          metadata: phase3Metadata(correlation: 9913),
+          preconditions: preconditions,
+          targetIds: [source.id],
+          replacements: [malformedReplacement],
+          changeCategories: categories,
+          textBoxResizeTransform:
+              TextBoxResizeTransformEvidence.visibleContentFit(
+                preservedAnchor: TextBoxResizePreservedAnchor.bottomRight,
+                replacementTransform: sourceTransform,
+              ),
+        ),
+      );
+      final coordinatorRejection = coordinator.execute(malformed);
+      expect(coordinatorRejection, isA<Err<CommandCommit, CommandFailure>>());
+      expect('$coordinatorRejection $malformed', isNot(contains(secret)));
+      expect(coordinator.snapshot.root, same(initial.root));
+      expect(coordinator.snapshot.revisions, initial.revisions);
+      expect(coordinator.snapshot.isDirty, initial.isDirty);
+      expect(coordinator.retainedHistoryCount, 0);
+
+      final request =
+          (valid as Ok<AtomicObjectReplacementRequest, StructuredFailure>)
+              .value;
+      expect(
+        coordinator.execute(request),
+        isA<Ok<CommandCommit, CommandFailure>>(),
+      );
+      final changed = coordinator.snapshot.root;
+      final committed = changed.pages.single.layers.single.objects.single;
+      expect(committed.payload, after.encode());
+      expect(committed.transform, fittedTransform);
+      _ok(coordinator.undo());
+      expect(coordinator.snapshot.root, root);
+      _ok(coordinator.redo());
+      expect(coordinator.snapshot.root, changed);
+    },
+  );
+
+  test(
+    'replacement boundary rejects arbitrary transforms without side effects',
+    () {
+      const secret = 'private replacement transform evidence';
+      final beforePayload = _textPayload([secret]);
+      final afterPayload = _resizedTextPayload(
+        beforePayload,
+        width: beforePayload.intrinsicWidth + 40,
+      );
+      final source = testObject(
+        id: 992,
+        typeKey: textObjectTypeKey,
+        schemaVersion: textSchemaVersion,
+        payload: beforePayload.encode(),
+      );
+      final root = testNotebook(
+        sections: [
+          testSection(
+            pages: [
+              testPage(
+                layers: [
+                  testContentLayer(objects: [source]),
+                ],
+              ),
+            ],
+          ),
+        ],
+      );
+      final definition = TextObjectTypeDefinition(
+        _textLimits,
+        FlutterTextLayoutEngine(_textLimits),
+      );
+      final registry = testRegistry([definition]);
+      final generator = _BoundaryCountingUuidGenerator();
+      final coordinator = _ok(
+        DocumentMutationCoordinator.create(
+          initialRoot: root,
+          validator: DocumentValidator(registry),
+          uuidGenerator: generator,
+          historyLimits: _ok(
+            HistoryLimits.create(
+              maximumRetainedCommandCount: 8,
+              maximumEstimatedRetainedBytes: 100000,
+            ),
+          ),
+          retainedCostEstimator: FixedHistoryCostEstimator(100),
+          maximumListeners: 4,
+        ),
+      );
+      var observerCalls = 0;
+      _ok(coordinator.addListener((_) => observerCalls += 1));
+      final selection = SelectionController(
+        objectRegistry: registry,
+        coalescingBoundarySink: coordinator,
+        maximumTargets: 4,
+      );
+      _ok(
+        selection.replace(
+          root: root,
+          targets: [
+            SelectionTarget.wholeObject(
+              pageId: root.pages.single.id,
+              objectId: source.id,
+            ),
+          ],
+        ),
+      );
+      final initial = coordinator.snapshot;
+      final initialHistory = coordinator.retainedHistoryCount;
+      final initialSelection = selection.state;
+      final initialUuidCalls = generator.calls;
+      final layer = root.pages.single.layers.single;
+      final preconditions = RevisionPreconditions(
+        objects: {source.id: initial.revisions.objects[source.id]!},
+        layerMembership: {
+          layer.id: initial.revisions.layerMembership[layer.id]!,
+        },
+      );
+      final resizeSemantics = _ok(
+        definition.classifyPayloadChange(
+          beforePayload.encode(),
+          afterPayload.encode(),
+          textSchemaVersion,
+        ),
+      );
+      ObjectEnvelope replacement(
+        TextPayload payload,
+        AffineTransform2D transform,
+      ) => _ok(
+        ObjectEnvelope.create(
+          id: source.id,
+          typeKey: source.typeKey,
+          envelopeVersion: source.envelopeVersion,
+          typeSchemaVersion: source.typeSchemaVersion,
+          transform: transform,
+          visible: source.visible,
+          locked: source.locked,
+          payload: payload.encode(),
+          extensionData: source.extensionData,
+        ),
+      );
+      AtomicObjectReplacementRequest request(
+        ObjectEnvelope candidate, {
+        TextBoxResizeTransformEvidence? evidence,
+      }) => _ok(
+        AtomicObjectReplacementRequest.create(
+          documentId: root.id,
+          metadata: phase3Metadata(correlation: 993),
+          preconditions: preconditions,
+          targetIds: [source.id],
+          replacements: [candidate],
+          changeCategories: const ObjectReplacementChangeCategories(
+            geometry: true,
+            appearance: false,
+            text: false,
+            metadata: false,
+          ),
+          textBoxResizeTransform: evidence,
+        ),
+      );
+      void expectRejected(AtomicObjectReplacementRequest candidate) {
+        final result = coordinator.execute(candidate);
+        expect(result, isA<Err<CommandCommit, CommandFailure>>());
+        expect('$result', isNot(contains(secret)));
+        expect('$candidate', isNot(contains(secret)));
+        expect('${candidate.textBoxResizeTransform}', isNot(contains(secret)));
+        final current = coordinator.snapshot;
+        expect(current.root, same(initial.root));
+        expect(current.revisions, initial.revisions);
+        expect(current.currentContentIdentity, initial.currentContentIdentity);
+        expect(current.savedContentIdentity, initial.savedContentIdentity);
+        expect(current.isDirty, initial.isDirty);
+        expect(current.canUndo, initial.canUndo);
+        expect(current.canRedo, initial.canRedo);
+        expect(coordinator.retainedHistoryCount, initialHistory);
+        expect(observerCalls, 0);
+        expect(generator.calls, initialUuidCalls);
+        expect(selection.state, same(initialSelection));
+      }
+
+      void expectTextRequestRejected(TextBoxResizeTransformEvidence evidence) {
+        final result = TextObjectEditRequest.replace(
+          documentId: root.id,
+          source: source,
+          payload: afterPayload,
+          limits: _textLimits,
+          layoutEngine: definition.layoutEngine,
+          metadata: phase3Metadata(correlation: 998),
+          preconditions: preconditions,
+          changeCategories: ObjectReplacementChangeCategories(
+            geometry: resizeSemantics.geometry,
+            appearance: resizeSemantics.appearance,
+            text: resizeSemantics.text,
+            metadata: resizeSemantics.metadata,
+          ),
+          textBoxResizeTransform: evidence,
+        );
+        expect(
+          result,
+          isA<Err<AtomicObjectReplacementRequest, StructuredFailure>>(),
+        );
+        expect('$result', isNot(contains(secret)));
+      }
+
+      final missingEvidence = TextObjectEditRequest.replace(
+        documentId: root.id,
+        source: source,
+        payload: afterPayload,
+        limits: _textLimits,
+        layoutEngine: definition.layoutEngine,
+        metadata: phase3Metadata(correlation: 999),
+        preconditions: preconditions,
+        changeCategories: ObjectReplacementChangeCategories(
+          geometry: resizeSemantics.geometry,
+          appearance: resizeSemantics.appearance,
+          text: resizeSemantics.text,
+          metadata: resizeSemantics.metadata,
+        ),
+      );
+      expect(
+        missingEvidence,
+        isA<Err<AtomicObjectReplacementRequest, StructuredFailure>>(),
+      );
+      expect('$missingEvidence', isNot(contains(secret)));
+
+      final movement = _ok(
+        AffineTransform2D.fromOperation(
+          TranslationTransformOperation2D(_vector(17, 19)),
+        ),
+      );
+      final rotation = _ok(
+        AffineTransform2D.fromOperation(
+          _ok(
+            RotationTransformOperation2D.create(
+              radians: .3,
+              pivot: _point(0, 0),
+            ),
+          ),
+        ),
+      );
+      final scale = _ok(
+        AffineTransform2D.fromOperation(
+          _ok(
+            ScaleTransformOperation2D.create(
+              scaleX: 1.5,
+              scaleY: .75,
+              pivot: _point(0, 0),
+            ),
+          ),
+        ),
+      );
+      final skew = _ok(
+        AffineTransform2D.restoreFromStorage([1, .25, 0, 1, 0, 0]),
+      );
+      expect(
+        AffineTransform2D.restoreFromStorage([-1, 0, 0, 1, 0, 0]),
+        isA<Err<AffineTransform2D, StructuredFailure>>(),
+      );
+
+      final ordinary = request(replacement(beforePayload, movement));
+      expect(ordinary.textBoxResizeTransform, isNull);
+      expectRejected(ordinary);
+      for (final arbitrary in [movement, rotation, scale, skew]) {
+        final evidence = TextBoxResizeTransformEvidence.create(
+          preservedAnchor: TextBoxResizePreservedAnchor.topLeft,
+          replacementTransform: arbitrary,
+        );
+        expectTextRequestRejected(evidence);
+        expectRejected(
+          request(replacement(afterPayload, arbitrary), evidence: evidence),
+        );
+      }
+      final mismatched = _ok(
+        AffineTransform2D.fromOperation(
+          TranslationTransformOperation2D(_vector(-39, 0)),
+        ),
+      );
+      final mismatchedEvidence = TextBoxResizeTransformEvidence.create(
+        preservedAnchor: TextBoxResizePreservedAnchor.topRight,
+        replacementTransform: mismatched,
+      );
+      expectTextRequestRejected(mismatchedEvidence);
+      expectRejected(
+        request(
+          replacement(afterPayload, mismatched),
+          evidence: mismatchedEvidence,
+        ),
+      );
+    },
+  );
+
+  test('rotated Text resize permits only exact local anchor translation', () {
+    final before = _textPayload(['rotated resize']);
+    final after = _resizedTextPayload(
+      before,
+      width: before.intrinsicWidth - 30,
+      height: before.intrinsicHeight! - 15,
+    );
+    final rotation = _ok(
+      AffineTransform2D.fromOperation(
+        _ok(
+          RotationTransformOperation2D.create(radians: .4, pivot: _point(0, 0)),
+        ),
+      ),
+    );
+    final source = testObject(
+      id: 994,
+      typeKey: textObjectTypeKey,
+      schemaVersion: textSchemaVersion,
+      payload: before.encode(),
+      transform: rotation,
+    );
+    final localTranslation = _ok(
+      AffineTransform2D.fromOperation(
+        TranslationTransformOperation2D(_vector(30, 15)),
+      ),
+    );
+    final expected = _ok(localTranslation.then(source.transform));
+    final evidence = TextBoxResizeTransformEvidence.create(
+      preservedAnchor: TextBoxResizePreservedAnchor.bottomRight,
+      replacementTransform: expected,
+    );
+    final definition = TextObjectTypeDefinition(
+      _textLimits,
+      FlutterTextLayoutEngine(_textLimits),
+    );
+    final root = testNotebook(
+      sections: [
+        testSection(
+          pages: [
+            testPage(
+              layers: [
+                testContentLayer(objects: [source]),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+    final coordinator = _coordinatorFor(root, testRegistry([definition]));
+    final snapshot = coordinator.snapshot;
+    final layer = root.pages.single.layers.single;
+    final semantics = _ok(
+      definition.classifyPayloadChange(
+        before.encode(),
+        after.encode(),
+        textSchemaVersion,
+      ),
+    );
+    final request = _ok(
+      TextObjectEditRequest.replace(
+        documentId: root.id,
+        source: source,
+        payload: after,
+        limits: _textLimits,
+        layoutEngine: definition.layoutEngine,
+        metadata: phase3Metadata(correlation: 995),
+        preconditions: RevisionPreconditions(
+          objects: {source.id: snapshot.revisions.objects[source.id]!},
+          layerMembership: {
+            layer.id: snapshot.revisions.layerMembership[layer.id]!,
+          },
+        ),
+        changeCategories: ObjectReplacementChangeCategories(
+          geometry: semantics.geometry,
+          appearance: semantics.appearance,
+          text: semantics.text,
+          metadata: semantics.metadata,
+        ),
+        textBoxResizeTransform: evidence,
+      ),
+    );
+    final commit = _ok(coordinator.execute(request));
+    expect(commit.change.flags.geometry, isTrue);
+    expect(commit.change.movedObjectIds, contains(source.id));
+    final resized =
+        coordinator.snapshot.root.pages.single.layers.single.objects.single;
+    expect(resized.transform, expected);
+    expect(
+      resized.transform.storageCoefficients.take(4),
+      source.transform.storageCoefficients.take(4),
+    );
+    final oldAnchor = _ok(
+      source.transform.applyToPoint(
+        _point(before.intrinsicWidth, before.intrinsicHeight!),
+      ),
+    );
+    final newAnchor = _ok(
+      resized.transform.applyToPoint(
+        _point(after.intrinsicWidth, after.intrinsicHeight!),
+      ),
+    );
+    expect(newAnchor, oldAnchor);
+  });
+
+  test('capability-ineligible Text resize is rejected by coordinator', () {
+    final before = _textPayload(['restricted']);
+    final after = _resizedTextPayload(
+      before,
+      width: before.intrinsicWidth + 20,
+    );
+    final source = testObject(
+      id: 996,
+      typeKey: textObjectTypeKey,
+      schemaVersion: textSchemaVersion,
+      payload: before.encode(),
+    );
+    final delegate = TextObjectTypeDefinition(
+      _textLimits,
+      FlutterTextLayoutEngine(_textLimits),
+    );
+    final restricted = _RestrictedTextResizeDefinition(delegate);
+    final root = testNotebook(
+      sections: [
+        testSection(
+          pages: [
+            testPage(
+              layers: [
+                testContentLayer(objects: [source]),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+    final coordinator = _coordinatorFor(root, testRegistry([restricted]));
+    final snapshot = coordinator.snapshot;
+    final layer = root.pages.single.layers.single;
+    final semantics = _ok(
+      delegate.classifyPayloadChange(
+        before.encode(),
+        after.encode(),
+        textSchemaVersion,
+      ),
+    );
+    final request = _ok(
+      TextObjectEditRequest.replace(
+        documentId: root.id,
+        source: source,
+        payload: after,
+        limits: _textLimits,
+        layoutEngine: delegate.layoutEngine,
+        metadata: phase3Metadata(correlation: 997),
+        preconditions: RevisionPreconditions(
+          objects: {source.id: snapshot.revisions.objects[source.id]!},
+          layerMembership: {
+            layer.id: snapshot.revisions.layerMembership[layer.id]!,
+          },
+        ),
+        changeCategories: ObjectReplacementChangeCategories(
+          geometry: semantics.geometry,
+          appearance: semantics.appearance,
+          text: semantics.text,
+          metadata: semantics.metadata,
+        ),
+        textBoxResizeTransform: TextBoxResizeTransformEvidence.create(
+          preservedAnchor: TextBoxResizePreservedAnchor.topLeft,
+          replacementTransform: source.transform,
+        ),
+      ),
+    );
+    expect(
+      coordinator.execute(request),
+      isA<Err<CommandCommit, CommandFailure>>(),
+    );
+    expect(coordinator.snapshot.root, same(root));
+  });
+
   test('all built-ins register and exact package storage reopens', () {
     final shape = _shapeObject(701);
     final text = testObject(
@@ -5067,6 +5973,113 @@ void main() {
       root,
     );
   });
+}
+
+TextPayload _resizedTextPayload(
+  TextPayload source, {
+  required double width,
+  double? height,
+}) => _ok(
+  TextPayload.create(
+    paragraphs: source.paragraphs,
+    defaultCharacterStyle: source.defaultCharacterStyle,
+    defaultParagraphStyle: source.defaultParagraphStyle,
+    boxMode: source.boxMode,
+    intrinsicWidth: width,
+    intrinsicHeight: height ?? source.intrinsicHeight,
+    padding: source.padding,
+    verticalAlignment: source.verticalAlignment,
+    overflowPolicy: source.overflowPolicy,
+    limits: _textLimits,
+    unknownFields: source.unknownFields,
+  ),
+);
+
+Vector2 _vector(double x, double y) => _ok(Vector2.create(x: x, y: y));
+
+final class _BoundaryCountingUuidGenerator implements UuidGenerator {
+  int calls = 0;
+
+  @override
+  Result<UuidIdentifier, StructuredFailure> generateV4() {
+    calls += 1;
+    return Ok(testUuid(980 + calls));
+  }
+}
+
+final class _RestrictedTextResizeDefinition
+    implements
+        ObjectTypeDefinition,
+        ObjectPayloadChangeClassifier,
+        IntrinsicBoxResizeValidator {
+  const _RestrictedTextResizeDefinition(this.delegate);
+
+  final TextObjectTypeDefinition delegate;
+
+  @override
+  ObjectTypeKey get typeKey => delegate.typeKey;
+
+  @override
+  List<SchemaVersion> get supportedSchemaVersions =>
+      delegate.supportedSchemaVersions;
+
+  @override
+  ObjectTypeCapabilities get capabilities => const ObjectTypeCapabilities(
+    hasIntrinsicGeometry: true,
+    discoversResourceReferences: false,
+    supportsScopedDuplication: true,
+    selectable: true,
+  );
+
+  @override
+  List<ObjectPayloadMigrationContract> get migrations => delegate.migrations;
+
+  @override
+  ValidationReport validatePayload(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => delegate.validatePayload(payload, schemaVersion);
+
+  @override
+  Result<Rect2, StructuredFailure> intrinsicGeometry(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => delegate.intrinsicGeometry(payload, schemaVersion);
+
+  @override
+  Result<List<ResourceReference>, StructuredFailure> resourceReferences(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+  ) => delegate.resourceReferences(payload, schemaVersion);
+
+  @override
+  Result<PreservedData, StructuredFailure> duplicatePayload(
+    PreservedData payload,
+    SchemaVersion schemaVersion,
+    IdentityRemapping remapping,
+  ) => delegate.duplicatePayload(payload, schemaVersion, remapping);
+
+  @override
+  Result<ObjectPayloadChangeSemantics, StructuredFailure> classifyPayloadChange(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  ) => delegate.classifyPayloadChange(before, after, schemaVersion);
+
+  @override
+  Result<IntrinsicBoxResizeChange, StructuredFailure>
+  validateIntrinsicBoxResize(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  ) => delegate.validateIntrinsicBoxResize(before, after, schemaVersion);
+
+  @override
+  Result<bool, StructuredFailure> changesIntrinsicBoxDimensions(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  ) => delegate.changesIntrinsicBoxDimensions(before, after, schemaVersion);
 }
 
 ShapeStyle _shapeStyle({
@@ -5299,6 +6312,7 @@ TextPayload _configuredTextPayload({
   TextBoxMode mode = TextBoxMode.fixedWidthAutoHeight,
   TextOverflowPolicy overflow = TextOverflowPolicy.visible,
   TextVerticalAlignment alignment = TextVerticalAlignment.top,
+  TextAlignment horizontalAlignment = TextAlignment.left,
   double width = 120,
   double height = 80,
   PreservedMap? payloadUnknown,
@@ -5318,7 +6332,7 @@ TextPayload _configuredTextPayload({
   );
   final paragraphStyle = _ok(
     TextParagraphStyle.create(
-      alignment: TextAlignment.left,
+      alignment: horizontalAlignment,
       direction: TextParagraphDirection.ltr,
       lineHeight: lineHeight,
       languageHint: languageHint,

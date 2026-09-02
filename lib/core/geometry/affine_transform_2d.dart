@@ -117,14 +117,24 @@ final class AffineTransform2D {
         :final scaleX,
         :final scaleY,
         :final pivot,
+        :final orientationRadians,
       ):
+        final cosine = math.cos(orientationRadians);
+        final sine = math.sin(orientationRadians);
+        final cosineSquared = cosine * cosine;
+        final sineSquared = sine * sine;
+        final cross = cosine * sine;
+        final m00 = scaleX * cosineSquared + scaleY * sineSquared;
+        final m01 = (scaleX - scaleY) * cross;
+        final m10 = m01;
+        final m11 = scaleX * sineSquared + scaleY * cosineSquared;
         return _validated(
-          m00: scaleX,
-          m01: 0,
-          m10: 0,
-          m11: scaleY,
-          tx: pivot.x * (1 - scaleX),
-          ty: pivot.y * (1 - scaleY),
+          m00: m00,
+          m01: m01,
+          m10: m10,
+          m11: m11,
+          tx: pivot.x - m00 * pivot.x - m01 * pivot.y,
+          ty: pivot.y - m10 * pivot.x - m11 * pivot.y,
         );
     }
   }
