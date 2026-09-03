@@ -167,6 +167,109 @@ final class ObjectPayloadChangeSemantics {
   final bool metadata;
 }
 
+/// Validated intrinsic box dimensions for a pure box-resize payload change.
+final class IntrinsicBoxResizeChange {
+  IntrinsicBoxResizeChange._({
+    required this.beforeWidth,
+    required this.beforeHeight,
+    required this.afterWidth,
+    required this.afterHeight,
+  });
+
+  /// Creates finite positive, dimension-changing box evidence.
+  static Result<IntrinsicBoxResizeChange, StructuredFailure> create({
+    required double beforeWidth,
+    required double? beforeHeight,
+    required double afterWidth,
+    required double? afterHeight,
+  }) {
+    final heightsMatch = (beforeHeight == null) == (afterHeight == null);
+    if (!beforeWidth.isFinite ||
+        beforeWidth <= 0 ||
+        !afterWidth.isFinite ||
+        afterWidth <= 0 ||
+        !heightsMatch ||
+        (beforeHeight != null &&
+            (!beforeHeight.isFinite || beforeHeight <= 0)) ||
+        (afterHeight != null && (!afterHeight.isFinite || afterHeight <= 0)) ||
+        beforeWidth == afterWidth && beforeHeight == afterHeight) {
+      return Err(_definitionMetadataFailure());
+    }
+    return Ok(
+      IntrinsicBoxResizeChange._(
+        beforeWidth: beforeWidth,
+        beforeHeight: beforeHeight,
+        afterWidth: afterWidth,
+        afterHeight: afterHeight,
+      ),
+    );
+  }
+
+  final double beforeWidth;
+  final double? beforeHeight;
+  final double afterWidth;
+  final double? afterHeight;
+
+  @override
+  String toString() => '$runtimeType(validated: true)';
+}
+
+/// Optional trusted behavior for validating a pure intrinsic box resize.
+abstract interface class IntrinsicBoxResizeValidator {
+  /// Extracts authoritative intrinsic box dimensions from one valid payload.
+  Result<IntrinsicBoxResizeChange, StructuredFailure>
+  validateIntrinsicBoxResize(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  );
+
+  /// Reports whether two valid payloads change intrinsic box dimensions.
+  Result<bool, StructuredFailure> changesIntrinsicBoxDimensions(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  );
+}
+
+/// Horizontal content anchor retained by an intrinsic visible-content fit.
+enum IntrinsicHorizontalAnchor { left, center, right }
+
+/// Vertical content anchor retained by an intrinsic visible-content fit.
+enum IntrinsicVerticalAnchor { top, center, bottom }
+
+/// Independently validated evidence for one canonical visible-content fit.
+final class IntrinsicVisibleContentFitChange {
+  const IntrinsicVisibleContentFitChange({
+    required this.resize,
+    required this.horizontalAnchor,
+    required this.verticalAnchor,
+  });
+
+  /// Authoritative before/after intrinsic dimensions.
+  final IntrinsicBoxResizeChange resize;
+
+  /// Horizontal content anchor that must remain fixed in Page space.
+  final IntrinsicHorizontalAnchor horizontalAnchor;
+
+  /// Vertical content anchor that must remain fixed in Page space.
+  final IntrinsicVerticalAnchor verticalAnchor;
+
+  @override
+  String toString() => '$runtimeType(validated: true)';
+}
+
+/// Optional trusted behavior for validating a canonical visible-content fit.
+abstract interface class IntrinsicVisibleContentFitValidator {
+  /// Recomputes the canonical fit and its required content anchor.
+  Result<IntrinsicVisibleContentFitChange, StructuredFailure>
+  validateIntrinsicVisibleContentFit(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  );
+}
+
 /// Optional Object-type behavior that classifies a before/after payload pair.
 abstract interface class ObjectPayloadChangeClassifier {
   /// Classifies one valid same-schema payload replacement without mutation.
@@ -193,6 +296,8 @@ final class SupportedObjectResolution extends ObjectResolution {
     required this.definition,
     required this.report,
     required this.supportsPayloadChangeClassification,
+    required this.supportsIntrinsicBoxResizeValidation,
+    required this.supportsIntrinsicVisibleContentFitValidation,
   });
 
   /// The resolved immutable definition.
@@ -203,6 +308,12 @@ final class SupportedObjectResolution extends ObjectResolution {
 
   /// Whether the captured definition can classify same-schema payload edits.
   final bool supportsPayloadChangeClassification;
+
+  /// Whether the captured definition validates pure intrinsic box resizes.
+  final bool supportsIntrinsicBoxResizeValidation;
+
+  /// Whether the captured definition validates canonical content fitting.
+  final bool supportsIntrinsicVisibleContentFitValidation;
 }
 
 /// An Object whose type key is not registered.
@@ -310,6 +421,10 @@ final class ObjectRegistry {
         supportsPayloadChangeClassification:
             (definition as _RegisteredObjectTypeDefinition)
                 .supportsPayloadChangeClassification,
+        supportsIntrinsicBoxResizeValidation:
+            definition.supportsIntrinsicBoxResizeValidation,
+        supportsIntrinsicVisibleContentFitValidation:
+            definition.supportsIntrinsicVisibleContentFitValidation,
       );
     } on Object {
       return UnavailableObjectBehaviorResolution(envelope);
@@ -321,7 +436,11 @@ final class ObjectRegistry {
 }
 
 final class _RegisteredObjectTypeDefinition
-    implements ObjectTypeDefinition, ObjectPayloadChangeClassifier {
+    implements
+        ObjectTypeDefinition,
+        ObjectPayloadChangeClassifier,
+        IntrinsicBoxResizeValidator,
+        IntrinsicVisibleContentFitValidator {
   _RegisteredObjectTypeDefinition._({
     required ObjectTypeDefinition delegate,
     required this.typeKey,
@@ -329,6 +448,8 @@ final class _RegisteredObjectTypeDefinition
     required this.capabilities,
     required this.migrations,
     required this.supportsPayloadChangeClassification,
+    required this.supportsIntrinsicBoxResizeValidation,
+    required this.supportsIntrinsicVisibleContentFitValidation,
   }) : _delegate = delegate;
 
   factory _RegisteredObjectTypeDefinition.capture(
@@ -372,6 +493,10 @@ final class _RegisteredObjectTypeDefinition
       migrations: migrations,
       supportsPayloadChangeClassification:
           definition is ObjectPayloadChangeClassifier,
+      supportsIntrinsicBoxResizeValidation:
+          definition is IntrinsicBoxResizeValidator,
+      supportsIntrinsicVisibleContentFitValidation:
+          definition is IntrinsicVisibleContentFitValidator,
     );
   }
 
@@ -390,6 +515,10 @@ final class _RegisteredObjectTypeDefinition
   final List<ObjectPayloadMigrationContract> migrations;
 
   final bool supportsPayloadChangeClassification;
+
+  final bool supportsIntrinsicBoxResizeValidation;
+
+  final bool supportsIntrinsicVisibleContentFitValidation;
 
   @override
   ValidationReport validatePayload(
@@ -436,6 +565,83 @@ final class _RegisteredObjectTypeDefinition
         schemaVersion,
       );
       return result is Ok<ObjectPayloadChangeSemantics, StructuredFailure>
+          ? result
+          : Err(_definitionMetadataFailure());
+    } on Object {
+      return Err(_definitionMetadataFailure());
+    }
+  }
+
+  @override
+  Result<IntrinsicBoxResizeChange, StructuredFailure>
+  validateIntrinsicBoxResize(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  ) {
+    final delegate = _delegate;
+    final validator = delegate is IntrinsicBoxResizeValidator
+        ? delegate as IntrinsicBoxResizeValidator
+        : null;
+    if (validator == null) return Err(_definitionMetadataFailure());
+    try {
+      final result = validator.validateIntrinsicBoxResize(
+        before,
+        after,
+        schemaVersion,
+      );
+      return result is Ok<IntrinsicBoxResizeChange, StructuredFailure>
+          ? result
+          : Err(_definitionMetadataFailure());
+    } on Object {
+      return Err(_definitionMetadataFailure());
+    }
+  }
+
+  @override
+  Result<bool, StructuredFailure> changesIntrinsicBoxDimensions(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  ) {
+    final delegate = _delegate;
+    final validator = delegate is IntrinsicBoxResizeValidator
+        ? delegate as IntrinsicBoxResizeValidator
+        : null;
+    if (validator == null) return Err(_definitionMetadataFailure());
+    try {
+      final result = validator.changesIntrinsicBoxDimensions(
+        before,
+        after,
+        schemaVersion,
+      );
+      return result is Ok<bool, StructuredFailure>
+          ? result
+          : Err(_definitionMetadataFailure());
+    } on Object {
+      return Err(_definitionMetadataFailure());
+    }
+  }
+
+  @override
+  Result<IntrinsicVisibleContentFitChange, StructuredFailure>
+  validateIntrinsicVisibleContentFit(
+    PreservedData before,
+    PreservedData after,
+    SchemaVersion schemaVersion,
+  ) {
+    final delegate = _delegate;
+    final validator = delegate is IntrinsicVisibleContentFitValidator
+        ? delegate as IntrinsicVisibleContentFitValidator
+        : null;
+    if (validator == null) return Err(_definitionMetadataFailure());
+    try {
+      final result = validator.validateIntrinsicVisibleContentFit(
+        before,
+        after,
+        schemaVersion,
+      );
+      return result is Ok<IntrinsicVisibleContentFitChange, StructuredFailure>
           ? result
           : Err(_definitionMetadataFailure());
     } on Object {

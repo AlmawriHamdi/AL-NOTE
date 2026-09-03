@@ -52,7 +52,7 @@ final class TextHitTestingDefinition extends _BoundsHitTestingDefinition {
     if (payload is! Ok<TextPayload, StructuredFailure>) return null;
     return layoutEngine
         .layout(TextLayoutRequest(payload: payload.value))
-        .fold<Rect2?>(onOk: (value) => value.visualBounds, onErr: (_) => null);
+        .fold<Rect2?>(onOk: (value) => value.logicalBounds, onErr: (_) => null);
   }
 }
 

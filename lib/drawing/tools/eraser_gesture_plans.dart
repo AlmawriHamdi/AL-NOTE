@@ -51,6 +51,7 @@ final class EraserGestureUpdate {
   EraserGestureUpdate._(
     Iterable<ObjectId> changedObjectIds, {
     required this.newlyAffectedStrokeCount,
+    required this.limitReached,
   }) : changedObjectIds = Set<ObjectId>.unmodifiable(changedObjectIds);
 
   /// Objects whose cached transient rendering must be refreshed.
@@ -58,6 +59,9 @@ final class EraserGestureUpdate {
 
   /// Strokes first affected by this point or swept segment.
   final int newlyAffectedStrokeCount;
+
+  /// Whether this update reached or observed the bounded target/operation cap.
+  final bool limitReached;
 }
 
 /// Prepared whole-stroke Eraser state that decodes and resolves geometry once.
@@ -238,6 +242,8 @@ final class WholeEraseGesturePlan {
   int _geometryCheckCount = 0;
   int _geometryElementExaminationCount = 0;
   int _affectedCount = 0;
+  bool _limitReached = false;
+  int _rejectedExcessTargetCount = 0;
 
   /// Accepted pointer-point count.
   int get pointCount => _pointCount;
@@ -257,6 +263,17 @@ final class WholeEraseGesturePlan {
   /// Number of unique affected Strokes.
   int get affectedStrokeCount => _affectedCount;
 
+  /// Whether no additional targets may be admitted by this gesture.
+  bool get limitReached => _limitReached;
+
+  /// Number of distinct excess targets observed while admitting candidates.
+  int get rejectedExcessTargetCount => _rejectedExcessTargetCount;
+
+  /// Current number of Object operations in the terminal command.
+  int get commandOperationCount =>
+      _objects.where((value) => value.erased.isNotEmpty).length +
+      _wholeRemovalCandidates.where((value) => value.affected).length;
+
   /// Whether [latest] still has the captured content identity.
   bool isCurrent(DocumentCoordinatorSnapshot latest) =>
       latest.currentContentIdentity == document.currentContentIdentity;
@@ -272,7 +289,8 @@ final class WholeEraseGesturePlan {
     final sweptBounds = _sweptBounds(first, point, radius);
     final changed = <ObjectId>{};
     var newlyAffected = 0;
-    for (final candidate in _candidates) {
+    for (final candidate
+        in _limitReached ? const <_WholeCandidate>[] : _candidates) {
       if (candidate.affected) continue;
       if (sweptBounds != null &&
           !_boundsIntersect(candidate.geometry.bounds, sweptBounds))
@@ -288,8 +306,12 @@ final class WholeEraseGesturePlan {
       }
       _geometryElementExaminationCount += query.value.examinedElements;
       if (!query.value.intersects) continue;
-      if (_affectedCount >= maximumTargets) {
-        return Err(_failure('whole_target_limit'));
+      final addsOperation = candidate.owner.erased.isEmpty;
+      if (_affectedCount >= maximumTargets ||
+          (addsOperation && commandOperationCount >= maximumOperations)) {
+        _limitReached = true;
+        _rejectedExcessTargetCount += 1;
+        break;
       }
       candidate.affected = true;
       candidate.owner.erased.add(candidate.stroke.id);
@@ -297,7 +319,10 @@ final class WholeEraseGesturePlan {
       newlyAffected += 1;
       changed.add(candidate.owner.object.id);
     }
-    for (final candidate in _wholeRemovalCandidates) {
+    for (final candidate
+        in _limitReached
+            ? const <_WholeRemovalCandidate>[]
+            : _wholeRemovalCandidates) {
       if (candidate.affected ||
           sweptBounds == null ||
           !_boundsIntersect(candidate.pageBounds, sweptBounds)) {
@@ -314,24 +339,26 @@ final class WholeEraseGesturePlan {
         return Err(precise.error);
       }
       if (!(precise as Ok<bool, StructuredFailure>).value) continue;
-      if (_affectedCount >= maximumTargets) {
-        return Err(_failure('whole_target_limit'));
+      if (_affectedCount >= maximumTargets ||
+          commandOperationCount >= maximumOperations) {
+        _limitReached = true;
+        _rejectedExcessTargetCount += 1;
+        break;
       }
       candidate.affected = true;
       _affectedCount += 1;
       newlyAffected += 1;
       changed.add(candidate.object.id);
     }
-    if (_objects.where((value) => value.erased.isNotEmpty).length +
-            _wholeRemovalCandidates.where((value) => value.affected).length >
-        maximumOperations) {
-      return Err(_failure('eraser_operation_limit'));
-    }
     _lastPoint = point;
     _pointCount += 1;
     _segmentCount += 1;
     return Ok(
-      EraserGestureUpdate._(changed, newlyAffectedStrokeCount: newlyAffected),
+      EraserGestureUpdate._(
+        changed,
+        newlyAffectedStrokeCount: newlyAffected,
+        limitReached: _limitReached,
+      ),
     );
   }
 

@@ -125,6 +125,154 @@ final class PenPreview {
 /// Closed terminal state for a Pen session.
 enum PenSessionState { active, requestReady, cancelled, rejected }
 
+/// Immutable root-bound collision evidence reused across consecutive Pen
+/// additions so Pen request construction does not rescan unchanged content.
+/// The mutation coordinator remains the final collision authority and still
+/// performs its generic collection-edit validation before publication.
+final class PenDocumentIdentitySnapshot {
+  PenDocumentIdentitySnapshot._({
+    required this.root,
+    required this.handwritingLimits,
+    required this.maximumIdentities,
+    required Set<String> occupied,
+  }) : _occupied = Set<String>.unmodifiable(occupied);
+
+  /// Captures every structural, Object, and handwriting Stroke identity once.
+  static Result<PenDocumentIdentitySnapshot, StructuredFailure> capture({
+    required DocumentRoot root,
+    required HandwritingLimits handwritingLimits,
+    required int maximumIdentities,
+  }) {
+    if (maximumIdentities <= 0 || maximumIdentities > Revision.maximumValue) {
+      return Err(_failure('invalid_identity_limit'));
+    }
+    final occupied = <String>{};
+    bool add(String value) {
+      if (occupied.contains(value)) return false;
+      if (occupied.length >= maximumIdentities) return false;
+      occupied.add(value);
+      return true;
+    }
+
+    if (!add(root.id.uuid.value)) return Err(_failure('identity_collision'));
+    if (root is NotebookDocument) {
+      for (final section in root.sections) {
+        if (!add(section.id.uuid.value)) {
+          return Err(_failure('identity_collision'));
+        }
+      }
+    }
+    for (final page in root.pages) {
+      if (!add(page.id.uuid.value)) return Err(_failure('identity_collision'));
+      for (final layer in page.layers) {
+        if (!add(layer.id.uuid.value)) {
+          return Err(_failure('identity_collision'));
+        }
+        for (final object in layer.objects) {
+          if (!add(object.id.uuid.value)) {
+            return Err(_failure('identity_collision'));
+          }
+          if (object.typeKey != handwritingObjectTypeKey ||
+              object.typeSchemaVersion != handwritingSchemaVersion) {
+            continue;
+          }
+          final payload = HandwritingPayload.decode(
+            object.payload,
+            limits: handwritingLimits,
+          );
+          if (payload is! Ok<HandwritingPayload, StructuredFailure>) {
+            return Err(_failure('invalid_pen_document'));
+          }
+          for (final stroke in payload.value.strokes) {
+            if (!add(stroke.id.uuid.value)) {
+              return Err(_failure('identity_collision'));
+            }
+          }
+        }
+      }
+    }
+    return Ok(
+      PenDocumentIdentitySnapshot._(
+        root: root,
+        handwritingLimits: handwritingLimits,
+        maximumIdentities: maximumIdentities,
+        occupied: occupied,
+      ),
+    );
+  }
+
+  /// Exact immutable root represented by this snapshot.
+  final DocumentRoot root;
+
+  /// Decoder limits used to validate added handwriting payloads.
+  final HandwritingLimits handwritingLimits;
+
+  /// Explicit retained identity ceiling.
+  final int maximumIdentities;
+
+  final Set<String> _occupied;
+
+  /// Retained identity count for deterministic bounded-work evidence.
+  int get retainedIdentityCount => _occupied.length;
+
+  bool contains(UuidIdentifier uuid) => _occupied.contains(uuid.value);
+
+  /// Advances after one proven Pen addition without traversing old Objects.
+  Result<PenDocumentIdentitySnapshot, StructuredFailure> advance({
+    required DocumentRoot before,
+    required DocumentRoot after,
+    required AtomicObjectCollectionEditRequest request,
+  }) {
+    if (!identical(root, before) ||
+        request.documentId != before.id ||
+        after.id != before.id ||
+        request.additions.length != 1 ||
+        request.removals.isNotEmpty ||
+        request.replacements.isNotEmpty ||
+        request.resourceAdditions.isNotEmpty) {
+      return Err(_failure('stale_identity_snapshot'));
+    }
+    final addition = request.additions.single.object;
+    if (addition.typeKey != handwritingObjectTypeKey ||
+        addition.typeSchemaVersion != handwritingSchemaVersion) {
+      return Err(_failure('invalid_identity_increment'));
+    }
+    final payload = HandwritingPayload.decode(
+      addition.payload,
+      limits: handwritingLimits,
+    );
+    if (payload is! Ok<HandwritingPayload, StructuredFailure>) {
+      return Err(_failure('invalid_identity_increment'));
+    }
+    final additions = <String>{
+      addition.id.uuid.value,
+      request.metadata.correlationId.uuid.value,
+      ...payload.value.strokes.map((stroke) => stroke.id.uuid.value),
+    };
+    if (additions.length != payload.value.strokes.length + 2 ||
+        additions.any(_occupied.contains) ||
+        _occupied.length > maximumIdentities - additions.length) {
+      return Err(_failure('identity_collision'));
+    }
+    final afterObject = after.pages
+        .expand((page) => page.layers)
+        .expand((layer) => layer.objects)
+        .where((object) => object.id == addition.id)
+        .firstOrNull;
+    if (afterObject != addition) {
+      return Err(_failure('invalid_identity_increment'));
+    }
+    return Ok(
+      PenDocumentIdentitySnapshot._(
+        root: after,
+        handwritingLimits: handwritingLimits,
+        maximumIdentities: maximumIdentities,
+        occupied: {..._occupied, ...additions},
+      ),
+    );
+  }
+}
+
 /// One isolated Pen gesture that can only produce a Command request.
 final class PenGestureSession {
   PenGestureSession._({
@@ -139,6 +287,7 @@ final class PenGestureSession {
     required this.handwritingLimits,
     required this.uuidGenerator,
     required this.maximumCommandOperations,
+    required this.identitySnapshot,
   });
 
   /// Begins a one-primary-pointer session and captures every authoritative dependency.
@@ -153,11 +302,16 @@ final class PenGestureSession {
     required HandwritingLimits handwritingLimits,
     required UuidGenerator uuidGenerator,
     required int maximumCommandOperations,
+    PenDocumentIdentitySnapshot? identitySnapshot,
   }) {
     if (down.phase != PointerPhase.down || maximumSamples <= 0)
       return Err(_failure('invalid_pen_start'));
     if (document.root.id != document.revisions.documentId) {
       return Err(_failure('inconsistent_pen_document'));
+    }
+    if (identitySnapshot != null &&
+        !identical(identitySnapshot.root, document.root)) {
+      return Err(_failure('stale_identity_snapshot'));
     }
     final pageRevision = document.revisions.pages[pageId],
         membership = document.revisions.layerMembership[layerId];
@@ -187,6 +341,7 @@ final class PenGestureSession {
       handwritingLimits: handwritingLimits,
       uuidGenerator: uuidGenerator,
       maximumCommandOperations: maximumCommandOperations,
+      identitySnapshot: identitySnapshot,
     );
     return session._append(down).map((_) => session);
   }
@@ -223,6 +378,9 @@ final class PenGestureSession {
 
   /// Command operation ceiling.
   final int maximumCommandOperations;
+
+  /// Optional prepared collision evidence supplied by the UI owner.
+  final PenDocumentIdentitySnapshot? identitySnapshot;
   final List<StrokeSample> _samples = [];
   PenSessionState _state = PenSessionState.active;
   int? _initialTime;
@@ -240,6 +398,22 @@ final class PenGestureSession {
   PenPreview? get previewTail {
     if (_state != PenSessionState.active || _samples.isEmpty) return null;
     final start = _samples.length > 1 ? _samples.length - 2 : 0;
+    final values = _samples.sublist(start);
+    _previewSampleCopyCount += values.length;
+    return PenPreview._(samples: values, style: preset.style);
+  }
+
+  /// Preview samples added since [acceptedSampleCount], including one shared
+  /// predecessor so a renderer can join the new geometry without replaying the
+  /// complete stroke.
+  PenPreview? previewSince(int acceptedSampleCount) {
+    if (_state != PenSessionState.active ||
+        acceptedSampleCount < 0 ||
+        acceptedSampleCount > _samples.length ||
+        acceptedSampleCount == _samples.length) {
+      return null;
+    }
+    final start = acceptedSampleCount > 0 ? acceptedSampleCount - 1 : 0;
     final values = _samples.sublist(start);
     _previewSampleCopyCount += values.length;
     return PenPreview._(samples: values, style: preset.style);
@@ -338,42 +512,57 @@ final class PenGestureSession {
       _samples.clear();
       return Err(_failure('stale_pen_session'));
     }
-    final occupied = <String>{latestDocument.root.id.uuid.value};
-    if (latestDocument.root is NotebookDocument) {
-      occupied.addAll(
-        (latestDocument.root as NotebookDocument).sections.map(
-          (value) => value.id.uuid.value,
-        ),
-      );
-    }
-    for (final page in latestDocument.root.pages) {
-      occupied.add(page.id.uuid.value);
-      for (final layer in page.layers) {
-        occupied.add(layer.id.uuid.value);
-        for (final object in layer.objects) {
-          occupied.add(object.id.uuid.value);
-          if (object.typeKey == handwritingObjectTypeKey &&
-              object.typeSchemaVersion == handwritingSchemaVersion) {
-            final payload =
-                HandwritingPayload.decode(
-                  object.payload,
-                  limits: handwritingLimits,
-                ).fold<HandwritingPayload?>(
-                  onOk: (value) => value,
-                  onErr: (_) => null,
-                );
-            if (payload == null) {
-              _state = PenSessionState.rejected;
-              return Err(_failure('invalid_pen_document'));
+    final preparedIdentities = identitySnapshot;
+    Set<String>? occupied;
+    if (preparedIdentities != null) {
+      if (!identical(preparedIdentities.root, latestDocument.root)) {
+        _state = PenSessionState.rejected;
+        return Err(_failure('stale_identity_snapshot'));
+      }
+    } else {
+      occupied = <String>{latestDocument.root.id.uuid.value};
+      if (latestDocument.root is NotebookDocument) {
+        occupied.addAll(
+          (latestDocument.root as NotebookDocument).sections.map(
+            (value) => value.id.uuid.value,
+          ),
+        );
+      }
+      for (final page in latestDocument.root.pages) {
+        occupied.add(page.id.uuid.value);
+        for (final layer in page.layers) {
+          occupied.add(layer.id.uuid.value);
+          for (final object in layer.objects) {
+            occupied.add(object.id.uuid.value);
+            if (object.typeKey == handwritingObjectTypeKey &&
+                object.typeSchemaVersion == handwritingSchemaVersion) {
+              final payload =
+                  HandwritingPayload.decode(
+                    object.payload,
+                    limits: handwritingLimits,
+                  ).fold<HandwritingPayload?>(
+                    onOk: (value) => value,
+                    onErr: (_) => null,
+                  );
+              if (payload == null) {
+                _state = PenSessionState.rejected;
+                return Err(_failure('invalid_pen_document'));
+              }
+              occupied.addAll(
+                payload.strokes.map((value) => value.id.uuid.value),
+              );
             }
-            occupied.addAll(
-              payload.strokes.map((value) => value.id.uuid.value),
-            );
           }
         }
       }
     }
     final generated = <String>{};
+    if (preparedIdentities != null &&
+        preparedIdentities.retainedIdentityCount >
+            preparedIdentities.maximumIdentities - 3) {
+      _state = PenSessionState.rejected;
+      return Err(_failure('identity_limit'));
+    }
     final objectUuid = _generateUnique(generated),
         strokeUuid = _generateUnique(generated),
         correlationUuid = _generateUnique(generated);
@@ -381,11 +570,10 @@ final class PenGestureSession {
       _state = PenSessionState.rejected;
       return Err(_failure('uuid_generation_or_collision'));
     }
-    if ([
-      objectUuid,
-      strokeUuid,
-      correlationUuid,
-    ].any((value) => !occupied.add(value.value))) {
+    if ([objectUuid, strokeUuid, correlationUuid].any(
+      (value) =>
+          preparedIdentities?.contains(value) ?? !occupied!.add(value.value),
+    )) {
       _state = PenSessionState.rejected;
       return Err(_failure('uuid_generation_or_collision'));
     }
