@@ -10,10 +10,9 @@ void main() {
         ValidationPathSegment.document,
         ValidationPathSegment.title,
       ];
-      final path =
-          (ValidationPath.fromSegments(source)
-                  as Ok<ValidationPath, StructuredFailure>)
-              .value;
+      final path = (ValidationPath.fromSegments(
+        source,
+      ) as Ok<ValidationPath, StructuredFailure>).value;
 
       source
         ..clear()
@@ -31,14 +30,12 @@ void main() {
 
     test('supports root and child paths with value equality', () {
       final root = _path(<ValidationPathSegment>[]);
-      final child =
-          (root.child(ValidationPathSegment.document)
-                  as Ok<ValidationPath, StructuredFailure>)
-              .value;
-      final nested =
-          (child.child(ValidationPathSegment.title)
-                  as Ok<ValidationPath, StructuredFailure>)
-              .value;
+      final child = (root.child(
+        ValidationPathSegment.document,
+      ) as Ok<ValidationPath, StructuredFailure>).value;
+      final nested = (child.child(
+        ValidationPathSegment.title,
+      ) as Ok<ValidationPath, StructuredFailure>).value;
 
       expect(root.segments, isEmpty);
       expect(
@@ -301,18 +298,19 @@ void main() {
 }
 
 ValidationPath _path(Iterable<ValidationPathSegment> segments) =>
-    (ValidationPath.fromSegments(segments)
-            as Ok<ValidationPath, StructuredFailure>)
-        .value;
+    (ValidationPath.fromSegments(
+      segments,
+    ) as Ok<ValidationPath, StructuredFailure>).value;
 
 ValidationIssue _issue({
   required ValidationIssueCode code,
   required ValidationSeverity severity,
   required ValidationPath path,
-}) =>
-    (ValidationIssue.create(code: code, severity: severity, path: path)
-            as Ok<ValidationIssue, StructuredFailure>)
-        .value;
+}) => (ValidationIssue.create(
+  code: code,
+  severity: severity,
+  path: path,
+) as Ok<ValidationIssue, StructuredFailure>).value;
 
 final class _NonEmptyStringValidator implements Validator<String> {
   @override

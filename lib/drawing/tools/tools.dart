@@ -606,9 +606,8 @@ final class PenGestureSession {
     final identity = AffineTransform2D.fromOperation(
       const IdentityTransformOperation2D(),
     ).fold<AffineTransform2D?>(onOk: (v) => v, onErr: (_) => null);
-    final envelopeVersion = SchemaVersion.create(
-      1,
-    ).fold<SchemaVersion?>(onOk: (v) => v, onErr: (_) => null);
+    final envelopeVersion = SchemaVersion.create(1)
+        .fold<SchemaVersion?>(onOk: (v) => v, onErr: (_) => null);
     if (identity == null || envelopeVersion == null) {
       _state = PenSessionState.rejected;
       return Err(_failure('internal_contract'));

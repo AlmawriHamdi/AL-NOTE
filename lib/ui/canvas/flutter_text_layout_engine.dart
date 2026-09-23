@@ -572,9 +572,8 @@ TextStyle _style(
     if (style.underline) TextDecoration.underline,
     if (style.strikethrough) TextDecoration.lineThrough,
   ]),
-  color: Color(
-    style.argb,
-  ).withValues(alpha: ((style.argb >>> 24 & 0xff) / 255) * layerOpacity),
+  color: Color(style.argb)
+      .withValues(alpha: ((style.argb >>> 24 & 0xff) / 255) * layerOpacity),
   height: lineHeight,
   locale: _locale(languageHint),
 );
@@ -595,10 +594,10 @@ int _boundedProduct(int left, int right) {
   return left * right;
 }
 
-TextPosition _position(int paragraph, int scalar) =>
-    (TextPosition.create(paragraphIndex: paragraph, scalarOffset: scalar)
-            as Ok<TextPosition, StructuredFailure>)
-        .value;
+TextPosition _position(int paragraph, int scalar) => (TextPosition.create(
+  paragraphIndex: paragraph,
+  scalarOffset: scalar,
+) as Ok<TextPosition, StructuredFailure>).value;
 
 Rect2? _rect(double left, double top, double right, double bottom) =>
     Rect2.fromEdges(

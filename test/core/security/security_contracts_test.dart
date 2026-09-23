@@ -218,18 +218,18 @@ void main() {
   });
 }
 
-ResourceLimitKey _key(String value) =>
-    (ResourceLimitKey.parse(value) as Ok<ResourceLimitKey, StructuredFailure>)
-        .value;
+ResourceLimitKey _key(String value) => (ResourceLimitKey.parse(
+  value,
+) as Ok<ResourceLimitKey, StructuredFailure>).value;
 
 ResourceLimitCeiling _ceiling(int value, ResourceLimitUnit unit) =>
-    (ResourceLimitCeiling.create(value: value, unit: unit)
-            as Ok<ResourceLimitCeiling, StructuredFailure>)
-        .value;
+    (ResourceLimitCeiling.create(
+      value: value,
+      unit: unit,
+    ) as Ok<ResourceLimitCeiling, StructuredFailure>).value;
 
 ResourceLimitSnapshot _snapshot(
   Iterable<({ResourceLimitKey key, ResourceLimitCeiling ceiling})> entries,
-) =>
-    (ResourceLimitSnapshot.create(entries)
-            as Ok<ResourceLimitSnapshot, StructuredFailure>)
-        .value;
+) => (ResourceLimitSnapshot.create(
+  entries,
+) as Ok<ResourceLimitSnapshot, StructuredFailure>).value;

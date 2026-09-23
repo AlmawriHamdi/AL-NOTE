@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "version": "155.0.8044.0",
+  "source_commit": "f91ca5a72358bb0b00b4da9481b21fe668157614",
+  "source_correspondence_verified": false,
+  "recipe_commit": "5453f3afc4785cbad82c05f6ceb4dabea0cb81a0",
+  "workflow_identity": "https://github.com/bblanchon/pdfium-binaries/.github/workflows/build-all.yml@refs/heads/master",
+  "oidc_issuer": "https://token.actions.githubusercontent.com",
+  "archive_url": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8044/pdfium-linux-x64.tgz",
+  "bundle_url": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8044/pdfium-attestation.json",
+  "archive_sha256": "eb142f416aed3a72fc5a02dbd5884868a16cb99dc0cf53e6bdd64afbf67b05f4",
+  "library_sha256": "b0361f8ba0bc6ffeb2325949a88f08b09356f46abe257ffdf846202999daa27b",
+  "fixes": {
+    "CVE-2026-17875": "7c53431c7e353de36f70df5fddd0e397ad9d79cf",
+    "CVE-2026-18012": "ee47c0ef8b813c8c681643688e9e425e87ee391f"
+  }
+}

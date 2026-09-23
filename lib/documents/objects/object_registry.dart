@@ -397,9 +397,8 @@ final class ObjectRegistry {
     if (definition == null) {
       return UnknownObjectTypeResolution(envelope);
     }
-    final supported = List<SchemaVersion>.of(
-      definition.supportedSchemaVersions,
-    ).contains(envelope.typeSchemaVersion);
+    final supported = List<SchemaVersion>.of(definition.supportedSchemaVersions)
+        .contains(envelope.typeSchemaVersion);
     if (!supported) {
       return UnsupportedObjectSchemaResolution(envelope);
     }

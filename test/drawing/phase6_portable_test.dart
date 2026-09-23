@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import 'dart:collection';
+
 import 'package:al_note/core/interaction.dart';
 import 'package:al_note/core/primitives.dart';
 import 'package:al_note/documents/commands.dart';
@@ -577,9 +578,8 @@ void main() {
       );
       final dot = _stroke(20, [_sample(0, 0, 0)]);
       final geometry = _ok(
-        StrokeGeometryResolver(
-          _geometryLimits(),
-        ).resolve(stroke: dot, localToPage: scale),
+        StrokeGeometryResolver(_geometryLimits())
+            .resolve(stroke: dot, localToPage: scale),
       );
       expect(geometry.bounds.left, closeTo(-4, .001));
       expect(geometry.bounds.right, closeTo(4, .001));
@@ -751,9 +751,8 @@ void main() {
         suspended: false,
       );
       expect(
-        _ok(
-          router.route(_event(PointerPhase.down, time: 10), context),
-        )?.activeTool,
+        _ok(router.route(_event(PointerPhase.down, time: 10), context))
+            ?.activeTool,
         'pen',
       );
       final changed = InteractionContextSnapshot(
@@ -762,9 +761,8 @@ void main() {
         suspended: false,
       );
       expect(
-        _ok(
-          router.route(_event(PointerPhase.move, time: 11), changed),
-        )?.activeTool,
+        _ok(router.route(_event(PointerPhase.move, time: 11), changed))
+            ?.activeTool,
         'pen',
       );
       expect(
@@ -1316,52 +1314,48 @@ void main() {
     },
   );
 
-  test(
-    'hit behavior output contains iterator faults, tails, infinity, and duplicates',
-    () {
-      final first = StrokeId.fromUuid(testUuid(960));
-      final second = StrokeId.fromUuid(testUuid(961));
-      final cases = <List<StrokeId>>[
-        _HostileStrokeList([first], throwIterator: true),
-        _HostileStrokeList([first], throwMoveAt: 0),
-        _HostileStrokeList([first], throwCurrentAt: 0),
-        _HostileStrokeList([first, second], infinite: true),
-        _HostileStrokeList([first, first]),
-        _HostileStrokeList([first, second, first]),
-      ];
-      for (final hostile in cases) {
-        final registry = _ok(
-          HitTestingRegistry.create(
-            [_AreaHitDefinition(hostile)],
-            maximumDefinitions: 1,
-            maximumBehaviorResults: 2,
-          ),
-        );
-        final result = registry.definitions[handwritingObjectTypeKey]!
-            .rectangle(
-              object: _object(82, [_sample(0, 0, 0)]),
-              area: _rect(-1, -1, 1, 1),
-              mode: AreaHitMode.intersection,
-            );
-        expect(result, isA<Err<Object?, Object?>>());
-        expect(result.toString(), isNot(contains('secret-hit-output')));
-      }
-      final rejectedTail = _HostileStrokeList([first, second, first]);
+  test('hit behavior output contains iterator faults, tails, infinity, and duplicates', () {
+    final first = StrokeId.fromUuid(testUuid(960));
+    final second = StrokeId.fromUuid(testUuid(961));
+    final cases = <List<StrokeId>>[
+      _HostileStrokeList([first], throwIterator: true),
+      _HostileStrokeList([first], throwMoveAt: 0),
+      _HostileStrokeList([first], throwCurrentAt: 0),
+      _HostileStrokeList([first, second], infinite: true),
+      _HostileStrokeList([first, first]),
+      _HostileStrokeList([first, second, first]),
+    ];
+    for (final hostile in cases) {
       final registry = _ok(
         HitTestingRegistry.create(
-          [_AreaHitDefinition(rejectedTail)],
+          [_AreaHitDefinition(hostile)],
           maximumDefinitions: 1,
           maximumBehaviorResults: 2,
         ),
       );
-      registry.definitions[handwritingObjectTypeKey]!.rectangle(
-        object: _object(83, [_sample(0, 0, 0)]),
+      final result = registry.definitions[handwritingObjectTypeKey]!.rectangle(
+        object: _object(82, [_sample(0, 0, 0)]),
         area: _rect(-1, -1, 1, 1),
         mode: AreaHitMode.intersection,
       );
-      expect(rejectedTail.rejectedTailCurrentRead, isFalse);
-    },
-  );
+      expect(result, isA<Err<Object?, Object?>>());
+      expect(result.toString(), isNot(contains('secret-hit-output')));
+    }
+    final rejectedTail = _HostileStrokeList([first, second, first]);
+    final registry = _ok(
+      HitTestingRegistry.create(
+        [_AreaHitDefinition(rejectedTail)],
+        maximumDefinitions: 1,
+        maximumBehaviorResults: 2,
+      ),
+    );
+    registry.definitions[handwritingObjectTypeKey]!.rectangle(
+      object: _object(83, [_sample(0, 0, 0)]),
+      area: _rect(-1, -1, 1, 1),
+      mode: AreaHitMode.intersection,
+    );
+    expect(rejectedTail.rejectedTailCurrentRead, isFalse);
+  });
 
   test('Page hit result ceiling is cumulative across Objects', () {
     final first = _object(84, [_sample(0, 0, 0)]);
@@ -2128,9 +2122,8 @@ void main() {
       ),
     );
     final geometry = _ok(
-      StrokeGeometryResolver(
-        _geometryLimits(),
-      ).resolve(stroke: stroke, localToPage: _identity()),
+      StrokeGeometryResolver(_geometryLimits())
+          .resolve(stroke: stroke, localToPage: _identity()),
     );
     expect(geometry.hitsPoint(_point(0, 0), 1.1e308), isTrue);
     expect(geometry.hitsPoint(_point(-1e308, 0), 1.1e308), isFalse);
@@ -2265,9 +2258,8 @@ void main() {
       id: 998,
       typeKey: handwritingObjectTypeKey,
       schemaVersion: handwritingSchemaVersion,
-      payload: _ok(
-        HandwritingPayload.create(strokes: [stroke], limits: limits),
-      ).encode(),
+      payload: _ok(HandwritingPayload.create(strokes: [stroke], limits: limits))
+          .encode(),
     );
     final geometryLimits = _ok(
       StrokeGeometryLimits.create(

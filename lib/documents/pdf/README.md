@@ -161,6 +161,24 @@ Selecting multiple source pages creates multiple independent Objects.
 
 Multipage movable container Objects remain deferred.
 
+The notebook toolbar now provides **Insert PDF page**, separately from standalone
+Open PDF and notebook-page Import PDF pages. It prepares selected source pages
+as independent schema-1 Objects and shares one immutable resource through one
+atomic collection-edit Command. Placement uses common aspect-preserving
+transforms; source geometry is retained exactly. Selection and Whole Eraser use
+the registered PDF geometry. Normalized clips are painted from the bounded full
+page raster. Opacity follows the existing layer setting; no per-Object opacity
+field or control is added.
+
+Canvas serializes PDF raster requests for the current Page and shares images by
+full reference, immutable source-byte identity and raster dimensions. Distinct
+references divide one aggregate pixel budget; changing the current Page cancels
+obsolete interest. Failed sources keep their editable geometry as placeholders.
+The Linux private admission policy and worker package remain unchanged.
+See the [movable Object handoff](../../../docs/testing-release/phase8-pdf-objects.md)
+for scope, tests, bounds and review status.
+
+
 ## PDF Coordinates
 
 Canonical PDF-local units are PDF points:
@@ -178,31 +196,38 @@ All coordinate values must be finite and bounded.
 
 ## Page Boxes
 
-Version-1 default selection is:
+The default uses authoritative resolved rendering bounds from the engine. In
+PDFium, `FPDF_GetPageBoundingBox` returns the inherited, normalized and clipped
+MediaBox/CropBox intersection used for rendering. `FPDFPage_GetRotation` supplies
+the effective inherited rotation. Raw box getters do not resolve inheritance.
 
-1. Use a valid CropBox.
-2. Otherwise use a valid MediaBox.
+New references record `resolvedBounds`. This is a geometry classification, not
+raw CropBox/MediaBox provenance: the supported API does not establish the
+originating dictionary, inheritance, normalization, clipping or defaulting
+history. No such history is invented or persisted. Legacy `cropBox` and
+`mediaBox` values remain readable. Trim/Bleed/Art selection remains unsupported.
 
-Supported identifiers may include:
+Source-space endpoints are retained unchanged. The private PDFium adapter
+requires that rounding each rotated endpoint difference once to IEEE-754
+binary32 exactly reproduces the engine's displayed extent. That is at most
+half an ULP of the extent (round-to-nearest, ties-to-even), not an origin-scaled
+or relative epsilon. The canonical persisted dimensions are the double endpoint
+differences. Global model/codec/receiving-limit checks still require exact
+internal equality. Reopen rendering compares every saved endpoint, canonical
+dimension and rotation exactly; matching dimensions alone never suffice.
 
-- CropBox
-- MediaBox
-- TrimBox
-- BleedBox
-- ArtBox
+Normalized reversed boxes, clipped overlaps, oversized crops, negative origins,
+and ordinary fractional boxes are supported. Unavailable/nonfinite/empty
+resolved bounds (including disjoint rectangles), nonpositive display extents,
+or extents that fail the binary32 check are rejected. PDFium may default raw
+malformed/missing attributes; a valid engine-resolved region alone does not
+prove raw PDF conformance. Raw syntax validation is outside this API contract.
 
-The page reference persists:
-
-- Selected box kind
-- Resolved source-user-space box coordinates
-- Effective normalized rotation
-- Displayed width and height
-
-A persisted reference never silently substitutes a different box.
-
-Irreconcilable backend disagreements are rejected or isolated.
-
-Alternative boxes may be selected only through later accepted behavior.
+The shared-reference schema stays at 1 with an additional enum wire value.
+Existing named references remain unchanged and can render when their complete
+geometry matches. Earlier builds that do not understand `resolvedBounds` reject
+these new references; backward opening in those builds is not supported. No
+saved coordinates are migrated or silently substituted.
 
 ## Fixed Source Mapping
 
@@ -330,6 +355,24 @@ Rendered tiles, thumbnails, display lists, decoded fonts, decoded images, and ba
 Rendering caches remain under Drawing cache ownership.
 
 ## Extraction Boundaries
+
+The private Linux candidate implements bounded per-page embedded text and inert
+link classification through the isolated worker. It returns Unicode scalars with
+page-local glyph rectangles (or explicitly unpositioned separators), validated
+internal page destinations, and optionally HTTP/HTTPS classifications without
+URL targets. Text order is advisory; scanned pages have no embedded text and no
+OCR is performed. No Search UI or navigation/link activation is added.
+
+Results are complete for the supported bounded projection or fail without a
+prefix. Full-page ceilings are 8,192 Unicode scalars, 256 links, 4,096 annotations,
+2,048 URI bytes, 1,000 document pages and a 2 MiB response frame, further reduced
+by the caller's limits. Generated separators without geometry cannot be assigned
+to a partial region; that projection is unsupported. Outline extraction remains
+a contract only. Other platform backends retain their existing unsupported
+extraction outcomes.
+
+See [the bounded extraction candidate report](../../../docs/testing-release/phase8-pdf-extraction.md)
+for exact semantics, package identity, verification and unpublished CI handoff.
 
 Separate engine-neutral capabilities cover:
 
@@ -567,11 +610,35 @@ General resources remain in Storage ownership.
 
 Layer identity, ordering, locking, visibility, and lifecycle remain owned by the Layer System.
 
+## Development Fixture Admission and Host Reading
+
+Only the fixed, reviewed, locally generated corpus in
+`test/fixtures/phase8/admitted/` can reach the development backend. Its SHA-256
+allowlist is compiled into program policy. Selected files, persisted trust
+claims, resource UUIDs and claimed digests cannot enroll or approve input.
+Admission hashes the actual immutable captured bytes. Both inspect and render
+revalidate them; a canvas cache hit requires the same immutable byte object as
+well as the same page reference/render dimensions. Save/Reopen revalidates
+reconstructed resource bytes. SHA-256 establishes corpus identity, not parser
+safety. Release composition retains the quarantined backend.
+
+The UI explicitly says development fixtures only. Web uses direct bounded Blob
+slices; Linux/Windows use bounded read-only file reads after selection. Android
+is unavailable before invoking its eager-reading/copying plugin. This is a
+pending Android implementation, not a completed Android Open PDF route.
+[Correction 2](../../../docs/testing-release/phase8-correction2.md) records the
+platform evidence, aggregate buffering bounds and proposed native design.
+
 ## Dependency Status
 
 AL NOTE must reuse a mature PDF engine rather than implement a parser or renderer.
 
-No PDF backend or export dependency is accepted yet.
+`pdfrx 2.4.8` is installed as an exact, provisional development dependency on
+the Flutter 3.44.6 baseline. It remains quarantined behind AL NOTE-owned,
+backend-neutral contracts so its PDFium engine can be upgraded or replaced
+without changing persistent data or callers. The current PDFium binary
+provenance, checksum, notices, and vulnerability findings still block
+untrusted-PDF use and release acceptance. No PDF export dependency is accepted.
 
 ## Open-Source Record
 
@@ -585,7 +652,8 @@ No PDF backend or export dependency is accepted yet.
 - Rnote is a GPL-3.0-or-later architectural reference.
 - Xournal++ is a behavioral reference requiring file-level license review.
 - Syncfusion PDF is not an open-source dependency and is rejected.
-- No PDF dependency is accepted yet.
+- No PDF dependency is approved for release or untrusted input yet; the exact
+  `pdfrx 2.4.8` development pin is provisional.
 - AL NOTE will not implement a PDF parser or renderer from scratch.
 
 ## Deferred Matters

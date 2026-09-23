@@ -10,20 +10,14 @@ import '../../support/phase4_test_support.dart';
 
 /// Regenerates the reviewed canonical Notebook package fixture.
 void main() {
-  final snapshot =
-      (AlnotePackageSnapshot.create(
-                document: testNotebook(),
-                resources: const <DocumentResourceSnapshot>[],
-              )
-              as Ok<AlnotePackageSnapshot, StructuredFailure>)
-          .value;
-  final bytes =
-      (AlnotePackageCodec(
-                objectRegistry: testRegistry(),
-              ).encode(snapshot, limits: phase4Limits())
-              as Ok<List<int>, StructuredFailure>)
-          .value;
-  File(
-    'test/fixtures/phase4/canonical_notebook.alnote',
-  ).writeAsBytesSync(bytes, flush: true);
+  final snapshot = (AlnotePackageSnapshot.create(
+    document: testNotebook(),
+    resources: const <DocumentResourceSnapshot>[],
+  ) as Ok<AlnotePackageSnapshot, StructuredFailure>).value;
+  final bytes = (AlnotePackageCodec(objectRegistry: testRegistry()).encode(
+    snapshot,
+    limits: phase4Limits(),
+  ) as Ok<List<int>, StructuredFailure>).value;
+  File('test/fixtures/phase4/canonical_notebook.alnote')
+      .writeAsBytesSync(bytes, flush: true);
 }

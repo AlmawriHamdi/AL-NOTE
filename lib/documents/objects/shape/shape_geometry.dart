@@ -554,20 +554,18 @@ List<List<Point2>>? _arrowPolygons(
 
 ShapeLimits _arrowLimits(ShapeStyle style, int maximumDerived) =>
     (ShapeLimits.create(
-              maximumVertices: math.max(3, maximumDerived),
-              maximumDashValues: 0,
-              maximumUnknownFields: 0,
-              maximumUnknownNodes: 1,
-              maximumNestingDepth: 1,
-              maximumUnknownStringCodeUnits: 1,
-              maximumCoordinateMagnitude: double.maxFinite,
-              maximumStrokeWidth: style.strokeWidth,
-              maximumMiterLimit: math.max(1, style.miterLimit),
-              maximumCornerRadius: 0,
-              maximumDerivedSegments: math.max(3, maximumDerived),
-            )
-            as Ok<ShapeLimits, StructuredFailure>)
-        .value;
+      maximumVertices: math.max(3, maximumDerived),
+      maximumDashValues: 0,
+      maximumUnknownFields: 0,
+      maximumUnknownNodes: 1,
+      maximumNestingDepth: 1,
+      maximumUnknownStringCodeUnits: 1,
+      maximumCoordinateMagnitude: double.maxFinite,
+      maximumStrokeWidth: style.strokeWidth,
+      maximumMiterLimit: math.max(1, style.miterLimit),
+      maximumCornerRadius: 0,
+      maximumDerivedSegments: math.max(3, maximumDerived),
+    ) as Ok<ShapeLimits, StructuredFailure>).value;
 
 List<Point2>? _ellipse(Rect2 bounds, int segments, ShapeWorkBudget budget) {
   if (!budget.charge(segments)) return null;
@@ -686,11 +684,15 @@ Point2? _safePoint(double x, double y) => Point2.create(
 
 List<Point2> _rectPoints(Rect2 rect) => [
   rect.topLeft,
-  (Point2.create(x: rect.right, y: rect.top) as Ok<Point2, StructuredFailure>)
-      .value,
+  (Point2.create(
+    x: rect.right,
+    y: rect.top,
+  ) as Ok<Point2, StructuredFailure>).value,
   rect.bottomRight,
-  (Point2.create(x: rect.left, y: rect.bottom) as Ok<Point2, StructuredFailure>)
-      .value,
+  (Point2.create(
+    x: rect.left,
+    y: rect.bottom,
+  ) as Ok<Point2, StructuredFailure>).value,
 ];
 
 final class _StrokeSegment {

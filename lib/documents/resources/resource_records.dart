@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import 'dart:typed_data';
+
 import '../../core/identity/namespaced_identifier.dart';
+import '../../core/outcomes/cancellation.dart';
 import '../../core/outcomes/result.dart';
 import '../../core/outcomes/structured_failure.dart';
 import '../../core/versioning/schema_version.dart';
@@ -128,9 +131,8 @@ final class ResourceMediaType implements Comparable<ResourceMediaType> {
   /// Parses a bounded lowercase ASCII `type/subtype` value.
   static Result<ResourceMediaType, StructuredFailure> parse(String source) {
     if (source.length > 127 ||
-        !RegExp(
-          r'^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$',
-        ).hasMatch(source)) {
+        !RegExp(r'^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$')
+            .hasMatch(source)) {
       return Err<ResourceMediaType, StructuredFailure>(
         _resourceFailure(
           'documents.resources.invalid_media_type',
@@ -191,6 +193,85 @@ final class ResourceRole implements Comparable<ResourceRole> {
   String toString() => value;
 }
 
+/// Owned immutable bytes and their internally computed digest. The private
+/// constructor prevents callers from asserting an unverified bytes/digest pair.
+final class CapturedResourceBytes {
+  CapturedResourceBytes._(Uint8List bytes, this.digest)
+    : bytes = bytes.asUnmodifiableView();
+
+  final Uint8List bytes;
+  final Sha256Digest digest;
+
+  /// Small reviewed fixtures do not require an isolate or asynchronous IO.
+  static CapturedResourceBytes captureSmall(List<int> source) {
+    if (source.isEmpty ||
+        source.length > 46751 ||
+        source.any((v) => v < 0 || v > 255)) {
+      throw const FormatException('small resource capture limit');
+    }
+    final owned = Uint8List.fromList(source);
+    return CapturedResourceBytes._(
+      owned,
+      Sha256Digest._(calculateCapturedSha256(owned)),
+    );
+  }
+
+  /// Run on a background isolate for large inputs. Both capture and hashing
+  /// yield in bounded chunks so cancellation can reach the owning isolate.
+  static Future<CapturedResourceBytes> capture(
+    List<int> source, {
+    required int maximumBytes,
+    required CancellationToken cancellationToken,
+  }) async {
+    void check() {
+      if (cancellationToken.isCancelled) {
+        throw const FormatException('resource preparation cancelled');
+      }
+    }
+
+    check();
+    if (maximumBytes <= 0) {
+      throw const FormatException('resource preparation limit');
+    }
+    final int sourceLength;
+    try {
+      sourceLength = source.length;
+    } on Object {
+      throw const FormatException('resource preparation length');
+    }
+    if (sourceLength <= 0 || sourceLength > maximumBytes) {
+      throw const FormatException('resource preparation limit');
+    }
+    check();
+    // A caller-provided List may change its length getter or contents. Only
+    // this validated length controls allocation and the captured prefix.
+    final owned = Uint8List(sourceLength);
+    for (var start = 0; start < sourceLength; start += 65536) {
+      check();
+      final end = start + 65536 < sourceLength ? start + 65536 : sourceLength;
+      try {
+        if (source is Uint8List) {
+          owned.setRange(start, end, source, start);
+        } else {
+          for (var i = start; i < end; i++) {
+            final value = source[i];
+            if (value < 0 || value > 255) {
+              throw const FormatException('resource preparation bytes');
+            }
+            owned[i] = value;
+          }
+        }
+      } on Object {
+        throw const FormatException('resource preparation bytes');
+      }
+      await Future<void>.delayed(Duration.zero);
+    }
+    final digest = await calculateCapturedSha256Cooperatively(owned, check);
+    check();
+    return CapturedResourceBytes._(owned, Sha256Digest._(digest));
+  }
+}
+
 /// Immutable metadata and bytes for one logical document resource.
 final class DocumentResource {
   DocumentResource._({
@@ -201,7 +282,34 @@ final class DocumentResource {
     required this.schemaVersion,
     required this.packagePath,
     required List<int> bytes,
-  }) : bytes = List<int>.unmodifiable(List<int>.of(bytes));
+  }) : bytes = Uint8List.fromList(bytes).asUnmodifiableView();
+
+  DocumentResource._captured({
+    required this.identity,
+    required this.mediaType,
+    required this.role,
+    required this.schemaVersion,
+    required CapturedResourceBytes captured,
+  }) : bytes = captured.bytes,
+       digest = captured.digest,
+       packagePath =
+           'resources/${captured.digest.hexadecimal.substring(0, 2)}/${captured.digest.hexadecimal}';
+
+  /// Reuses the exact privately captured bytes; digest and path are derived
+  /// exclusively from that capture, never from caller-supplied metadata.
+  factory DocumentResource.fromCaptured({
+    required ResourceIdentity identity,
+    required ResourceMediaType mediaType,
+    required ResourceRole role,
+    required SchemaVersion schemaVersion,
+    required CapturedResourceBytes captured,
+  }) => DocumentResource._captured(
+    identity: identity,
+    mediaType: mediaType,
+    role: role,
+    schemaVersion: schemaVersion,
+    captured: captured,
+  );
 
   /// Creates and independently verifies one immutable resource.
   static Result<DocumentResource, StructuredFailure> create({
@@ -354,7 +462,7 @@ final class DocumentResource {
 
 /// An immutable save-capture snapshot of one document resource.
 final class DocumentResourceSnapshot {
-  /// Defensively captures [resource].
+  /// Shares the already privately owned immutable bytes of [resource].
   DocumentResourceSnapshot(DocumentResource resource)
     : identity = resource.identity,
       digest = resource.digest,
@@ -363,7 +471,7 @@ final class DocumentResourceSnapshot {
       role = resource.role,
       schemaVersion = resource.schemaVersion,
       packagePath = resource.packagePath,
-      bytes = List<int>.unmodifiable(List<int>.of(resource.bytes));
+      bytes = resource.bytes;
 
   /// The logical document-scoped identity.
   final ResourceIdentity identity;

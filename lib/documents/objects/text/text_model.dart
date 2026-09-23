@@ -2019,11 +2019,9 @@ List<TextRun>? _sliceRuns(
 
 TextPosition _position(int paragraphIndex, int scalarOffset) =>
     (TextPosition.create(
-              paragraphIndex: paragraphIndex,
-              scalarOffset: scalarOffset,
-            )
-            as Ok<TextPosition, StructuredFailure>)
-        .value;
+      paragraphIndex: paragraphIndex,
+      scalarOffset: scalarOffset,
+    ) as Ok<TextPosition, StructuredFailure>).value;
 
 /// Fixed stale-commit recovery choices, with no automatic merge or rebase.
 enum StaleTextDraftRecovery { keepDraft, discardDraft, copyPlainText }
@@ -2459,12 +2457,12 @@ double? _number(PreservedData? value) => switch (value) {
   PreservedInteger(:final value) => value.toDouble(),
   _ => null,
 };
-PreservedDouble _double(double value) =>
-    (PreservedDouble.create(value) as Ok<PreservedDouble, StructuredFailure>)
-        .value;
-PreservedInteger _integer(int value) =>
-    (PreservedInteger.create(value) as Ok<PreservedInteger, StructuredFailure>)
-        .value;
+PreservedDouble _double(double value) => (PreservedDouble.create(
+  value,
+) as Ok<PreservedDouble, StructuredFailure>).value;
+PreservedInteger _integer(int value) => (PreservedInteger.create(
+  value,
+) as Ok<PreservedInteger, StructuredFailure>).value;
 double _distanceSquared(Point2 point, Rect2 rect) {
   final dx = point.x < rect.left
       ? rect.left - point.x
@@ -2482,23 +2480,18 @@ double _distanceSquared(Point2 point, Rect2 rect) {
 bool _positive(double value) => value.isFinite && value > 0;
 bool _nonnegative(double value) => value.isFinite && value >= 0;
 final RegExp _bcp47 = RegExp(r'^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$');
-ValidationIssue _invalidIssue() =>
-    (ValidationIssue.create(
-              code: ValidationIssueCode.invalidObjectPayload,
-              severity: ValidationSeverity.error,
-              path:
-                  (ValidationPath.fromSegments(const <ValidationPathSegment>[])
-                          as Ok<ValidationPath, StructuredFailure>)
-                      .value,
-            )
-            as Ok<ValidationIssue, StructuredFailure>)
-        .value;
+ValidationIssue _invalidIssue() => (ValidationIssue.create(
+  code: ValidationIssueCode.invalidObjectPayload,
+  severity: ValidationSeverity.error,
+  path: (ValidationPath.fromSegments(
+    const <ValidationPathSegment>[],
+  ) as Ok<ValidationPath, StructuredFailure>).value,
+) as Ok<ValidationIssue, StructuredFailure>).value;
 SchemaVersion _schemaOne() =>
     (SchemaVersion.create(1) as Ok<SchemaVersion, StructuredFailure>).value;
-NamespacedIdentifier _trustedTypeIdentifier() =>
-    (ObjectTypeKey.parse('alnote.text') as Ok<ObjectTypeKey, StructuredFailure>)
-        .value
-        .identifier;
+NamespacedIdentifier _trustedTypeIdentifier() => (ObjectTypeKey.parse(
+  'alnote.text',
+) as Ok<ObjectTypeKey, StructuredFailure>).value.identifier;
 StructuredFailure _failure(String leaf) => StructuredFailure(
   code: 'documents.text.$leaf',
   category: FailureCategory.validation,

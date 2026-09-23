@@ -1032,17 +1032,20 @@ double? _number(PreservedData? value) => switch (value) {
   _ => null,
 };
 
-PreservedDouble _double(double value) =>
-    (PreservedDouble.create(value) as Ok<PreservedDouble, StructuredFailure>)
-        .value;
-PreservedInteger _integer(int value) =>
-    (PreservedInteger.create(value) as Ok<PreservedInteger, StructuredFailure>)
-        .value;
+PreservedDouble _double(double value) => (PreservedDouble.create(
+  value,
+) as Ok<PreservedDouble, StructuredFailure>).value;
+PreservedInteger _integer(int value) => (PreservedInteger.create(
+  value,
+) as Ok<PreservedInteger, StructuredFailure>).value;
 
 Rect2 _rect(double left, double top, double right, double bottom) =>
-    (Rect2.fromEdges(left: left, top: top, right: right, bottom: bottom)
-            as Ok<Rect2, StructuredFailure>)
-        .value;
+    (Rect2.fromEdges(
+      left: left,
+      top: top,
+      right: right,
+      bottom: bottom,
+    ) as Ok<Rect2, StructuredFailure>).value;
 
 Rect2 _pointBounds(List<Point2> values) {
   var left = values.first.x, right = left, top = values.first.y, bottom = top;
@@ -1058,26 +1061,20 @@ Rect2 _pointBounds(List<Point2> values) {
 bool _positive(double value) => value.isFinite && value > 0;
 bool _nonnegativeFinite(double value) => value.isFinite && value >= 0;
 
-ValidationIssue _invalidIssue() =>
-    (ValidationIssue.create(
-              code: ValidationIssueCode.invalidObjectPayload,
-              severity: ValidationSeverity.error,
-              path:
-                  (ValidationPath.fromSegments(const <ValidationPathSegment>[])
-                          as Ok<ValidationPath, StructuredFailure>)
-                      .value,
-            )
-            as Ok<ValidationIssue, StructuredFailure>)
-        .value;
+ValidationIssue _invalidIssue() => (ValidationIssue.create(
+  code: ValidationIssueCode.invalidObjectPayload,
+  severity: ValidationSeverity.error,
+  path: (ValidationPath.fromSegments(
+    const <ValidationPathSegment>[],
+  ) as Ok<ValidationPath, StructuredFailure>).value,
+) as Ok<ValidationIssue, StructuredFailure>).value;
 
 SchemaVersion _schemaOne() =>
     (SchemaVersion.create(1) as Ok<SchemaVersion, StructuredFailure>).value;
 
-NamespacedIdentifier _trustedTypeIdentifier() =>
-    (ObjectTypeKey.parse('alnote.shape')
-            as Ok<ObjectTypeKey, StructuredFailure>)
-        .value
-        .identifier;
+NamespacedIdentifier _trustedTypeIdentifier() => (ObjectTypeKey.parse(
+  'alnote.shape',
+) as Ok<ObjectTypeKey, StructuredFailure>).value.identifier;
 
 StructuredFailure _failure(String leaf) => StructuredFailure(
   code: 'documents.shape.$leaf',

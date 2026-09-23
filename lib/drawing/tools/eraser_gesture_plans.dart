@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import 'dart:math' as math;
+
 import '../../core/geometry/affine_transform_2d.dart';
 import '../../core/geometry/geometry_values.dart';
 import '../../core/identity/uuid_generator.dart';
@@ -132,6 +133,7 @@ final class WholeEraseGesturePlan {
           final removal = _prepareWholeRemoval(
             registry: objectRegistry,
             hitTestingRegistry: hitTestingRegistry,
+            destinationPage: page,
             object: object,
             layerId: layer.id,
             membershipRevision: membershipRevision,
@@ -549,6 +551,7 @@ final class _WholeRemovalCandidate {
 _WholeRemovalCandidate? _prepareWholeRemoval({
   required ObjectRegistry registry,
   required HitTestingRegistry? hitTestingRegistry,
+  required DocumentPage destinationPage,
   required ObjectEnvelope object,
   required LayerId layerId,
   required Revision membershipRevision,
@@ -561,7 +564,9 @@ _WholeRemovalCandidate? _prepareWholeRemoval({
       object.typeKey == imageObjectTypeKey &&
           object.typeSchemaVersion == imageSchemaVersion ||
       object.typeKey == textObjectTypeKey &&
-          object.typeSchemaVersion == textSchemaVersion;
+          object.typeSchemaVersion == textSchemaVersion ||
+      object.typeKey == pdfPageObjectTypeKey &&
+          object.typeSchemaVersion == pdfPageObjectSchemaVersion;
   if (!supportedBuiltIn) return null;
   try {
     final resolution = registry.resolve(object);
@@ -569,7 +574,10 @@ _WholeRemovalCandidate? _prepareWholeRemoval({
     final capabilities = resolution.definition.capabilities;
     if (!capabilities.hasIntrinsicGeometry || !capabilities.selectable)
       return null;
-    final hitDefinition = hitTestingRegistry?.definitions[object.typeKey];
+    final hitDefinition = hitTestingRegistry?.definitionForPage(
+      object.typeKey,
+      destinationPage,
+    );
     if (hitDefinition is! ObjectWholeHitTestingDefinition) return null;
     final local = resolution.definition.intrinsicGeometry(
       object.payload,

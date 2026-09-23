@@ -115,10 +115,10 @@ void main() {
     });
 
     test('exposes finite edges, points, size, and containment', () {
-      final rectangle =
-          (Rect2.fromOriginAndSize(origin: _point(2, 3), size: _size(4, 5))
-                  as Ok<Rect2, StructuredFailure>)
-              .value;
+      final rectangle = (Rect2.fromOriginAndSize(
+        origin: _point(2, 3),
+        size: _size(4, 5),
+      ) as Ok<Rect2, StructuredFailure>).value;
 
       expect(rectangle.left, 2);
       expect(rectangle.top, 3);
@@ -148,15 +148,17 @@ void main() {
       final nearby = _point(1.0000001, 1.9999999);
 
       expect(
-        (first.approximatelyEquals(nearby, tolerance: 0.000001)
-                as Ok<bool, StructuredFailure>)
-            .value,
+        (first.approximatelyEquals(
+          nearby,
+          tolerance: 0.000001,
+        ) as Ok<bool, StructuredFailure>).value,
         isTrue,
       );
       expect(
-        (first.approximatelyEquals(nearby, tolerance: 0.00000001)
-                as Ok<bool, StructuredFailure>)
-            .value,
+        (first.approximatelyEquals(
+          nearby,
+          tolerance: 0.00000001,
+        ) as Ok<bool, StructuredFailure>).value,
         isFalse,
       );
       for (final invalid in <double>[0, -1, double.nan, double.infinity]) {
@@ -169,27 +171,24 @@ void main() {
 
     test('vectors, sizes, and rectangles support explicit approximation', () {
       expect(
-        (_vector(
-                  1,
-                  2,
-                ).approximatelyEquals(_vector(1.001, 2.001), tolerance: 0.01)
-                as Ok<bool, StructuredFailure>)
-            .value,
+        (_vector(1, 2).approximatelyEquals(
+          _vector(1.001, 2.001),
+          tolerance: 0.01,
+        ) as Ok<bool, StructuredFailure>).value,
         isTrue,
       );
       expect(
-        (_size(1, 2).approximatelyEquals(_size(1.001, 2.001), tolerance: 0.01)
-                as Ok<bool, StructuredFailure>)
-            .value,
+        (_size(1, 2).approximatelyEquals(
+          _size(1.001, 2.001),
+          tolerance: 0.01,
+        ) as Ok<bool, StructuredFailure>).value,
         isTrue,
       );
       expect(
         (_rect(0, 0, 1, 1).approximatelyEquals(
-                  _rect(0.001, 0.001, 1.001, 1.001),
-                  tolerance: 0.01,
-                )
-                as Ok<bool, StructuredFailure>)
-            .value,
+          _rect(0.001, 0.001, 1.001, 1.001),
+          tolerance: 0.01,
+        ) as Ok<bool, StructuredFailure>).value,
         isTrue,
       );
     });
@@ -202,11 +201,15 @@ Point2 _point(double x, double y) =>
 Vector2 _vector(double x, double y) =>
     (Vector2.create(x: x, y: y) as Ok<Vector2, StructuredFailure>).value;
 
-Size2 _size(double width, double height) =>
-    (Size2.create(width: width, height: height) as Ok<Size2, StructuredFailure>)
-        .value;
+Size2 _size(double width, double height) => (Size2.create(
+  width: width,
+  height: height,
+) as Ok<Size2, StructuredFailure>).value;
 
 Rect2 _rect(double left, double top, double right, double bottom) =>
-    (Rect2.fromEdges(left: left, top: top, right: right, bottom: bottom)
-            as Ok<Rect2, StructuredFailure>)
-        .value;
+    (Rect2.fromEdges(
+      left: left,
+      top: top,
+      right: right,
+      bottom: bottom,
+    ) as Ok<Rect2, StructuredFailure>).value;

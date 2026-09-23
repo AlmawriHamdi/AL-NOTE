@@ -749,9 +749,12 @@ StructuredFailure _failureFor(ShapeWorkBudget budget) =>
 Point2 _point(double x, double y) =>
     (Point2.create(x: x, y: y) as Ok<Point2, StructuredFailure>).value;
 Rect2 _rect(double left, double top, double right, double bottom) =>
-    (Rect2.fromEdges(left: left, top: top, right: right, bottom: bottom)
-            as Ok<Rect2, StructuredFailure>)
-        .value;
+    (Rect2.fromEdges(
+      left: left,
+      top: top,
+      right: right,
+      bottom: bottom,
+    ) as Ok<Rect2, StructuredFailure>).value;
 
 StructuredFailure _failure(String leaf) => StructuredFailure(
   code: 'drawing.shape_hit_testing.$leaf',

@@ -755,9 +755,8 @@ final class JobScheduler {
       _removeChildEvidence(job.id, ownedChildren);
     } else {
       unawaited(
-        Future.wait(
-          incomplete.map((outcome) => outcome.future),
-        ).whenComplete(() => _removeChildEvidence(job.id, ownedChildren)),
+        Future.wait(incomplete.map((outcome) => outcome.future))
+            .whenComplete(() => _removeChildEvidence(job.id, ownedChildren)),
       );
     }
     _progressCounts.remove(job.id);

@@ -213,6 +213,21 @@ final class DocumentValidator implements Validator<DocumentRoot> {
           ),
         );
       }
+      if (layer is PdfSourceLayer) {
+        references.add(layer.reference.resourceIdentity);
+        if (layer.objects.isNotEmpty ||
+            !layer.locked ||
+            layer.reference.displayedWidth != page.size.width ||
+            layer.reference.displayedHeight != page.size.height) {
+          issues.add(
+            _issue(
+              ValidationIssueCode.invalidStructure,
+              ValidationSeverity.error,
+              _layerPath(ValidationPathSegment.payload),
+            ),
+          );
+        }
+      }
       if (layer is UnknownLayer) {
         issues.add(
           _issue(

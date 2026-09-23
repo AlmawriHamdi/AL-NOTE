@@ -11,6 +11,7 @@ import '../../model/document_root.dart';
 import '../../model/identifiers.dart';
 import '../../model/preserved_data.dart';
 import '../../objects/object_envelope.dart';
+import '../../pdf/pdf_model.dart';
 import '../../resources/resources.dart';
 import '../contracts.dart';
 
@@ -347,6 +348,29 @@ final class RecordDecoder {
         objects: arguments.objects,
         typeData: arguments.typeData,
         extensionData: arguments.extensionData,
+      ).fold(
+        onOk: (value) => value,
+        onErr: (_) => throw const _RecordRejected(),
+      );
+    }
+    if (type == LayerTypeKey.pdfSource && role != LayerCoreRole.pdfSource) {
+      throw const _RecordRejected();
+    }
+    if (type == LayerTypeKey.pdfSource &&
+        role == LayerCoreRole.pdfSource &&
+        typeVersion == pdfPageReferenceSchemaVersion) {
+      return PdfSourceLayer.reopen(
+        id: arguments.id,
+        envelopeVersion: arguments.envelopeVersion,
+        typeSchemaVersion: arguments.typeSchemaVersion,
+        name: arguments.name,
+        visible: arguments.visible,
+        locked: arguments.locked,
+        opacity: arguments.opacity,
+        objects: arguments.objects,
+        typeData: arguments.typeData,
+        extensionData: arguments.extensionData,
+        limits: PdfModelLimits.portableStorage,
       ).fold(
         onOk: (value) => value,
         onErr: (_) => throw const _RecordRejected(),

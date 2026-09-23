@@ -18,14 +18,12 @@ void main() {
     'new close evidence replaces abandoned requests and authorization',
     () async {
       final session = _session(700, uuidValues: [700, 701, 702, 703]);
-      final first =
-          (session.requestCloseDecision(validity: const Duration(minutes: 1))
-                  as Ok<CloseDecisionRequest, StructuredFailure>)
-              .value;
-      final second =
-          (session.requestCloseDecision(validity: const Duration(minutes: 1))
-                  as Ok<CloseDecisionRequest, StructuredFailure>)
-              .value;
+      final first = (session.requestCloseDecision(
+        validity: const Duration(minutes: 1),
+      ) as Ok<CloseDecisionRequest, StructuredFailure>).value;
+      final second = (session.requestCloseDecision(
+        validity: const Duration(minutes: 1),
+      ) as Ok<CloseDecisionRequest, StructuredFailure>).value;
       expect(
         await session.resolveCloseDecision(
           first,
@@ -76,10 +74,9 @@ void main() {
       clock
         ..utc = true
         ..reads = 0;
-      final request =
-          (session.requestCloseDecision(validity: const Duration(minutes: 1))
-                  as Ok<CloseDecisionRequest, StructuredFailure>)
-              .value;
+      final request = (session.requestCloseDecision(
+        validity: const Duration(minutes: 1),
+      ) as Ok<CloseDecisionRequest, StructuredFailure>).value;
       expect(clock.reads, 1);
       clock.throwNow = true;
       expect(
@@ -162,14 +159,12 @@ void main() {
       publisher: publisher,
       uuidValues: [740, 741, 742],
     );
-    final request =
-        (session.requestCloseDecision(validity: const Duration(minutes: 1))
-                as Ok<CloseDecisionRequest, StructuredFailure>)
-            .value;
-    final destination =
-        (NormalizedSourceIdentity.create('close-save-as')
-                as Ok<NormalizedSourceIdentity, StructuredFailure>)
-            .value;
+    final request = (session.requestCloseDecision(
+      validity: const Duration(minutes: 1),
+    ) as Ok<CloseDecisionRequest, StructuredFailure>).value;
+    final destination = (NormalizedSourceIdentity.create(
+      'close-save-as',
+    ) as Ok<NormalizedSourceIdentity, StructuredFailure>).value;
     final pending = session.resolveCloseDecision(
       request,
       CloseDecision(
@@ -182,15 +177,12 @@ void main() {
     );
     await Future<void>.microtask(() {});
     _edit(coordinator, 'newer-during-save');
-    final fingerprint =
-        (ExternalFingerprint.create(
-                  maximumDigestBytes: 64,
-                  strength: FingerprintStrength.fullContent,
-                  byteLength: 1,
-                  digest: const [1],
-                )
-                as Ok<ExternalFingerprint, StructuredFailure>)
-            .value;
+    final fingerprint = (ExternalFingerprint.create(
+      maximumDigestBytes: 64,
+      strength: FingerprintStrength.fullContent,
+      byteLength: 1,
+      digest: const [1],
+    ) as Ok<ExternalFingerprint, StructuredFailure>).value;
     publisher.completions.single.complete(
       Completed(
         SessionPublicationEvidence(
@@ -207,20 +199,15 @@ void main() {
 
   test('ordinary Save without a source has no publisher side effect', () async {
     final publisher = FakeSessionPublisher();
-    final session =
-        (DocumentSession.create(
-                  maximumQueuedPublications: 16,
-                  maximumListeners: 16,
-                  coordinator: phase3Coordinator(),
-                  publisher: publisher,
-                  uuidGenerator: UuidSequenceGenerator.fromValues([
-                    testUuid(799),
-                  ]),
-                  clock: ControllableClock(DateTime.utc(2026)),
-                  sourceRegistry: CanonicalSourceRegistry(),
-                )
-                as Ok<DocumentSession, StructuredFailure>)
-            .value;
+    final session = (DocumentSession.create(
+      maximumQueuedPublications: 16,
+      maximumListeners: 16,
+      coordinator: phase3Coordinator(),
+      publisher: publisher,
+      uuidGenerator: UuidSequenceGenerator.fromValues([testUuid(799)]),
+      clock: ControllableClock(DateTime.utc(2026)),
+      sourceRegistry: CanonicalSourceRegistry(),
+    ) as Ok<DocumentSession, StructuredFailure>).value;
     final result = await session.save(
       cancellationToken: CancellationController().token,
     );
@@ -230,39 +217,32 @@ void main() {
 
   test('successful Save proactively invalidates close authorization', () async {
     final publisher = FakeSessionPublisher();
-    final source =
-        (NormalizedSourceIdentity.create('save-invalidates-close')
-                as Ok<NormalizedSourceIdentity, StructuredFailure>)
-            .value;
-    final initialFingerprint =
-        (ExternalFingerprint.create(
-                  maximumDigestBytes: 64,
-                  strength: FingerprintStrength.metadata,
-                  byteLength: 1,
-                  digest: const [1],
-                )
-                as Ok<ExternalFingerprint, StructuredFailure>)
-            .value;
-    final session =
-        (DocumentSession.create(
-                  maximumQueuedPublications: 16,
-                  maximumListeners: 16,
-                  coordinator: phase3Coordinator(),
-                  publisher: publisher,
-                  uuidGenerator: UuidSequenceGenerator.fromValues([
-                    testUuid(797),
-                    testUuid(798),
-                    testUuid(799),
-                  ]),
-                  clock: ControllableClock(DateTime.utc(2026)),
-                  sourceRegistry: CanonicalSourceRegistry(),
-                  sourceBinding: StorageSourceBinding(
-                    sourceIdentity: source,
-                    fingerprint: initialFingerprint,
-                  ),
-                )
-                as Ok<DocumentSession, StructuredFailure>)
-            .value;
+    final source = (NormalizedSourceIdentity.create(
+      'save-invalidates-close',
+    ) as Ok<NormalizedSourceIdentity, StructuredFailure>).value;
+    final initialFingerprint = (ExternalFingerprint.create(
+      maximumDigestBytes: 64,
+      strength: FingerprintStrength.metadata,
+      byteLength: 1,
+      digest: const [1],
+    ) as Ok<ExternalFingerprint, StructuredFailure>).value;
+    final session = (DocumentSession.create(
+      maximumQueuedPublications: 16,
+      maximumListeners: 16,
+      coordinator: phase3Coordinator(),
+      publisher: publisher,
+      uuidGenerator: UuidSequenceGenerator.fromValues([
+        testUuid(797),
+        testUuid(798),
+        testUuid(799),
+      ]),
+      clock: ControllableClock(DateTime.utc(2026)),
+      sourceRegistry: CanonicalSourceRegistry(),
+      sourceBinding: StorageSourceBinding(
+        sourceIdentity: source,
+        fingerprint: initialFingerprint,
+      ),
+    ) as Ok<DocumentSession, StructuredFailure>).value;
     final authorization = await _discardAuthorization(session);
     final pending = session.save(
       cancellationToken: CancellationController().token,
@@ -314,45 +294,38 @@ void main() {
       final coordinatorGenerator = UuidSequenceGenerator.fromValues([
         testUuid(801),
       ]);
-      final coordinator =
-          (DocumentMutationCoordinator.create(
-                    maximumListeners: 16,
-                    initialRoot: phase3Notebook(),
-                    validator: DocumentValidator(editableTestRegistry()),
-                    uuidGenerator: coordinatorGenerator,
-                    historyLimits: commandValue(
-                      HistoryLimits.create(
-                        maximumRetainedCommandCount: 10,
-                        maximumEstimatedRetainedBytes: 1000,
-                      ),
-                    ),
-                    retainedCostEstimator: FixedHistoryCostEstimator(1),
-                    initialSaveState: InitialDocumentSaveState.unsaved,
-                  )
-                  as Ok<DocumentMutationCoordinator, CommandFailure>)
-              .value;
+      final coordinator = (DocumentMutationCoordinator.create(
+        maximumListeners: 16,
+        initialRoot: phase3Notebook(),
+        validator: DocumentValidator(editableTestRegistry()),
+        uuidGenerator: coordinatorGenerator,
+        historyLimits: commandValue(
+          HistoryLimits.create(
+            maximumRetainedCommandCount: 10,
+            maximumEstimatedRetainedBytes: 1000,
+          ),
+        ),
+        retainedCostEstimator: FixedHistoryCostEstimator(1),
+        initialSaveState: InitialDocumentSaveState.unsaved,
+      ) as Ok<DocumentMutationCoordinator, CommandFailure>).value;
       final publisher = FakeSessionPublisher();
       final runtimeGenerator = UuidSequenceGenerator.fromValues([
         testUuid(802),
         testUuid(803),
         testUuid(804),
       ]);
-      final session =
-          (DocumentSession.create(
-                    maximumQueuedPublications: 16,
-                    maximumListeners: 16,
-                    coordinator: coordinator,
-                    publisher: publisher,
-                    uuidGenerator: runtimeGenerator,
-                    clock: ControllableClock(DateTime.utc(2026)),
-                    sourceRegistry: CanonicalSourceRegistry(),
-                  )
-                  as Ok<DocumentSession, StructuredFailure>)
-              .value;
-      final destination =
-          (NormalizedSourceIdentity.create('opaque-source')
-                  as Ok<NormalizedSourceIdentity, StructuredFailure>)
-              .value;
+      final session = (DocumentSession.create(
+        maximumQueuedPublications: 16,
+        maximumListeners: 16,
+        coordinator: coordinator,
+        publisher: publisher,
+        uuidGenerator: runtimeGenerator,
+        clock: ControllableClock(DateTime.utc(2026)),
+        sourceRegistry: CanonicalSourceRegistry(),
+      ) as Ok<DocumentSession, StructuredFailure>).value;
+      final destination = (NormalizedSourceIdentity.create(
+        'opaque-source',
+      ) as Ok<NormalizedSourceIdentity, StructuredFailure>).value;
       final first = session.saveAs(
         destinationIdentity: destination,
         cancellationToken: CancellationController().token,
@@ -362,15 +335,12 @@ void main() {
       );
       await Future<void>.microtask(() {});
       expect(publisher.requests, hasLength(1));
-      final fingerprint =
-          (ExternalFingerprint.create(
-                    maximumDigestBytes: 64,
-                    strength: FingerprintStrength.fullContent,
-                    byteLength: 12,
-                    digest: [1, 2],
-                  )
-                  as Ok<ExternalFingerprint, StructuredFailure>)
-              .value;
+      final fingerprint = (ExternalFingerprint.create(
+        maximumDigestBytes: 64,
+        strength: FingerprintStrength.fullContent,
+        byteLength: 12,
+        digest: [1, 2],
+      ) as Ok<ExternalFingerprint, StructuredFailure>).value;
       publisher.completions.first.complete(
         Completed(
           SessionPublicationEvidence(
@@ -397,22 +367,18 @@ void main() {
         testUuid(901),
       ]);
       final publisher = FakeSessionPublisher();
-      final session =
-          (DocumentSession.create(
-                    maximumQueuedPublications: 0,
-                    maximumListeners: 1,
-                    coordinator: phase3Coordinator(),
-                    publisher: publisher,
-                    uuidGenerator: generator,
-                    clock: ControllableClock(DateTime.utc(2026)),
-                    sourceRegistry: CanonicalSourceRegistry(),
-                  )
-                  as Ok<DocumentSession, StructuredFailure>)
-              .value;
-      final destination =
-          (NormalizedSourceIdentity.create('queue-zero')
-                  as Ok<NormalizedSourceIdentity, StructuredFailure>)
-              .value;
+      final session = (DocumentSession.create(
+        maximumQueuedPublications: 0,
+        maximumListeners: 1,
+        coordinator: phase3Coordinator(),
+        publisher: publisher,
+        uuidGenerator: generator,
+        clock: ControllableClock(DateTime.utc(2026)),
+        sourceRegistry: CanonicalSourceRegistry(),
+      ) as Ok<DocumentSession, StructuredFailure>).value;
+      final destination = (NormalizedSourceIdentity.create(
+        'queue-zero',
+      ) as Ok<NormalizedSourceIdentity, StructuredFailure>).value;
       final before = session.snapshot;
       final result = await session.saveAs(
         destinationIdentity: destination,
@@ -429,26 +395,22 @@ void main() {
     'exact queue ceiling rejects one extra and releases every terminal slot',
     () async {
       final publisher = FakeSessionPublisher();
-      final session =
-          (DocumentSession.create(
-                    maximumQueuedPublications: 1,
-                    maximumListeners: 1,
-                    coordinator: phase3Coordinator(),
-                    publisher: publisher,
-                    uuidGenerator: UuidSequenceGenerator.fromValues([
-                      testUuid(910),
-                      testUuid(911),
-                      testUuid(912),
-                    ]),
-                    clock: ControllableClock(DateTime.utc(2026)),
-                    sourceRegistry: CanonicalSourceRegistry(),
-                  )
-                  as Ok<DocumentSession, StructuredFailure>)
-              .value;
-      final destination =
-          (NormalizedSourceIdentity.create('queue-one')
-                  as Ok<NormalizedSourceIdentity, StructuredFailure>)
-              .value;
+      final session = (DocumentSession.create(
+        maximumQueuedPublications: 1,
+        maximumListeners: 1,
+        coordinator: phase3Coordinator(),
+        publisher: publisher,
+        uuidGenerator: UuidSequenceGenerator.fromValues([
+          testUuid(910),
+          testUuid(911),
+          testUuid(912),
+        ]),
+        clock: ControllableClock(DateTime.utc(2026)),
+        sourceRegistry: CanonicalSourceRegistry(),
+      ) as Ok<DocumentSession, StructuredFailure>).value;
+      final destination = (NormalizedSourceIdentity.create(
+        'queue-one',
+      ) as Ok<NormalizedSourceIdentity, StructuredFailure>).value;
       final first = session.saveAs(
         destinationIdentity: destination,
         cancellationToken: CancellationController().token,
@@ -481,20 +443,15 @@ void main() {
   test(
     'Session listener ceiling is duplicate-safe, removable and reentrant',
     () {
-      final session =
-          (DocumentSession.create(
-                    maximumQueuedPublications: 1,
-                    maximumListeners: 1,
-                    coordinator: phase3Coordinator(),
-                    publisher: FakeSessionPublisher(),
-                    uuidGenerator: UuidSequenceGenerator.fromValues([
-                      testUuid(920),
-                    ]),
-                    clock: ControllableClock(DateTime.utc(2026)),
-                    sourceRegistry: CanonicalSourceRegistry(),
-                  )
-                  as Ok<DocumentSession, StructuredFailure>)
-              .value;
+      final session = (DocumentSession.create(
+        maximumQueuedPublications: 1,
+        maximumListeners: 1,
+        coordinator: phase3Coordinator(),
+        publisher: FakeSessionPublisher(),
+        uuidGenerator: UuidSequenceGenerator.fromValues([testUuid(920)]),
+        clock: ControllableClock(DateTime.utc(2026)),
+        sourceRegistry: CanonicalSourceRegistry(),
+      ) as Ok<DocumentSession, StructuredFailure>).value;
       var calls = 0;
       late SessionListener listener;
       listener = (_) {
@@ -521,22 +478,18 @@ void main() {
   );
 
   test('queue exceptions release retained publication accounting', () async {
-    final session =
-        (DocumentSession.create(
-                  maximumQueuedPublications: 1,
-                  maximumListeners: 1,
-                  coordinator: phase3Coordinator(),
-                  publisher: FakeSessionPublisher(),
-                  uuidGenerator: _ThrowSecondUuid(testUuid(930), testUuid(931)),
-                  clock: ControllableClock(DateTime.utc(2026)),
-                  sourceRegistry: CanonicalSourceRegistry(),
-                )
-                as Ok<DocumentSession, StructuredFailure>)
-            .value;
-    final destination =
-        (NormalizedSourceIdentity.create('queue-exception')
-                as Ok<NormalizedSourceIdentity, StructuredFailure>)
-            .value;
+    final session = (DocumentSession.create(
+      maximumQueuedPublications: 1,
+      maximumListeners: 1,
+      coordinator: phase3Coordinator(),
+      publisher: FakeSessionPublisher(),
+      uuidGenerator: _ThrowSecondUuid(testUuid(930), testUuid(931)),
+      clock: ControllableClock(DateTime.utc(2026)),
+      sourceRegistry: CanonicalSourceRegistry(),
+    ) as Ok<DocumentSession, StructuredFailure>).value;
+    final destination = (NormalizedSourceIdentity.create(
+      'queue-exception',
+    ) as Ok<NormalizedSourceIdentity, StructuredFailure>).value;
     expect(
       (await session.saveAs(
         destinationIdentity: destination,
@@ -555,21 +508,18 @@ void main() {
     () async {
       final coordinator = phase3Coordinator(maximumListeners: 1);
       final registry = CanonicalSourceRegistry();
-      final session =
-          (DocumentSession.create(
-                    maximumQueuedPublications: 1,
-                    maximumListeners: 1,
-                    coordinator: coordinator,
-                    publisher: FakeSessionPublisher(),
-                    uuidGenerator: UuidSequenceGenerator.fromValues([
-                      testUuid(940),
-                      testUuid(941),
-                    ]),
-                    clock: ControllableClock(DateTime.utc(2026)),
-                    sourceRegistry: registry,
-                  )
-                  as Ok<DocumentSession, StructuredFailure>)
-              .value;
+      final session = (DocumentSession.create(
+        maximumQueuedPublications: 1,
+        maximumListeners: 1,
+        coordinator: coordinator,
+        publisher: FakeSessionPublisher(),
+        uuidGenerator: UuidSequenceGenerator.fromValues([
+          testUuid(940),
+          testUuid(941),
+        ]),
+        clock: ControllableClock(DateTime.utc(2026)),
+        sourceRegistry: registry,
+      ) as Ok<DocumentSession, StructuredFailure>).value;
       final authorization = await _discardAuthorization(session);
       expect(session.close(authorization), isA<Ok<void, StructuredFailure>>());
       expect(
@@ -592,20 +542,15 @@ void main() {
     () {
       final coordinator = phase3Coordinator(maximumListeners: 1);
       final registry = CanonicalSourceRegistry();
-      final session =
-          (DocumentSession.create(
-                    maximumQueuedPublications: 1,
-                    maximumListeners: 1,
-                    coordinator: coordinator,
-                    publisher: FakeSessionPublisher(),
-                    uuidGenerator: UuidSequenceGenerator.fromValues([
-                      testUuid(950),
-                    ]),
-                    clock: ControllableClock(DateTime.utc(2026)),
-                    sourceRegistry: registry,
-                  )
-                  as Ok<DocumentSession, StructuredFailure>)
-              .value;
+      final session = (DocumentSession.create(
+        maximumQueuedPublications: 1,
+        maximumListeners: 1,
+        coordinator: coordinator,
+        publisher: FakeSessionPublisher(),
+        uuidGenerator: UuidSequenceGenerator.fromValues([testUuid(950)]),
+        clock: ControllableClock(DateTime.utc(2026)),
+        sourceRegistry: registry,
+      ) as Ok<DocumentSession, StructuredFailure>).value;
       var notifications = 0;
       session.addListener((_) => notifications += 1);
       expect(session.fail(), isA<Ok<void, StructuredFailure>>());
@@ -631,34 +576,27 @@ void main() {
     () async {
       final coordinator = phase3Coordinator(maximumListeners: 1);
       final registry = CanonicalSourceRegistry();
-      final app =
-          (ApplicationState.create(
-                    sourceRegistry: registry,
-                    maximumListeners: 1,
-                    maximumLifecycleListeners: 1,
-                  )
-                  as Ok<ApplicationState, StructuredFailure>)
-              .value;
+      final app = (ApplicationState.create(
+        sourceRegistry: registry,
+        maximumListeners: 1,
+        maximumLifecycleListeners: 1,
+      ) as Ok<ApplicationState, StructuredFailure>).value;
       final publisher = FakeSessionPublisher();
-      final session =
-          (DocumentSession.create(
-                    maximumQueuedPublications: 1,
-                    maximumListeners: 1,
-                    coordinator: coordinator,
-                    publisher: publisher,
-                    uuidGenerator: UuidSequenceGenerator.fromValues([
-                      testUuid(960),
-                      testUuid(961),
-                    ]),
-                    clock: ControllableClock(DateTime.utc(2026)),
-                    sourceRegistry: registry,
-                  )
-                  as Ok<DocumentSession, StructuredFailure>)
-              .value;
-      final destination =
-          (NormalizedSourceIdentity.create('terminal-pending')
-                  as Ok<NormalizedSourceIdentity, StructuredFailure>)
-              .value;
+      final session = (DocumentSession.create(
+        maximumQueuedPublications: 1,
+        maximumListeners: 1,
+        coordinator: coordinator,
+        publisher: publisher,
+        uuidGenerator: UuidSequenceGenerator.fromValues([
+          testUuid(960),
+          testUuid(961),
+        ]),
+        clock: ControllableClock(DateTime.utc(2026)),
+        sourceRegistry: registry,
+      ) as Ok<DocumentSession, StructuredFailure>).value;
+      final destination = (NormalizedSourceIdentity.create(
+        'terminal-pending',
+      ) as Ok<NormalizedSourceIdentity, StructuredFailure>).value;
       final save = session.saveAs(
         destinationIdentity: destination,
         cancellationToken: CancellationController().token,
@@ -672,15 +610,12 @@ void main() {
       await Future<void>.microtask(() {});
       expect(session.publicationActive, isTrue);
       expect(session.fail(), isA<Err<void, StructuredFailure>>());
-      final fingerprint =
-          (ExternalFingerprint.create(
-                    strength: FingerprintStrength.metadata,
-                    byteLength: 1,
-                    digest: const [1],
-                    maximumDigestBytes: 1,
-                  )
-                  as Ok<ExternalFingerprint, StructuredFailure>)
-              .value;
+      final fingerprint = (ExternalFingerprint.create(
+        strength: FingerprintStrength.metadata,
+        byteLength: 1,
+        digest: const [1],
+        maximumDigestBytes: 1,
+      ) as Ok<ExternalFingerprint, StructuredFailure>).value;
       expect(
         DocumentSession.create(
           maximumQueuedPublications: 1,
@@ -724,25 +659,21 @@ void main() {
     'close decision is owner-bound, one-use, freshness-bound and expiring',
     () {
       final clock = ControllableClock(DateTime.utc(2026));
-      final session =
-          (DocumentSession.create(
-                    maximumQueuedPublications: 16,
-                    maximumListeners: 16,
-                    coordinator: phase3Coordinator(),
-                    publisher: FakeSessionPublisher(),
-                    uuidGenerator: UuidSequenceGenerator.fromValues([
-                      testUuid(810),
-                      testUuid(811),
-                    ]),
-                    clock: clock,
-                    sourceRegistry: CanonicalSourceRegistry(),
-                  )
-                  as Ok<DocumentSession, StructuredFailure>)
-              .value;
-      final request =
-          (session.requestCloseDecision(validity: const Duration(seconds: 1))
-                  as Ok<CloseDecisionRequest, StructuredFailure>)
-              .value;
+      final session = (DocumentSession.create(
+        maximumQueuedPublications: 16,
+        maximumListeners: 16,
+        coordinator: phase3Coordinator(),
+        publisher: FakeSessionPublisher(),
+        uuidGenerator: UuidSequenceGenerator.fromValues([
+          testUuid(810),
+          testUuid(811),
+        ]),
+        clock: clock,
+        sourceRegistry: CanonicalSourceRegistry(),
+      ) as Ok<DocumentSession, StructuredFailure>).value;
+      final request = (session.requestCloseDecision(
+        validity: const Duration(seconds: 1),
+      ) as Ok<CloseDecisionRequest, StructuredFailure>).value;
       final decision = CloseDecision(
         sessionId: session.id,
         token: request.token,
@@ -774,29 +705,24 @@ DocumentSession _session(
   DocumentMutationCoordinator? coordinator,
   FakeSessionPublisher? publisher,
   List<int>? uuidValues,
-}) =>
-    (DocumentSession.create(
-              maximumQueuedPublications: 16,
-              maximumListeners: 16,
-              coordinator: coordinator ?? phase3Coordinator(),
-              publisher: publisher ?? FakeSessionPublisher(),
-              uuidGenerator: UuidSequenceGenerator.fromValues([
-                for (final value in uuidValues ?? [uuid, uuid + 1])
-                  testUuid(value),
-              ]),
-              clock: ControllableClock(DateTime.utc(2026)),
-              sourceRegistry: CanonicalSourceRegistry(),
-            )
-            as Ok<DocumentSession, StructuredFailure>)
-        .value;
+}) => (DocumentSession.create(
+  maximumQueuedPublications: 16,
+  maximumListeners: 16,
+  coordinator: coordinator ?? phase3Coordinator(),
+  publisher: publisher ?? FakeSessionPublisher(),
+  uuidGenerator: UuidSequenceGenerator.fromValues([
+    for (final value in uuidValues ?? [uuid, uuid + 1]) testUuid(value),
+  ]),
+  clock: ControllableClock(DateTime.utc(2026)),
+  sourceRegistry: CanonicalSourceRegistry(),
+) as Ok<DocumentSession, StructuredFailure>).value;
 
 Future<CloseAuthorization> _discardAuthorization(
   DocumentSession session,
 ) async {
-  final request =
-      (session.requestCloseDecision(validity: const Duration(minutes: 1))
-              as Ok<CloseDecisionRequest, StructuredFailure>)
-          .value;
+  final request = (session.requestCloseDecision(
+    validity: const Duration(minutes: 1),
+  ) as Ok<CloseDecisionRequest, StructuredFailure>).value;
   final outcome = await session.resolveCloseDecision(
     request,
     CloseDecision(
@@ -827,16 +753,14 @@ Future<CloseAuthorization> _resolveDiscard(
 
 DocumentSession _sessionWith(Clock clock, UuidSequenceGenerator generator) =>
     (DocumentSession.create(
-              maximumQueuedPublications: 16,
-              maximumListeners: 16,
-              coordinator: phase3Coordinator(),
-              publisher: FakeSessionPublisher(),
-              uuidGenerator: generator,
-              clock: clock,
-              sourceRegistry: CanonicalSourceRegistry(),
-            )
-            as Ok<DocumentSession, StructuredFailure>)
-        .value;
+      maximumQueuedPublications: 16,
+      maximumListeners: 16,
+      coordinator: phase3Coordinator(),
+      publisher: FakeSessionPublisher(),
+      uuidGenerator: generator,
+      clock: clock,
+      sourceRegistry: CanonicalSourceRegistry(),
+    ) as Ok<DocumentSession, StructuredFailure>).value;
 
 final class _MutableClock implements Clock {
   _MutableClock(this.value);

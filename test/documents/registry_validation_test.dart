@@ -232,9 +232,9 @@ void main() {
         references: <ResourceReference>[ResourceReference(resourceId)],
       );
       final envelope = testObject();
-      final resolution =
-          testRegistry(<ObjectTypeDefinition>[definition]).resolve(envelope)
-              as SupportedObjectResolution;
+      final resolution = testRegistry(<ObjectTypeDefinition>[
+        definition,
+      ]).resolve(envelope) as SupportedObjectResolution;
 
       expect(
         resolution.definition.capabilities,
@@ -279,9 +279,8 @@ void main() {
         registry.resolve(testObject()),
         isA<UnavailableObjectBehaviorResolution>(),
       );
-      final validation = DocumentValidator(
-        registry,
-      ).validateWithPlaceholders(_documentWithObject(testObject()));
+      final validation = DocumentValidator(registry)
+          .validateWithPlaceholders(_documentWithObject(testObject()));
       expect(validation.report.warnings, hasLength(1));
       expect(
         validation.report.warnings.single.code,
@@ -445,9 +444,10 @@ void main() {
       expect(result.report.warnings.single.toString(), isNot(contains(secret)));
       expect(result.placeholders.single.toString(), isNot(contains(secret)));
       expect(result.toString(), isNot(contains(secret)));
-      final failure =
-          definition.intrinsicGeometry(object.payload, object.typeSchemaVersion)
-              as Err<Rect2, StructuredFailure>;
+      final failure = definition.intrinsicGeometry(
+        object.payload,
+        object.typeSchemaVersion,
+      ) as Err<Rect2, StructuredFailure>;
       expect(failure.error.toString(), isNot(contains(secret)));
     });
 
@@ -474,9 +474,8 @@ void main() {
             ),
           ],
         );
-        final result = DocumentValidator(
-          testRegistry(),
-        ).validateWithPlaceholders(document);
+        final result = DocumentValidator(testRegistry())
+            .validateWithPlaceholders(document);
 
         expect(result.report.isValid, isTrue);
         expect(

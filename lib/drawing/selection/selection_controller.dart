@@ -343,9 +343,8 @@ final class SelectionController {
         !document.revisions.pages.containsKey(activePageId)) {
       return Err(_selectionFailure('inconsistent_document_state'));
     }
-    final affine = AffineTransform2D.fromOperation(
-      operation,
-    ).fold(onOk: (value) => value, onErr: (_) => null);
+    final affine = AffineTransform2D.fromOperation(operation)
+        .fold(onOk: (value) => value, onErr: (_) => null);
     if (affine == null) return Err(_selectionFailure('invalid_transform'));
     final page = document.root.pages
         .where((page) => page.id == activePageId)

@@ -8,6 +8,7 @@ import 'package:al_note/documents/objects/handwriting.dart';
 import 'package:al_note/documents/objects/image.dart';
 import 'package:al_note/documents/objects/shape.dart';
 import 'package:al_note/documents/objects/text.dart';
+import 'package:al_note/documents/pdf.dart';
 import 'package:al_note/drawing/geometry.dart';
 import 'package:al_note/drawing/renderer.dart';
 import 'package:al_note/ui/canvas/phase6_canvas_runtime.dart';
@@ -85,6 +86,25 @@ void main() {
     maximumRangeRectangles: 100000,
     maximumPendingEdits: 1024,
   ).fold<TextLimits?>(onOk: (value) => value, onErr: (_) => null);
+  final pdfModel = PdfModelLimits.create(
+    maximumPageCount: 10000,
+    maximumCoordinateMagnitude: 1000000,
+    maximumPageDimension: 1000000,
+    maximumPageArea: 1000000000000,
+    maximumUnknownFields: 256,
+    maximumUnknownNodes: 100000,
+    maximumNestingDepth: 32,
+    maximumUnknownStringCodeUnits: 1000000,
+  ).fold<PdfModelLimits?>(onOk: (value) => value, onErr: (_) => null);
+  final pdfProcessing = PdfProcessingLimits.create(
+    maximumEncodedBytes: 50000000,
+    maximumPageCount: 1000,
+    maximumRenderDimension: 4096,
+    maximumRenderPixels: 16777216,
+    maximumExtractedGlyphs: 1000000,
+    maximumLinks: 100000,
+    maximumOperations: 1000000,
+  ).fold<PdfProcessingLimits?>(onOk: (value) => value, onErr: (_) => null);
   final rendering = RenderingLimits.create(
     maximumPrimitives: 400000,
     maximumPointsPerPrimitive: 10000,
@@ -117,6 +137,8 @@ void main() {
       shapeInteraction == null ||
       image == null ||
       text == null ||
+      pdfModel == null ||
+      pdfProcessing == null ||
       geometry == null ||
       rendering == null ||
       history == null ||
@@ -126,6 +148,19 @@ void main() {
     runApp(const AlNoteInitializationFailureApp());
     return;
   }
+  final pdfBackend = kDebugMode
+      ? createApplicationPdfBackend()
+      : const QuarantinedPdfBackend();
+  final localPdfOpenWorkflow = kDebugMode && platformLocalPdfOpeningAvailable
+      ? LocalPdfOpenWorkflow(
+          selector: LocalPdfFileSelector(
+            host: createPlatformLocalPdfPickerHost(),
+          ),
+          backend: pdfBackend,
+          modelLimits: pdfModel,
+          processingLimits: pdfProcessing,
+        )
+      : null;
   final runtime = Phase6CanvasRuntime.create(
     uuidGenerator: uuid,
     handwritingLimits: handwriting,
@@ -133,6 +168,10 @@ void main() {
     shapeInteractionLimits: shapeInteraction,
     imageLimits: image,
     textLimits: text,
+    pdfModelLimits: pdfModel,
+    pdfProcessingLimits: pdfProcessing,
+    pdfBackend: pdfBackend,
+    localPdfOpenWorkflow: localPdfOpenWorkflow,
     penStyle: penStyle,
     geometryLimits: geometry,
     renderingLimits: rendering,
@@ -173,9 +212,8 @@ void main() {
 ResourceLimitSnapshot? _productionStorageLimits() {
   final entries = <({ResourceLimitKey key, ResourceLimitCeiling ceiling})>[];
   for (final requirement in alnoteStorageLimitRequirements.entries) {
-    final key = ResourceLimitKey.parse(
-      requirement.key,
-    ).fold<ResourceLimitKey?>(onOk: (value) => value, onErr: (_) => null);
+    final key = ResourceLimitKey.parse(requirement.key)
+        .fold<ResourceLimitKey?>(onOk: (value) => value, onErr: (_) => null);
     final ceiling = ResourceLimitCeiling.create(
       value: 10000000,
       unit: requirement.value,
@@ -183,7 +221,6 @@ ResourceLimitSnapshot? _productionStorageLimits() {
     if (key == null || ceiling == null) return null;
     entries.add((key: key, ceiling: ceiling));
   }
-  return ResourceLimitSnapshot.create(
-    entries,
-  ).fold<ResourceLimitSnapshot?>(onOk: (value) => value, onErr: (_) => null);
+  return ResourceLimitSnapshot.create(entries)
+      .fold<ResourceLimitSnapshot?>(onOk: (value) => value, onErr: (_) => null);
 }

@@ -73,9 +73,8 @@ final class AlnotePackageCodec {
         ),
       );
     }
-    final validation = DocumentValidator(
-      objectRegistry,
-    ).validate(snapshot.document);
+    final validation = DocumentValidator(objectRegistry)
+        .validate(snapshot.document);
     if (!validation.isValid) {
       return Err<List<int>, StructuredFailure>(
         storageFailure(
@@ -380,17 +379,17 @@ AlnoteDocumentForm _form(DocumentRoot document) => switch (document) {
   StandalonePdfDocument() => AlnoteDocumentForm.standalonePdf,
 };
 
-ResourceMediaType _mediaType(String source) =>
-    ResourceMediaType.parse(source).fold(
+ResourceMediaType _mediaType(String source) => ResourceMediaType.parse(source)
+    .fold(
       onOk: (value) => value,
       onErr: (_) => throw StateError('Invalid trusted media type.'),
     );
 
 SchemaVersion _identitySchemaVersion(SchemaVersion value) => value;
 
-Sha256Digest _trustedDigest(List<int> bytes) =>
-    (Sha256Digest.calculate(bytes) as Ok<Sha256Digest, StructuredFailure>)
-        .value;
+Sha256Digest _trustedDigest(List<int> bytes) => (Sha256Digest.calculate(
+  bytes,
+) as Ok<Sha256Digest, StructuredFailure>).value;
 
 bool _bytesEqual(List<int> left, List<int> right) {
   if (left.length != right.length) return false;

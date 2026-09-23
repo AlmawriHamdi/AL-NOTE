@@ -159,9 +159,8 @@ final class CapabilityEvidence {
       }
       final safeCode =
           initialization.failureCode == null ||
-          RegExp(
-            r'^[a-z][a-z0-9._-]{0,127}$',
-          ).hasMatch(initialization.failureCode!);
+          RegExp(r'^[a-z][a-z0-9._-]{0,127}$')
+              .hasMatch(initialization.failureCode!);
       final validInitialization =
           !initialization.completed || initialization.attempted;
       final validAvailability = switch (availability) {
@@ -245,8 +244,9 @@ final class CapabilityRegistryChange {
 }
 
 /// Receives one complete post-publication capability snapshot.
-typedef CapabilityRegistryListener =
-    void Function(CapabilityRegistryChange change);
+typedef CapabilityRegistryListener = void Function(
+  CapabilityRegistryChange change,
+);
 
 /// Releases one accepted adapter exactly once.
 typedef CapabilityDisposer = Result<void, StructuredFailure> Function();

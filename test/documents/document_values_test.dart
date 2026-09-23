@@ -341,15 +341,13 @@ void main() {
 
     test('titles and names never enter failures or debug strings', () {
       const secret = 'super-sensitive-title';
-      final invalid =
-          DocumentPage.create(
-                id: PageId.fromUuid(testUuid(170)),
-                name: secret,
-                size: modelValue<Size2>(Size2.create(width: 0, height: 1)),
-                layers: <DocumentLayer>[testContentLayer(name: secret)],
-                extensionData: PreservedMap.empty(),
-              )
-              as Err<DocumentPage, StructuredFailure>;
+      final invalid = DocumentPage.create(
+        id: PageId.fromUuid(testUuid(170)),
+        name: secret,
+        size: modelValue<Size2>(Size2.create(width: 0, height: 1)),
+        layers: <DocumentLayer>[testContentLayer(name: secret)],
+        extensionData: PreservedMap.empty(),
+      ) as Err<DocumentPage, StructuredFailure>;
 
       expect(invalid.error.toString(), isNot(contains(secret)));
       expect(testNotebook(title: secret).toString(), isNot(contains(secret)));
@@ -433,6 +431,19 @@ DocumentPage _reconstructPage(DocumentPage source) => modelValue<DocumentPage>(
 DocumentLayer _reconstructLayer(DocumentLayer source) {
   final objects = source.objects.map(_reconstructObject);
   switch (source) {
+    case PdfSourceLayer():
+      return modelValue<PdfSourceLayer>(
+        PdfSourceLayer.create(
+          id: source.id,
+          envelopeVersion: source.envelopeVersion,
+          name: source.name,
+          visible: source.visible,
+          opacity: source.opacity,
+          reference: source.reference,
+          limits: PdfModelLimits.portableStorage,
+          extensionData: _reconstructMap(source.extensionData),
+        ),
+      );
     case ContentLayer():
       return modelValue<ContentLayer>(
         ContentLayer.create(

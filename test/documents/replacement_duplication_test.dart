@@ -616,16 +616,14 @@ void main() {
             ),
           ],
         );
-        final copy =
-            modelValue<DocumentRoot>(
-                  DocumentDuplicator(
-                    uuidGenerator: UuidSequenceGenerator.fromValues(
-                      <UuidIdentifier>[testUuid(452)],
-                    ),
-                    objectRegistry: testRegistry(),
-                  ).duplicateDocument(source),
-                )
-                as NotebookDocument;
+        final copy = modelValue<DocumentRoot>(
+          DocumentDuplicator(
+            uuidGenerator: UuidSequenceGenerator.fromValues(<UuidIdentifier>[
+              testUuid(452),
+            ]),
+            objectRegistry: testRegistry(),
+          ).duplicateDocument(source),
+        ) as NotebookDocument;
 
         expect(copy.id, DocumentId.fromUuid(testUuid(452)));
         expect(copy.sections, source.sections);

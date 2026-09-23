@@ -111,6 +111,13 @@ abstract interface class ObjectWholeHitTestingDefinition {
   });
 }
 
+/// Optional destination-Page clipping for interaction, separate from editable
+/// intrinsic geometry and transform handles.
+abstract interface class ObjectPageClippedHitTestingDefinition {
+  /// Binds immutable Page bounds without changing persistent Object geometry.
+  ObjectHitTestingDefinition withPageBounds(Rect2 bounds);
+}
+
 /// Immutable bounded nonglobal Hit-Testing Registry.
 final class HitTestingRegistry {
   HitTestingRegistry._(this.definitions);
@@ -162,6 +169,36 @@ final class HitTestingRegistry {
 
   /// Captured definitions in deterministic type-key order.
   final Map<ObjectTypeKey, ObjectHitTestingDefinition> definitions;
+
+  /// Returns isolated behavior bound to the destination Page when supported.
+  /// Other types retain their existing interaction behavior.
+  ObjectHitTestingDefinition? definitionForPage(
+    ObjectTypeKey typeKey,
+    DocumentPage page,
+  ) {
+    final captured = definitions[typeKey];
+    if (captured is! _CapturedHitTestingDefinition) return null;
+    final delegate = captured._delegate;
+    if (delegate is! ObjectPageClippedHitTestingDefinition) return captured;
+    try {
+      final bounds = Rect2.fromEdges(
+        left: 0,
+        top: 0,
+        right: page.size.width,
+        bottom: page.size.height,
+      );
+      if (bounds is! Ok<Rect2, StructuredFailure>) return null;
+      return _CapturedHitTestingDefinition(
+        (delegate as ObjectPageClippedHitTestingDefinition).withPageBounds(
+          bounds.value,
+        ),
+        captured.typeKey,
+        captured._maximumBehaviorResults,
+      );
+    } on Object {
+      return null;
+    }
+  }
 }
 
 final class _CapturedHitTestingDefinition
@@ -719,7 +756,10 @@ final class PageHitTester {
         if (objectRegistry.resolve(object) is! SupportedObjectResolution) {
           continue;
         }
-        final definition = hitTestingRegistry.definitions[object.typeKey];
+        final definition = hitTestingRegistry.definitionForPage(
+          object.typeKey,
+          page,
+        );
         if (definition == null) continue;
         if (candidates.length >= maximumCandidates) return null;
         candidates.add(_PageHitCandidate(layer.id, object, definition));

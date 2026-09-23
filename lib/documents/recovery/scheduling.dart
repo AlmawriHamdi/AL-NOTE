@@ -78,8 +78,10 @@ abstract interface class RecoveryTaskSource {
 }
 
 /// Receives a scheduling trigger; `checkpoint` requires a complete checkpoint.
-typedef RecoveryScheduleTrigger =
-    void Function(RecoveryScheduleReason reason, bool checkpoint);
+typedef RecoveryScheduleTrigger = void Function(
+  RecoveryScheduleReason reason,
+  bool checkpoint,
+);
 
 /// Observable state of Recovery scheduling and trigger delivery.
 enum RecoverySchedulingStatus { current, pending, delayed, failed, disposed }
@@ -243,20 +245,18 @@ final class RecoverySchedulingCoordinator {
     }
     if (maximumDelivered &&
         _fire(
-              maximumAge,
-              RecoveryScheduleReason.maximumDirtyAge,
-              checkpoint: false,
-            )
-            is Err<void, StructuredFailure>) {
+          maximumAge,
+          RecoveryScheduleReason.maximumDirtyAge,
+          checkpoint: false,
+        ) is Err<void, StructuredFailure>) {
       deliveredFailure = true;
     }
     if (periodicDelivered &&
         _fire(
-              periodic,
-              RecoveryScheduleReason.periodicCheckpoint,
-              checkpoint: true,
-            )
-            is Err<void, StructuredFailure>) {
+          periodic,
+          RecoveryScheduleReason.periodicCheckpoint,
+          checkpoint: true,
+        ) is Err<void, StructuredFailure>) {
       deliveredFailure = true;
     }
     if (_disposed) return Err(_failure('disposed'));

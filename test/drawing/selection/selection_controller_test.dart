@@ -52,12 +52,11 @@ SelectionTarget target(PageId page, int object) => SelectionTarget.wholeObject(
 
 const int _maximumTestSelectionTargets = 8;
 
-typedef _SelectionControllerConstructor =
-    SelectionController Function({
-      required ObjectRegistry objectRegistry,
-      required CoalescingBoundarySink coalescingBoundarySink,
-      required int maximumTargets,
-    });
+typedef _SelectionControllerConstructor = SelectionController Function({
+  required ObjectRegistry objectRegistry,
+  required CoalescingBoundarySink coalescingBoundarySink,
+  required int maximumTargets,
+});
 
 void main() {
   group('temporary Selection', () {
@@ -322,15 +321,12 @@ void main() {
       final kind = commandValue(
         SelectionSubTargetKind.parse('alnote.stroke.part'),
       );
-      final subTarget =
-          (SelectionTarget.subTarget(
-                    pageId: page,
-                    objectId: ObjectId.fromUuid(testUuid(1)),
-                    kind: kind,
-                    id: SelectionSubTargetId.fromUuid(testUuid(500)),
-                  )
-                  as Ok<SelectionTarget, StructuredFailure>)
-              .value;
+      final subTarget = (SelectionTarget.subTarget(
+        pageId: page,
+        objectId: ObjectId.fromUuid(testUuid(1)),
+        kind: kind,
+        id: SelectionSubTargetId.fromUuid(testUuid(500)),
+      ) as Ok<SelectionTarget, StructuredFailure>).value;
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
         coalescingBoundarySink: BoundaryRecorder(),
@@ -343,10 +339,9 @@ void main() {
     });
 
     test('selection revision overflow changes nothing', () {
-      final maximum =
-          (Revision.create(Revision.maximumValue)
-                  as Ok<Revision, StructuredFailure>)
-              .value;
+      final maximum = (Revision.create(
+        Revision.maximumValue,
+      ) as Ok<Revision, StructuredFailure>).value;
       final root = phase3Notebook();
       final controller = SelectionController(
         objectRegistry: editableTestRegistry(),
@@ -426,19 +421,17 @@ void main() {
       );
       final targets = [selected];
       final memberships = {selected.objectId: layer};
-      final valid =
-          SelectionState.create(
-                activePageId: page,
-                targets: targets,
-                primaryTarget: selected,
-                revision: zero,
-                operationMode: SelectionOperationMode.wholeObject,
-                layerMembership: memberships,
-                aggregateBounds: bounds,
-                transformPreview: null,
-                maximumTargets: 8,
-              )
-              as Ok<SelectionState, SelectionFailure>;
+      final valid = SelectionState.create(
+        activePageId: page,
+        targets: targets,
+        primaryTarget: selected,
+        revision: zero,
+        operationMode: SelectionOperationMode.wholeObject,
+        layerMembership: memberships,
+        aggregateBounds: bounds,
+        transformPreview: null,
+        maximumTargets: 8,
+      ) as Ok<SelectionState, SelectionFailure>;
       targets.clear();
       memberships.clear();
       expect(valid.value.targets, [selected]);
@@ -894,9 +887,10 @@ void main() {
           root: coordinator.snapshot.root,
           targets: [target(page, 1)],
         );
-        final partial =
-            (Vector2.create(x: -5, y: 0) as Ok<Vector2, StructuredFailure>)
-                .value;
+        final partial = (Vector2.create(
+          x: -5,
+          y: 0,
+        ) as Ok<Vector2, StructuredFailure>).value;
         expect(
           controller.beginTransform(
             document: coordinator.snapshot,
@@ -905,9 +899,10 @@ void main() {
           isA<Ok<SelectionState, SelectionFailure>>(),
         );
         final validPreview = controller.state.transformPreview;
-        final unreachable =
-            (Vector2.create(x: 1000, y: 0) as Ok<Vector2, StructuredFailure>)
-                .value;
+        final unreachable = (Vector2.create(
+          x: 1000,
+          y: 0,
+        ) as Ok<Vector2, StructuredFailure>).value;
         expect(
           controller.updateTransform(
             coordinator.snapshot,
@@ -1438,12 +1433,10 @@ void main() {
       final mutableMembership = Map<ObjectId, LayerId>.of(
         valid.targetLayerMembership,
       );
-      final copied =
-          create(
-                membership: mutableMembership,
-                preconditions: valid.preconditions,
-              )
-              as Ok<WholeObjectTransformPreview, SelectionFailure>;
+      final copied = create(
+        membership: mutableMembership,
+        preconditions: valid.preconditions,
+      ) as Ok<WholeObjectTransformPreview, SelectionFailure>;
       mutableMembership.clear();
       expect(copied.value.targetLayerMembership, valid.targetLayerMembership);
       expect(copied.value.targetLayerMembership.clear, throwsUnsupportedError);

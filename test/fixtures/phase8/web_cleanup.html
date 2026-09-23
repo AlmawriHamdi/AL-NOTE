@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Controlled PDFium cleanup regression</title>
+<script>
+  globalThis.pdfiumWasmWorkerUrl = new URL('web_cleanup_worker.js', location.href).href;
+</script>
+<script src="pdfium_client.js"></script>
+<script>
+  (async () => {
+    let result;
+    try {
+      await PdfiumWasmCommunicator.sendCommand('init', {});
+      result = await PdfiumWasmCommunicator.sendCommand('checkCleanup', {
+        baseUrl: new URL('.', location.href).href.replace(/\/$/, ''),
+      });
+    } catch (error) {
+      result = { pass: false, error: String(error) };
+    }
+    document.body.textContent = JSON.stringify(result);
+    await fetch('/result/cleanup', { method: 'POST', body: JSON.stringify(result) });
+  })();
+</script>
+<body>Running controlled cleanup checks</body>

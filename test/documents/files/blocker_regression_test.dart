@@ -162,12 +162,10 @@ void main() {
               dimension: 'object_count',
             ),
           ]) {
-        final opened =
-            _openWithLimits(
-                  _twoPagePackage(withObjects: testCase.withObjects),
-                  phase4Limits(overrides: <String, int>{testCase.key: 1}),
-                )
-                as Completed<OpenedAlnotePackage, StructuredFailure>;
+        final opened = _openWithLimits(
+          _twoPagePackage(withObjects: testCase.withObjects),
+          phase4Limits(overrides: <String, int>{testCase.key: 1}),
+        ) as Completed<OpenedAlnotePackage, StructuredFailure>;
         final outcome = opened.value.materializeSnapshot(
           cancellationToken: CancellationController().token,
         );
@@ -186,24 +184,22 @@ void main() {
 
     test('exact semantic boundaries remain accepted', () {
       final bytes = _twoPagePackage(withObjects: true);
-      final opened =
-          _openWithLimits(
-                bytes,
-                phase4Limits(
-                  overrides: <String, int>{
-                    'alnote.storage.entry_count': ZipDecoder()
-                        .decodeBytes(bytes)
-                        .length,
-                    'alnote.storage.section_count': 1,
-                    'alnote.storage.page_count': 2,
-                    'alnote.storage.layer_count': 2,
-                    'alnote.storage.object_count': 2,
-                    'alnote.storage.resource_count': 0,
-                    'alnote.storage.unknown_entry_count': 0,
-                  },
-                ),
-              )
-              as Completed<OpenedAlnotePackage, StructuredFailure>;
+      final opened = _openWithLimits(
+        bytes,
+        phase4Limits(
+          overrides: <String, int>{
+            'alnote.storage.entry_count': ZipDecoder()
+                .decodeBytes(bytes)
+                .length,
+            'alnote.storage.section_count': 1,
+            'alnote.storage.page_count': 2,
+            'alnote.storage.layer_count': 2,
+            'alnote.storage.object_count': 2,
+            'alnote.storage.resource_count': 0,
+            'alnote.storage.unknown_entry_count': 0,
+          },
+        ),
+      ) as Completed<OpenedAlnotePackage, StructuredFailure>;
       expect(
         opened.value.pageHandles.first.load(
           cancellationToken: CancellationController().token,
@@ -336,12 +332,10 @@ void main() {
         ),
         isA<Err<List<int>, StructuredFailure>>(),
       );
-      final encodedWithLargerPolicy =
-          codec.encode(
-                _extensionSnapshot('extensions/example/a/b/c'),
-                limits: phase4Limits(),
-              )
-              as Ok<List<int>, StructuredFailure>;
+      final encodedWithLargerPolicy = codec.encode(
+        _extensionSnapshot('extensions/example/a/b/c'),
+        limits: phase4Limits(),
+      ) as Ok<List<int>, StructuredFailure>;
       expect(
         AlnotePackageReader(objectRegistry: testRegistry()).openBytes(
           encodedWithLargerPolicy.value,
@@ -389,11 +383,9 @@ void main() {
       }, repairCatalog: false);
       final opened =
           _open(source) as Completed<OpenedAlnotePackage, StructuredFailure>;
-      final materialized =
-          opened.value.materializeSnapshot(
-                cancellationToken: CancellationController().token,
-              )
-              as Completed<AlnotePackageSnapshot, StructuredFailure>;
+      final materialized = opened.value.materializeSnapshot(
+        cancellationToken: CancellationController().token,
+      ) as Completed<AlnotePackageSnapshot, StructuredFailure>;
       final preservation = materialized.value.preservation;
       expect(
         preservation.entryCatalogFields.keys,
@@ -408,14 +400,13 @@ void main() {
       expect(preservation.resourceCatalogFields, hasLength(1));
       expect(preservation.toString(), isNot(contains(hostile)));
 
-      final saved =
-          AlnotePackageCodec(
-                objectRegistry: testRegistry(),
-              ).encode(materialized.value, limits: phase4Limits())
-              as Ok<List<int>, StructuredFailure>;
-      final reopened =
-          _open(saved.value)
-              as Completed<OpenedAlnotePackage, StructuredFailure>;
+      final saved = AlnotePackageCodec(objectRegistry: testRegistry()).encode(
+        materialized.value,
+        limits: phase4Limits(),
+      ) as Ok<List<int>, StructuredFailure>;
+      final reopened = _open(
+        saved.value,
+      ) as Completed<OpenedAlnotePackage, StructuredFailure>;
       expect(
         reopened.value.preservation.entryCatalogFields,
         preservation.entryCatalogFields,
@@ -428,34 +419,27 @@ void main() {
 
     test('known catalog fields safely override conflicting preserved keys', () {
       const hostile = 'hostile-known-override';
-      final preservation =
-          (AlnotePackagePreservation.create(
-                    entryCatalogFields: <String, PreservedMap>{
-                      'mimetype': PreservedMap(<String, PreservedData>{
-                        'path': const PreservedString(hostile),
-                        'schemaVersion': const PreservedString(hostile),
-                        'future': const PreservedString('retained'),
-                      }),
-                    },
-                  )
-                  as Ok<AlnotePackagePreservation, StructuredFailure>)
-              .value;
-      final snapshot =
-          (AlnotePackageSnapshot.create(
-                    document: testNotebook(),
-                    resources: const <DocumentResourceSnapshot>[],
-                    preservation: preservation,
-                  )
-                  as Ok<AlnotePackageSnapshot, StructuredFailure>)
-              .value;
-      final encoded =
-          AlnotePackageCodec(
-                objectRegistry: testRegistry(),
-              ).encode(snapshot, limits: phase4Limits())
-              as Ok<List<int>, StructuredFailure>;
-      final opened =
-          _open(encoded.value)
-              as Completed<OpenedAlnotePackage, StructuredFailure>;
+      final preservation = (AlnotePackagePreservation.create(
+        entryCatalogFields: <String, PreservedMap>{
+          'mimetype': PreservedMap(<String, PreservedData>{
+            'path': const PreservedString(hostile),
+            'schemaVersion': const PreservedString(hostile),
+            'future': const PreservedString('retained'),
+          }),
+        },
+      ) as Ok<AlnotePackagePreservation, StructuredFailure>).value;
+      final snapshot = (AlnotePackageSnapshot.create(
+        document: testNotebook(),
+        resources: const <DocumentResourceSnapshot>[],
+        preservation: preservation,
+      ) as Ok<AlnotePackageSnapshot, StructuredFailure>).value;
+      final encoded = AlnotePackageCodec(objectRegistry: testRegistry()).encode(
+        snapshot,
+        limits: phase4Limits(),
+      ) as Ok<List<int>, StructuredFailure>;
+      final opened = _open(
+        encoded.value,
+      ) as Completed<OpenedAlnotePackage, StructuredFailure>;
       expect(
         opened.value.manifest.entries
             .singleWhere((entry) => entry.path == 'mimetype')
@@ -476,10 +460,9 @@ void main() {
           'future': const PreservedString('value'),
         }),
       };
-      final preservation =
-          (AlnotePackagePreservation.create(entryCatalogFields: source)
-                  as Ok<AlnotePackagePreservation, StructuredFailure>)
-              .value;
+      final preservation = (AlnotePackagePreservation.create(
+        entryCatalogFields: source,
+      ) as Ok<AlnotePackagePreservation, StructuredFailure>).value;
       source.clear();
       expect(preservation.entryCatalogFields, hasLength(1));
       expect(preservation.entryCatalogFields.clear, throwsUnsupportedError);
@@ -851,53 +834,38 @@ void main() {
 }
 
 List<int> _canonicalPackage() {
-  final snapshot =
-      (AlnotePackageSnapshot.create(
-                document: testNotebook(),
-                resources: const <DocumentResourceSnapshot>[],
-              )
-              as Ok<AlnotePackageSnapshot, StructuredFailure>)
-          .value;
-  return (AlnotePackageCodec(
-            objectRegistry: testRegistry(),
-          ).encode(snapshot, limits: phase4Limits())
-          as Ok<List<int>, StructuredFailure>)
-      .value;
+  final snapshot = (AlnotePackageSnapshot.create(
+    document: testNotebook(),
+    resources: const <DocumentResourceSnapshot>[],
+  ) as Ok<AlnotePackageSnapshot, StructuredFailure>).value;
+  return (AlnotePackageCodec(objectRegistry: testRegistry()).encode(
+    snapshot,
+    limits: phase4Limits(),
+  ) as Ok<List<int>, StructuredFailure>).value;
 }
 
 List<int> _extensionPackage(String mediaType) {
-  final opaque =
-      (AlnoteOpaqueEntry.create(
-                path: 'extensions/example/data.bin',
-                mediaType:
-                    (ResourceMediaType.parse(mediaType)
-                            as Ok<ResourceMediaType, StructuredFailure>)
-                        .value,
-                schemaVersion: testSchemaVersion,
-                bytes: const <int>[1, 2, 3],
-              )
-              as Ok<AlnoteOpaqueEntry, StructuredFailure>)
-          .value;
-  final preservation =
-      (AlnotePackagePreservation.create(
-                extensionNamespaces: const <String>['example'],
-                opaqueEntries: <AlnoteOpaqueEntry>[opaque],
-              )
-              as Ok<AlnotePackagePreservation, StructuredFailure>)
-          .value;
-  final snapshot =
-      (AlnotePackageSnapshot.create(
-                document: testNotebook(),
-                resources: const <DocumentResourceSnapshot>[],
-                preservation: preservation,
-              )
-              as Ok<AlnotePackageSnapshot, StructuredFailure>)
-          .value;
-  return (AlnotePackageCodec(
-            objectRegistry: testRegistry(),
-          ).encode(snapshot, limits: phase4Limits())
-          as Ok<List<int>, StructuredFailure>)
-      .value;
+  final opaque = (AlnoteOpaqueEntry.create(
+    path: 'extensions/example/data.bin',
+    mediaType: (ResourceMediaType.parse(
+      mediaType,
+    ) as Ok<ResourceMediaType, StructuredFailure>).value,
+    schemaVersion: testSchemaVersion,
+    bytes: const <int>[1, 2, 3],
+  ) as Ok<AlnoteOpaqueEntry, StructuredFailure>).value;
+  final preservation = (AlnotePackagePreservation.create(
+    extensionNamespaces: const <String>['example'],
+    opaqueEntries: <AlnoteOpaqueEntry>[opaque],
+  ) as Ok<AlnotePackagePreservation, StructuredFailure>).value;
+  final snapshot = (AlnotePackageSnapshot.create(
+    document: testNotebook(),
+    resources: const <DocumentResourceSnapshot>[],
+    preservation: preservation,
+  ) as Ok<AlnotePackageSnapshot, StructuredFailure>).value;
+  return (AlnotePackageCodec(objectRegistry: testRegistry()).encode(
+    snapshot,
+    limits: phase4Limits(),
+  ) as Ok<List<int>, StructuredFailure>).value;
 }
 
 ResourceLimitSnapshot _pathPolicyLimits({
@@ -908,113 +876,77 @@ ResourceLimitSnapshot _pathPolicyLimits({
   final limits = <({ResourceLimitKey key, ResourceLimitCeiling ceiling})>[];
   for (final requirement in alnoteStorageLimitRequirements.entries) {
     if (omit && requirement.key == pathKey) continue;
-    final key =
-        (ResourceLimitKey.parse(requirement.key)
-                as Ok<ResourceLimitKey, StructuredFailure>)
-            .value;
-    final ceiling =
-        (ResourceLimitCeiling.create(
-                  value: requirement.value == ResourceLimitUnit.ratio
-                      ? 1000
-                      : 1000000,
-                  unit: requirement.key == pathKey ? unit : requirement.value,
-                )
-                as Ok<ResourceLimitCeiling, StructuredFailure>)
-            .value;
+    final key = (ResourceLimitKey.parse(
+      requirement.key,
+    ) as Ok<ResourceLimitKey, StructuredFailure>).value;
+    final ceiling = (ResourceLimitCeiling.create(
+      value: requirement.value == ResourceLimitUnit.ratio ? 1000 : 1000000,
+      unit: requirement.key == pathKey ? unit : requirement.value,
+    ) as Ok<ResourceLimitCeiling, StructuredFailure>).value;
     limits.add((key: key, ceiling: ceiling));
   }
-  return (ResourceLimitSnapshot.create(limits)
-          as Ok<ResourceLimitSnapshot, StructuredFailure>)
-      .value;
+  return (ResourceLimitSnapshot.create(
+    limits,
+  ) as Ok<ResourceLimitSnapshot, StructuredFailure>).value;
 }
 
 AlnotePackageSnapshot _extensionSnapshot(String path) {
-  final opaque =
-      (AlnoteOpaqueEntry.create(
-                path: path,
-                mediaType:
-                    (ResourceMediaType.parse('application/example')
-                            as Ok<ResourceMediaType, StructuredFailure>)
-                        .value,
-                schemaVersion: testSchemaVersion,
-                bytes: const <int>[1, 2, 3],
-              )
-              as Ok<AlnoteOpaqueEntry, StructuredFailure>)
-          .value;
-  final preservation =
-      (AlnotePackagePreservation.create(
-                extensionNamespaces: const <String>['example'],
-                opaqueEntries: <AlnoteOpaqueEntry>[opaque],
-              )
-              as Ok<AlnotePackagePreservation, StructuredFailure>)
-          .value;
+  final opaque = (AlnoteOpaqueEntry.create(
+    path: path,
+    mediaType: (ResourceMediaType.parse(
+      'application/example',
+    ) as Ok<ResourceMediaType, StructuredFailure>).value,
+    schemaVersion: testSchemaVersion,
+    bytes: const <int>[1, 2, 3],
+  ) as Ok<AlnoteOpaqueEntry, StructuredFailure>).value;
+  final preservation = (AlnotePackagePreservation.create(
+    extensionNamespaces: const <String>['example'],
+    opaqueEntries: <AlnoteOpaqueEntry>[opaque],
+  ) as Ok<AlnotePackagePreservation, StructuredFailure>).value;
   return (AlnotePackageSnapshot.create(
-            document: testNotebook(),
-            resources: const <DocumentResourceSnapshot>[],
-            preservation: preservation,
-          )
-          as Ok<AlnotePackageSnapshot, StructuredFailure>)
-      .value;
+    document: testNotebook(),
+    resources: const <DocumentResourceSnapshot>[],
+    preservation: preservation,
+  ) as Ok<AlnotePackageSnapshot, StructuredFailure>).value;
 }
 
 List<int> _catalogPackage() {
   final identity = ResourceIdentity.fromUuid(testUuid(70));
-  final catalog =
-      (ResourceCatalog.create(<ResourceCatalogEntry>[
-                ResourceCatalogEntry(identity),
-              ])
-              as Ok<ResourceCatalog, StructuredFailure>)
-          .value;
-  final resource =
-      (DocumentResource.capture(
-                identity: identity,
-                mediaType:
-                    (ResourceMediaType.parse('image/png')
-                            as Ok<ResourceMediaType, StructuredFailure>)
-                        .value,
-                role:
-                    (ResourceRole.parse('alnote.resource.image')
-                            as Ok<ResourceRole, StructuredFailure>)
-                        .value,
-                schemaVersion: testSchemaVersion,
-                bytes: const <int>[7, 8, 9],
-              )
-              as Ok<DocumentResource, StructuredFailure>)
-          .value;
-  final opaque =
-      (AlnoteOpaqueEntry.create(
-                path: 'extensions/example/data.bin',
-                mediaType:
-                    (ResourceMediaType.parse('application/example')
-                            as Ok<ResourceMediaType, StructuredFailure>)
-                        .value,
-                schemaVersion: testSchemaVersion,
-                bytes: const <int>[1, 2, 3],
-              )
-              as Ok<AlnoteOpaqueEntry, StructuredFailure>)
-          .value;
-  final preservation =
-      (AlnotePackagePreservation.create(
-                extensionNamespaces: const <String>['example'],
-                opaqueEntries: <AlnoteOpaqueEntry>[opaque],
-              )
-              as Ok<AlnotePackagePreservation, StructuredFailure>)
-          .value;
-  final snapshot =
-      (AlnotePackageSnapshot.create(
-                document: testNotebook(resources: catalog),
-                resources: <DocumentResourceSnapshot>[
-                  DocumentResourceSnapshot(resource),
-                ],
-                preservation: preservation,
-              )
-              as Ok<AlnotePackageSnapshot, StructuredFailure>)
-          .value;
-  return (AlnotePackageCodec(
-            objectRegistry: testRegistry(),
-          ).encode(snapshot, limits: phase4Limits())
-          as Ok<List<int>, StructuredFailure>)
-      .value;
+  final catalog = (ResourceCatalog.create(<ResourceCatalogEntry>[
+    ResourceCatalogEntry(identity),
+  ]) as Ok<ResourceCatalog, StructuredFailure>).value;
+  final resource = (DocumentResource.capture(
+    identity: identity,
+    mediaType: (ResourceMediaType.parse(
+      'image/png',
+    ) as Ok<ResourceMediaType, StructuredFailure>).value,
+    role: (ResourceRole.parse(
+      'alnote.resource.image',
+    ) as Ok<ResourceRole, StructuredFailure>).value,
+    schemaVersion: testSchemaVersion,
+    bytes: const <int>[7, 8, 9],
+  ) as Ok<DocumentResource, StructuredFailure>).value;
+  final opaque = (AlnoteOpaqueEntry.create(
+    path: 'extensions/example/data.bin',
+    mediaType: (ResourceMediaType.parse(
+      'application/example',
+    ) as Ok<ResourceMediaType, StructuredFailure>).value,
+    schemaVersion: testSchemaVersion,
+    bytes: const <int>[1, 2, 3],
+  ) as Ok<AlnoteOpaqueEntry, StructuredFailure>).value;
+  final preservation = (AlnotePackagePreservation.create(
+    extensionNamespaces: const <String>['example'],
+    opaqueEntries: <AlnoteOpaqueEntry>[opaque],
+  ) as Ok<AlnotePackagePreservation, StructuredFailure>).value;
+  final snapshot = (AlnotePackageSnapshot.create(
+    document: testNotebook(resources: catalog),
+    resources: <DocumentResourceSnapshot>[DocumentResourceSnapshot(resource)],
+    preservation: preservation,
+  ) as Ok<AlnotePackageSnapshot, StructuredFailure>).value;
+  return (AlnotePackageCodec(objectRegistry: testRegistry()).encode(
+    snapshot,
+    limits: phase4Limits(),
+  ) as Ok<List<int>, StructuredFailure>).value;
 }
 
 List<int> _twoPagePackage({required bool withObjects}) {
@@ -1030,24 +962,18 @@ List<int> _twoPagePackage({required bool withObjects}) {
     ],
   );
 
-  final snapshot =
-      (AlnotePackageSnapshot.create(
-                document: testNotebook(
-                  sections: <DocumentSection>[
-                    testSection(
-                      pages: <DocumentPage>[page(20, 10, 1), page(21, 11, 2)],
-                    ),
-                  ],
-                ),
-                resources: const <DocumentResourceSnapshot>[],
-              )
-              as Ok<AlnotePackageSnapshot, StructuredFailure>)
-          .value;
-  return (AlnotePackageCodec(
-            objectRegistry: testRegistry(),
-          ).encode(snapshot, limits: phase4Limits())
-          as Ok<List<int>, StructuredFailure>)
-      .value;
+  final snapshot = (AlnotePackageSnapshot.create(
+    document: testNotebook(
+      sections: <DocumentSection>[
+        testSection(pages: <DocumentPage>[page(20, 10, 1), page(21, 11, 2)]),
+      ],
+    ),
+    resources: const <DocumentResourceSnapshot>[],
+  ) as Ok<AlnotePackageSnapshot, StructuredFailure>).value;
+  return (AlnotePackageCodec(objectRegistry: testRegistry()).encode(
+    snapshot,
+    limits: phase4Limits(),
+  ) as Ok<List<int>, StructuredFailure>).value;
 }
 
 int _centralCount(List<int> source) =>
@@ -1186,9 +1112,10 @@ void _expectLazyPageFailureDimension(
   String dimension,
   List<String> hostile,
 ) {
-  final opened =
-      _openWithLimits(bytes, limits)
-          as Completed<OpenedAlnotePackage, StructuredFailure>;
+  final opened = _openWithLimits(
+    bytes,
+    limits,
+  ) as Completed<OpenedAlnotePackage, StructuredFailure>;
   final outcome = opened.value.pageHandles.first.load(
     cancellationToken: CancellationController().token,
   );
@@ -1253,10 +1180,9 @@ List<int> _rewritePackage(
 Map<String, Object?> _jsonMap(List<int> bytes) =>
     (jsonDecode(utf8.decode(bytes))! as Map<String, Object?>);
 
-String _digest(List<int> bytes) =>
-    (Sha256Digest.calculate(bytes) as Ok<Sha256Digest, StructuredFailure>)
-        .value
-        .hexadecimal;
+String _digest(List<int> bytes) => (Sha256Digest.calculate(
+  bytes,
+) as Ok<Sha256Digest, StructuredFailure>).value.hexadecimal;
 
 List<int> _findSignatures(List<int> bytes, List<int> signature) {
   final matches = <int>[];

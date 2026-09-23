@@ -932,12 +932,12 @@ double? _optionalNumber(PreservedMap data, String key) =>
     data.values.containsKey(key)
     ? _number(data.values[key]) ?? double.nan
     : null;
-PreservedDouble _double(double value) =>
-    (PreservedDouble.create(value) as Ok<PreservedDouble, StructuredFailure>)
-        .value;
-PreservedInteger _integer(int value) =>
-    (PreservedInteger.create(value) as Ok<PreservedInteger, StructuredFailure>)
-        .value;
+PreservedDouble _double(double value) => (PreservedDouble.create(
+  value,
+) as Ok<PreservedDouble, StructuredFailure>).value;
+PreservedInteger _integer(int value) => (PreservedInteger.create(
+  value,
+) as Ok<PreservedInteger, StructuredFailure>).value;
 
 Result<List<T>, StructuredFailure> _capture<T>(
   Iterable<T> source,
@@ -1006,21 +1006,20 @@ bool _unknownDataAllowed(
   return true;
 }
 
-ValidationIssue _invalidIssue() =>
-    (ValidationIssue.create(
-              code: ValidationIssueCode.invalidObjectPayload,
-              severity: ValidationSeverity.error,
-              path:
-                  (ValidationPath.fromSegments(const <ValidationPathSegment>[])
-                          as Ok<ValidationPath, StructuredFailure>)
-                      .value,
-            )
-            as Ok<ValidationIssue, StructuredFailure>)
-        .value;
+ValidationIssue _invalidIssue() => (ValidationIssue.create(
+  code: ValidationIssueCode.invalidObjectPayload,
+  severity: ValidationSeverity.error,
+  path: (ValidationPath.fromSegments(
+    const <ValidationPathSegment>[],
+  ) as Ok<ValidationPath, StructuredFailure>).value,
+) as Ok<ValidationIssue, StructuredFailure>).value;
 Rect2 _rect(double left, double top, double right, double bottom) =>
-    (Rect2.fromEdges(left: left, top: top, right: right, bottom: bottom)
-            as Ok<Rect2, StructuredFailure>)
-        .value;
+    (Rect2.fromEdges(
+      left: left,
+      top: top,
+      right: right,
+      bottom: bottom,
+    ) as Ok<Rect2, StructuredFailure>).value;
 SchemaVersion _schemaOne() =>
     (SchemaVersion.create(1) as Ok<SchemaVersion, StructuredFailure>).value;
 

@@ -1,0 +1,16 @@
+[
+  {
+    "file": "ordinary.pdf",
+    "sha256": "d84471e20a0e087529e6ef4ab84a24bb56dcf9b96caab28ef0eae85ef64cd7ac",
+    "bytes": 1300,
+    "generator": "tool/linux_pdf/check_pdf.py:generated_document",
+    "repetitions": 1
+  },
+  {
+    "file": "heavy.pdf",
+    "sha256": "b030997ef3a8c05f6e3242c6c7068708089c7d14568fe2438ba93238cfea3d36",
+    "bytes": 46751,
+    "generator": "tool/linux_pdf/check_pdf.py:generated_document",
+    "repetitions": 100000
+  }
+]

@@ -2067,9 +2067,8 @@ void main() {
 
     test('Image byte capture reads each accepted current exactly once', () {
       final stateful = _StatefulCurrentIterable(_pngFixture);
-      final accepted = ImageHeaderPreflight(
-        _imageLimits,
-      ).inspect(encodedBytes: stateful, mediaType: _mediaType('image/png'));
+      final accepted = ImageHeaderPreflight(_imageLimits)
+          .inspect(encodedBytes: stateful, mediaType: _mediaType('image/png'));
       expect(accepted, isA<Ok<ImagePreflightResult, StructuredFailure>>());
       expect(stateful.currentReads, _pngFixture.length);
 
@@ -3277,9 +3276,8 @@ void main() {
   test('Flutter layout adapter returns bounded scalar-position geometry', () {
     final payload = _textPayload(['A👩‍💻B', 'مرحبا']);
     final range = _ok(TextRange.create(_position(0, 1), _position(0, 4)));
-    final layout = FlutterTextLayoutEngine(
-      _textLimits,
-    ).layout(TextLayoutRequest(payload: payload, range: range));
+    final layout = FlutterTextLayoutEngine(_textLimits)
+        .layout(TextLayoutRequest(payload: payload, range: range));
     expect(layout, isA<Ok<TextLayoutSnapshot, StructuredFailure>>());
     final snapshot =
         (layout as Ok<TextLayoutSnapshot, StructuredFailure>).value;
@@ -3479,9 +3477,8 @@ void main() {
         height: 120,
       );
       final pixelLayout = _ok(
-        FlutterTextLayoutEngine(
-          _textLimits,
-        ).layout(TextLayoutRequest(payload: pixelPayload)),
+        FlutterTextLayoutEngine(_textLimits)
+            .layout(TextLayoutRequest(payload: pixelPayload)),
       );
       final primitive = _ok(
         TextRenderingDefinition(
@@ -3814,9 +3811,8 @@ void main() {
       height: 120,
     );
     final snapshot = _ok(
-      FlutterTextLayoutEngine(
-        _textLimits,
-      ).layout(TextLayoutRequest(payload: base)),
+      FlutterTextLayoutEngine(_textLimits)
+          .layout(TextLayoutRequest(payload: base)),
     );
     final fixed = _FixedTextLayoutEngine(snapshot);
     final definition = TextObjectTypeDefinition(_textLimits, fixed);
@@ -4095,9 +4091,8 @@ void main() {
       embedded.encode(),
     );
     expect(
-      FlutterTextLayoutEngine(
-        _textLimits,
-      ).layout(TextLayoutRequest(payload: embedded)),
+      FlutterTextLayoutEngine(_textLimits)
+          .layout(TextLayoutRequest(payload: embedded)),
       isA<Ok<TextLayoutSnapshot, StructuredFailure>>(),
     );
     final base = _textPayload(['x']);
@@ -4761,9 +4756,8 @@ void main() {
               ]),
             });
       expect(
-        _ok(
-          TextPayload.decode(candidate, limits: _textLimits),
-        ).isSimpleDialogEditable,
+        _ok(TextPayload.decode(candidate, limits: _textLimits))
+            .isSimpleDialogEditable,
         isFalse,
       );
     }
@@ -4853,9 +4847,8 @@ void main() {
       ]),
     });
     expect(
-      _ok(
-        TextPayload.decode(sharedCandidate, limits: _textLimits),
-      ).isSimpleDialogEditable,
+      _ok(TextPayload.decode(sharedCandidate, limits: _textLimits))
+          .isSimpleDialogEditable,
       isFalse,
     );
   });
@@ -5952,9 +5945,8 @@ void main() {
       ),
     );
     final bytes = _ok(
-      AlnotePackageCodec(
-        objectRegistry: registry,
-      ).encode(package, limits: phase4Limits()),
+      AlnotePackageCodec(objectRegistry: registry)
+          .encode(package, limits: phase4Limits()),
     );
     final opened = AlnotePackageReader(objectRegistry: registry).openBytes(
       bytes,

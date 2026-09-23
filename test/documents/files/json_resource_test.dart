@@ -110,9 +110,9 @@ void main() {
 
     test('preserves Unicode and structural unknown data canonically', () {
       final source = utf8.encode('{"unknown":{"emoji":"📚","n":2.0}}');
-      final decoded =
-          (_json().decode(source) as Ok<PreservedData, StructuredFailure>)
-              .value;
+      final decoded = (_json().decode(
+        source,
+      ) as Ok<PreservedData, StructuredFailure>).value;
       final encoded =
           (_json().encode(decoded) as Ok<List<int>, StructuredFailure>).value;
       expect(
@@ -124,10 +124,9 @@ void main() {
 
   group('resource integrity values', () {
     test('calculates and parses exact lowercase SHA-256', () {
-      final digest =
-          (Sha256Digest.calculate(utf8.encode('abc'))
-                  as Ok<Sha256Digest, StructuredFailure>)
-              .value;
+      final digest = (Sha256Digest.calculate(
+        utf8.encode('abc'),
+      ) as Ok<Sha256Digest, StructuredFailure>).value;
       expect(
         digest.hexadecimal,
         'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
@@ -148,16 +147,13 @@ void main() {
 
     test('captures immutable bytes and derives the digest path', () {
       final source = <int>[1, 2, 3];
-      final resource =
-          (DocumentResource.capture(
-                    identity: ResourceIdentity.fromUuid(testUuid(70)),
-                    mediaType: _media('image/png'),
-                    role: _role('alnote.resource.image'),
-                    schemaVersion: testSchemaVersion,
-                    bytes: source,
-                  )
-                  as Ok<DocumentResource, StructuredFailure>)
-              .value;
+      final resource = (DocumentResource.capture(
+        identity: ResourceIdentity.fromUuid(testUuid(70)),
+        mediaType: _media('image/png'),
+        role: _role('alnote.resource.image'),
+        schemaVersion: testSchemaVersion,
+        bytes: source,
+      ) as Ok<DocumentResource, StructuredFailure>).value;
       source[0] = 9;
 
       expect(resource.bytes, <int>[1, 2, 3]);
@@ -170,9 +166,9 @@ void main() {
 
     test('rejects size, hash, and path mismatches', () {
       final bytes = <int>[1, 2, 3];
-      final digest =
-          (Sha256Digest.calculate(bytes) as Ok<Sha256Digest, StructuredFailure>)
-              .value;
+      final digest = (Sha256Digest.calculate(
+        bytes,
+      ) as Ok<Sha256Digest, StructuredFailure>).value;
       Result<DocumentResource, StructuredFailure> create({
         int length = 3,
         Sha256Digest? declared,
@@ -196,10 +192,9 @@ void main() {
       );
       expect(
         create(
-          declared:
-              (Sha256Digest.calculate(<int>[4])
-                      as Ok<Sha256Digest, StructuredFailure>)
-                  .value,
+          declared: (Sha256Digest.calculate(<int>[
+            4,
+          ]) as Ok<Sha256Digest, StructuredFailure>).value,
         ),
         isA<Err<DocumentResource, StructuredFailure>>(),
       );
@@ -250,10 +245,9 @@ void main() {
         expect(result, isA<Err<Object, StructuredFailure>>());
         expect(result.toString(), isNot(contains(secret)));
       }
-      final digest =
-          (Sha256Digest.calculate(<int>[1])
-                  as Ok<Sha256Digest, StructuredFailure>)
-              .value;
+      final digest = (Sha256Digest.calculate(<int>[
+        1,
+      ]) as Ok<Sha256Digest, StructuredFailure>).value;
       expect(digest.toString(), 'Sha256Digest(redacted)');
       expect(digest.toString(), isNot(contains(digest.hexadecimal)));
     });
@@ -265,23 +259,21 @@ void main() {
         AlnoteStorageLimits.fromSnapshot(phase4Limits()),
         isA<Ok<AlnoteStorageLimits, StructuredFailure>>(),
       );
-      final empty =
-          (ResourceLimitSnapshot.create(const [])
-                  as Ok<ResourceLimitSnapshot, StructuredFailure>)
-              .value;
-      final failure =
-          AlnoteStorageLimits.fromSnapshot(empty)
-              as Err<AlnoteStorageLimits, StructuredFailure>;
+      final empty = (ResourceLimitSnapshot.create(
+        const [],
+      ) as Ok<ResourceLimitSnapshot, StructuredFailure>).value;
+      final failure = AlnoteStorageLimits.fromSnapshot(
+        empty,
+      ) as Err<AlnoteStorageLimits, StructuredFailure>;
       expect(failure.error.code, startsWith('documents.storage.'));
       expect(failure.toString(), isNot(contains('sensitive payload')));
     });
 
     test('affine storage bridge round-trips exact coefficients', () {
       final coefficients = <double>[1.25, 0.125, -0.25, 2.0, 3.5, -4.75];
-      final transform =
-          (AffineTransform2D.restoreFromStorage(coefficients)
-                  as Ok<AffineTransform2D, StructuredFailure>)
-              .value;
+      final transform = (AffineTransform2D.restoreFromStorage(
+        coefficients,
+      ) as Ok<AffineTransform2D, StructuredFailure>).value;
       expect(transform.storageCoefficients, coefficients);
       expect(
         AffineTransform2D.restoreFromStorage(transform.storageCoefficients),
@@ -314,17 +306,17 @@ BoundedJsonCodec _json() => const BoundedJsonCodec(
   maximumStringCodeUnits: 1000,
 );
 
-PreservedInteger _integer(int value) =>
-    (PreservedInteger.create(value) as Ok<PreservedInteger, StructuredFailure>)
-        .value;
+PreservedInteger _integer(int value) => (PreservedInteger.create(
+  value,
+) as Ok<PreservedInteger, StructuredFailure>).value;
 
-PreservedDouble _double(double value) =>
-    (PreservedDouble.create(value) as Ok<PreservedDouble, StructuredFailure>)
-        .value;
+PreservedDouble _double(double value) => (PreservedDouble.create(
+  value,
+) as Ok<PreservedDouble, StructuredFailure>).value;
 
-ResourceMediaType _media(String value) =>
-    (ResourceMediaType.parse(value) as Ok<ResourceMediaType, StructuredFailure>)
-        .value;
+ResourceMediaType _media(String value) => (ResourceMediaType.parse(
+  value,
+) as Ok<ResourceMediaType, StructuredFailure>).value;
 
 ResourceRole _role(String value) =>
     (ResourceRole.parse(value) as Ok<ResourceRole, StructuredFailure>).value;

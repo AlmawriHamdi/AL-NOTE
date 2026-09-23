@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
+
 import 'package:al_note/app/al_note_app.dart';
 import 'package:al_note/core/primitives.dart';
 import 'package:al_note/documents/commands.dart';
 import 'package:al_note/documents/document_model.dart';
 import 'package:al_note/documents/files.dart';
 import 'package:al_note/documents/objects/handwriting.dart';
+import 'package:al_note/documents/pdf/pdf_admission_policy.dart';
+import 'package:al_note/documents/pdf/src/linux/linux_pdf_backend.dart';
 import 'package:al_note/drawing/geometry.dart';
 import 'package:al_note/drawing/renderer.dart';
 import 'package:al_note/drawing/viewport.dart';
@@ -20,13 +24,32 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pdfrx/pdfrx.dart' as pdfrx;
 
 import 'support/document_model_test_support.dart';
+import 'support/pdf_geometry_checks.dart';
 import 'support/phase3_test_support.dart';
 import 'support/uuid_sequence_generator.dart';
 
+part 'support/pdf_canvas_followup_checks.dart';
+part 'support/pdf_notebook_import_checks.dart';
+part 'support/pdf_object_insertion_checks.dart';
+part 'support/pdf_observer_atomicity_checks.dart';
+part 'support/pdf_cleanup_publication_checks.dart';
+part 'support/pdf_source_style_checks.dart';
+part 'support/pdf_linux_prototype_checks.dart';
+part 'support/pdf_linux_integration_checks.dart';
+
 /// Verifies the accessible Phase 6 Canvas shell and pointer route.
 void main() {
+  _pdfFollowupChecks();
+  _pdfNotebookImportChecks();
+  _pdfObjectInsertionChecks();
+  _pdfObserverChecks();
+  _pdfCleanupPublicationChecks();
+  _pdfSourceStyleChecks();
+  _pdfLinuxPrototypeChecks();
+  _pdfLinuxIntegrationChecks();
   testWidgets('debug Diagnostics exposes only the bounded Phase 6 trace', (
     WidgetTester tester,
   ) async {
@@ -110,7 +133,7 @@ void main() {
   });
 
   testWidgets('renders Phase 6 controls and commits pointer handwriting', (
-    final WidgetTester tester,
+    WidgetTester tester,
   ) async {
     await tester.pumpWidget(AlNoteApp(runtime: _runtime()));
 
@@ -144,6 +167,359 @@ void main() {
           .onPressed,
       isNotNull,
     );
+  });
+
+  testWidgets(
+    'Open PDF publishes all pages atomically and paints beneath annotations',
+    (tester) async {
+      final modelLimits = _widgetPdfModelLimits();
+      final processingLimits = _widgetPdfProcessingLimits();
+      final backend = _WidgetPdfBackend(modelLimits);
+      final workflow = LocalPdfOpenWorkflow(
+        selector: LocalPdfFileSelector(
+          host: _WidgetPdfPicker(markedPdf(geometryCases.first, 0)),
+        ),
+        backend: backend,
+        modelLimits: modelLimits,
+        processingLimits: processingLimits,
+      );
+      final runtime = _runtime(
+        pdfProcessingLimits: processingLimits,
+        pdfBackend: backend,
+        localPdfOpenWorkflow: workflow,
+      );
+      await tester.pumpWidget(AlNoteApp(runtime: runtime));
+
+      final openPdf = find.byKey(const Key('open-pdf'));
+      await tester.ensureVisible(openPdf);
+      await tester.tap(openPdf);
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pumpAndSettle();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<Text>(find.byKey(const Key('canvas-status'))).data,
+        isNot('Opening PDF…'),
+      );
+      final root = _canvasPainter(tester).currentRoot;
+      expect(root, isA<StandalonePdfDocument>());
+      expect(root.pages, hasLength(2));
+      expect(root.resources.entries, hasLength(1));
+      expect(backend.renderedPageIndexes, contains(0));
+      expect(_documentPainter(tester).hasRenderedPdfPage, isTrue);
+      expect(_documentPainter(tester).displaysPdfPlaceholder, isFalse);
+      expect(find.text('Page 1 of 2'), findsOneWidget);
+      expect(root.pages.first.layers.first, isA<PdfSourceLayer>());
+      expect(root.pages.first.layers.last, isA<ContentLayer>());
+
+      await tester.tap(find.byKey(const Key('next-page')));
+      await tester.pumpAndSettle();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pumpAndSettle();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Page 2 of 2'), findsOneWidget);
+      expect(_documentPainter(tester).hasRenderedPdfPage, isTrue);
+      expect(backend.renderedPageIndexes, containsAll(<int>[0, 1]));
+
+      final canvas = find.bySemanticsLabel('Handwriting canvas');
+      final center = tester.getCenter(canvas);
+      final pen = await tester.startGesture(
+        center,
+        kind: PointerDeviceKind.stylus,
+      );
+      await pen.moveBy(const Offset(24, 24));
+      await pen.up();
+      await tester.pumpAndSettle();
+      final afterInk = _canvasPainter(tester).currentRoot;
+      expect(
+        afterInk.pages[0].layers.whereType<ContentLayer>().single.objects,
+        isEmpty,
+      );
+      expect(
+        afterInk.pages[1].layers.whereType<ContentLayer>().single.objects,
+        hasLength(1),
+      );
+      expect(_documentPainter(tester).hasRenderedPdfPage, isTrue);
+
+      await tester.tap(find.text('Save in memory'));
+      await tester.pumpAndSettle();
+      final saved = _canvasPainter(tester).savedRoot;
+      await tester.tap(find.text('Reopen saved'));
+      await tester.pumpAndSettle();
+      expect(_canvasPainter(tester).currentRoot, saved);
+      expect(_canvasPainter(tester).currentRoot.pages, hasLength(2));
+      expect(find.text('Page 1 of 2'), findsOneWidget);
+    },
+  );
+
+  for (final rejection in <(bool, PdfInspectOutcome, String)>[
+    (
+      false,
+      const PdfBackendBusy(),
+      'PDF processing is busy. Try opening again when it finishes.',
+    ),
+    (false, const PdfCorrupt(), 'This PDF could not be opened.'),
+    (
+      true,
+      const PdfCorrupt(),
+      'Not an approved development fixture; PDF remains quarantined',
+    ),
+    (false, const PdfInspectionFailed(), 'This PDF could not be opened.'),
+    (
+      false,
+      const PdfPasswordRequired(),
+      'This PDF requires a password. Password-protected PDFs are not supported in this test build.',
+    ),
+    (
+      false,
+      const PdfUnsupported(),
+      'This PDF uses features not supported in this test build.',
+    ),
+    (
+      false,
+      const PdfInspectionLimitExceeded(),
+      'This PDF exceeds the supported size or processing limits.',
+    ),
+    (
+      false,
+      const PdfBackendUnavailable(),
+      'PDF opening is unavailable because Linux isolation could not be started or verified.',
+    ),
+  ]) {
+    final unapproved = rejection.$1;
+    testWidgets(
+      '$unapproved ${rejection.$2} rejected PDF open leaves the live document untouched',
+      (tester) async {
+        final modelLimits = _widgetPdfModelLimits();
+        final processingLimits = _widgetPdfProcessingLimits();
+        final backend = _WidgetPdfBackend(
+          modelLimits,
+          inspectionFailure: rejection.$2,
+        );
+        final generator = _RuntimeCountingUuidGenerator();
+        final runtime = _runtime(
+          uuidGenerator: generator,
+          pdfProcessingLimits: processingLimits,
+          pdfBackend: backend,
+          localPdfOpenWorkflow: LocalPdfOpenWorkflow(
+            selector: LocalPdfFileSelector(
+              host: _WidgetPdfPicker(
+                unapproved
+                    ? <int>[37, 80, 68, 70]
+                    : markedPdf(geometryCases.first, 0),
+              ),
+            ),
+            backend: backend,
+            modelLimits: modelLimits,
+            processingLimits: processingLimits,
+          ),
+        );
+        await tester.pumpWidget(AlNoteApp(runtime: runtime));
+        final before = runtime.initialCoordinator.snapshot;
+        final uuidCalls = generator.calls;
+        final selection = _canvasPainter(tester).selectionFrame;
+
+        final openPdf = find.byKey(const Key('open-pdf'));
+        await tester.ensureVisible(openPdf);
+        await tester.tap(openPdf);
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pumpAndSettle();
+
+        final after = runtime.initialCoordinator.snapshot;
+        expect(after.root, same(before.root));
+        expect(after.revisions, before.revisions);
+        expect(after.canUndo, before.canUndo);
+        expect(after.canRedo, before.canRedo);
+        expect(after.isDirty, before.isDirty);
+        expect(generator.calls, uuidCalls);
+        expect(_canvasPainter(tester).selectionFrame, selection);
+        expect(backend.inspections, unapproved ? 0 : 1);
+        expect(backend.renderedPageIndexes, isEmpty);
+        expect(_canvasPainter(tester).currentRoot, same(before.root));
+        expect(
+          tester.widget<Text>(find.byKey(const Key('canvas-status'))).data,
+          rejection.$3,
+        );
+        expect(find.textContaining('%PDF'), findsNothing);
+      },
+    );
+  }
+
+  testWidgets(
+    'unapproved picker preserves inline draft through lifecycle changes',
+    (tester) async {
+      final generator = _RuntimeCountingUuidGenerator();
+      final backend = _WidgetPdfBackend(_widgetPdfModelLimits());
+      final picker = _PendingWidgetPdfPicker();
+      final runtime = _runtime(
+        uuidGenerator: generator,
+        pdfProcessingLimits: _widgetPdfProcessingLimits(),
+        pdfBackend: backend,
+        localPdfOpenWorkflow: LocalPdfOpenWorkflow(
+          selector: LocalPdfFileSelector(host: picker),
+          backend: backend,
+          modelLimits: _widgetPdfModelLimits(),
+          processingLimits: _widgetPdfProcessingLimits(),
+        ),
+      );
+      await tester.pumpWidget(AlNoteApp(runtime: runtime));
+      await tester.tap(find.text('text'));
+      await tester.pump();
+      final create = await tester.startGesture(
+        tester.getCenter(find.bySemanticsLabel('Handwriting canvas')),
+        kind: PointerDeviceKind.mouse,
+      );
+      await create.up();
+      await tester.pump();
+      await tester.enterText(
+        find.byKey(const Key('text-object-editor')),
+        'uncommitted draft',
+      );
+      final before = runtime.initialCoordinator.snapshot;
+      final calls = generator.calls;
+      await tester.ensureVisible(find.byKey(const Key('open-pdf')));
+      await tester.tap(find.byKey(const Key('open-pdf')));
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      picker.done.complete(const _WidgetPdfHandle([37, 80, 68, 70]));
+      await tester.pumpAndSettle();
+      expect(runtime.initialCoordinator.snapshot.root, same(before.root));
+      expect(runtime.initialCoordinator.snapshot.revisions, before.revisions);
+      expect(runtime.initialCoordinator.snapshot.canUndo, before.canUndo);
+      expect(generator.calls, calls);
+      expect(backend.inspections, 0);
+      expect(find.byKey(const Key('text-object-editor')), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('text-object-editor')))
+            .controller!
+            .text,
+        'uncommitted draft',
+      );
+    },
+  );
+
+  testWidgets(
+    'PDF cleanup lifecycle blocks opening and retains the live editor through disposal',
+    (tester) async {
+      final backend = _WidgetPdfBackend(_widgetPdfModelLimits());
+      final runtime = _runtime(
+        pdfBackend: backend,
+        pdfProcessingLimits: _widgetPdfProcessingLimits(),
+        localPdfOpenWorkflow: LocalPdfOpenWorkflow(
+          selector: LocalPdfFileSelector(
+            host: _WidgetPdfPicker(markedPdf(geometryCases.first, 0)),
+          ),
+          backend: backend,
+          modelLimits: _widgetPdfModelLimits(),
+          processingLimits: _widgetPdfProcessingLimits(),
+        ),
+      );
+      await tester.pumpWidget(AlNoteApp(runtime: runtime));
+      await tester.tap(find.text('text'));
+      await tester.pump();
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.bySemanticsLabel('Handwriting canvas')),
+        kind: PointerDeviceKind.mouse,
+      );
+      await gesture.up();
+      await tester.pump();
+      await tester.enterText(
+        find.byKey(const Key('text-object-editor')),
+        'retained cleanup draft',
+      );
+      final before = runtime.initialCoordinator.snapshot;
+      final history = runtime.initialCoordinator.retainedHistoryCount;
+      var publications = 0;
+      _ok(runtime.initialCoordinator.addListener((_) => publications++));
+      backend.lifecycle.update(PdfBackendAvailability.cleanupPending);
+      await tester.pump();
+      expect(
+        find.text(
+          'PDF processing is unavailable while the previous worker is being stopped.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        tester.widget<TextButton>(find.byKey(const Key('open-pdf'))).onPressed,
+        isNull,
+      );
+      _expectPdfSnapshotUnchanged(runtime.initialCoordinator.snapshot, before);
+      expect(runtime.initialCoordinator.retainedHistoryCount, history);
+      expect(publications, 0);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('text-object-editor')))
+            .controller!
+            .text,
+        'retained cleanup draft',
+      );
+      backend.lifecycle.update(PdfBackendAvailability.available);
+      await tester.pump();
+      expect(
+        tester.widget<TextButton>(find.byKey(const Key('open-pdf'))).onPressed,
+        isNotNull,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      backend.lifecycle.update(PdfBackendAvailability.cleanupPending);
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('unavailable saved PDF rendering shows a stable placeholder', (
+    tester,
+  ) async {
+    final modelLimits = _widgetPdfModelLimits();
+    final processingLimits = _widgetPdfProcessingLimits();
+    final backend = _WidgetPdfBackend(modelLimits, failRender: true);
+    final runtime = _runtime(
+      pdfProcessingLimits: processingLimits,
+      pdfBackend: backend,
+      localPdfOpenWorkflow: LocalPdfOpenWorkflow(
+        selector: LocalPdfFileSelector(
+          host: _WidgetPdfPicker(markedPdf(geometryCases.first, 0)),
+        ),
+        backend: backend,
+        modelLimits: modelLimits,
+        processingLimits: processingLimits,
+      ),
+    );
+    await tester.pumpWidget(AlNoteApp(runtime: runtime));
+    final openPdf = find.byKey(const Key('open-pdf'));
+    await tester.ensureVisible(openPdf);
+    await tester.tap(openPdf);
+    await tester.pumpAndSettle();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(_canvasPainter(tester).currentRoot, isA<StandalonePdfDocument>());
+    expect(_documentPainter(tester).hasRenderedPdfPage, isFalse);
+    expect(_documentPainter(tester).displaysPdfPlaceholder, isTrue);
+    expect(find.text('This page could not be rendered.'), findsOneWidget);
+
+    await tester.tap(find.text('Save in memory'));
+    await tester.pumpAndSettle();
+    final saved = _canvasPainter(tester).savedRoot;
+    await tester.tap(find.text('Reopen saved'));
+    await tester.pumpAndSettle();
+    expect(_canvasPainter(tester).currentRoot, saved);
+    expect(_documentPainter(tester).displaysPdfPlaceholder, isTrue);
   });
 
   testWidgets('Canvas disposal releases Pen pictures and stale callbacks', (
@@ -1453,9 +1829,8 @@ void main() {
       ),
     );
     final emptyBytes = _ok(
-      AlnotePackageCodec(
-        objectRegistry: roomy.objectRegistry,
-      ).encode(emptySnapshot, limits: roomy.storageLimits),
+      AlnotePackageCodec(objectRegistry: roomy.objectRegistry)
+          .encode(emptySnapshot, limits: roomy.storageLimits),
     );
     final runtime = _runtime(storageCeiling: emptyBytes.length);
     await tester.pumpWidget(AlNoteApp(runtime: runtime));
@@ -6317,8 +6692,8 @@ void main() {
     expect(
       _runtimeResult(
         uuidGenerator: exactGenerator,
-        maximumRenderingDefinitions: 4,
-        maximumHitTestingDefinitions: 4,
+        maximumRenderingDefinitions: 5,
+        maximumHitTestingDefinitions: 5,
         maximumTools: 5,
         maximumActions: 5,
         maximumBindings: 11,
@@ -6327,11 +6702,11 @@ void main() {
     );
     expect(exactGenerator.calls, 5);
     for (final limits in [
-      (rendering: 3, hits: 4, tools: 5, actions: 5, bindings: 11),
-      (rendering: 4, hits: 3, tools: 5, actions: 5, bindings: 11),
-      (rendering: 4, hits: 4, tools: 4, actions: 5, bindings: 11),
-      (rendering: 4, hits: 4, tools: 5, actions: 4, bindings: 11),
-      (rendering: 4, hits: 4, tools: 5, actions: 5, bindings: 10),
+      (rendering: 4, hits: 5, tools: 5, actions: 5, bindings: 11),
+      (rendering: 5, hits: 4, tools: 5, actions: 5, bindings: 11),
+      (rendering: 5, hits: 5, tools: 4, actions: 5, bindings: 11),
+      (rendering: 5, hits: 5, tools: 5, actions: 4, bindings: 11),
+      (rendering: 5, hits: 5, tools: 5, actions: 5, bindings: 10),
     ]) {
       final generator = _RuntimeCountingUuidGenerator();
       expect(
@@ -6549,6 +6924,9 @@ Future<void> _verifyUnsupportedTextDialog(
 
 Phase6CanvasRuntime _runtime({
   UuidGenerator? uuidGenerator,
+  PdfProcessingLimits? pdfProcessingLimits,
+  PdfBackend? pdfBackend,
+  LocalPdfOpenWorkflow? localPdfOpenWorkflow,
   int storageCeiling = 10000000,
   int maximumPenSamples = 10000,
   int maximumPenPreviewLayers = 8,
@@ -6572,6 +6950,9 @@ Phase6CanvasRuntime _runtime({
 }) => _ok(
   _runtimeResult(
     uuidGenerator: uuidGenerator,
+    pdfProcessingLimits: pdfProcessingLimits,
+    pdfBackend: pdfBackend,
+    localPdfOpenWorkflow: localPdfOpenWorkflow,
     storageCeiling: storageCeiling,
     maximumPenSamples: maximumPenSamples,
     maximumPenPreviewLayers: maximumPenPreviewLayers,
@@ -6598,6 +6979,192 @@ Phase6CanvasRuntime _runtime({
     maximumDamageRegions: maximumDamageRegions,
     maximumSelectionOverlays: maximumSelectionOverlays,
   ),
+);
+
+PdfModelLimits _widgetPdfModelLimits() => _ok(
+  PdfModelLimits.create(
+    maximumPageCount: 10000,
+    maximumCoordinateMagnitude: 1000000,
+    maximumPageDimension: 1000000,
+    maximumPageArea: 1000000000000,
+    maximumUnknownFields: 256,
+    maximumUnknownNodes: 100000,
+    maximumNestingDepth: 32,
+    maximumUnknownStringCodeUnits: 1000000,
+  ),
+);
+
+PdfProcessingLimits _widgetPdfProcessingLimits() => _ok(
+  PdfProcessingLimits.create(
+    maximumEncodedBytes: 1024,
+    maximumPageCount: 16,
+    maximumRenderDimension: 1024,
+    maximumRenderPixels: 1048576,
+    maximumExtractedGlyphs: 1024,
+    maximumLinks: 64,
+    maximumOperations: 128,
+  ),
+);
+
+final class _WidgetPdfPicker implements LocalPdfPickerHost {
+  const _WidgetPdfPicker(this.bytes);
+
+  final List<int> bytes;
+
+  @override
+  Future<LocalPdfFileHandle?> selectOnePdf({
+    required CancellationToken cancellationToken,
+  }) async => _WidgetPdfHandle(bytes);
+}
+
+final class _WidgetPdfHandle implements LocalPdfFileHandle {
+  const _WidgetPdfHandle(this.bytes);
+
+  final List<int> bytes;
+
+  @override
+  Stream<List<int>> openRead({
+    required int maximumEncodedBytes,
+    required CancellationToken cancellationToken,
+  }) => Stream<List<int>>.value(bytes);
+}
+
+final class _WidgetPdfBackend implements PdfBackend, PdfLifecycleProvider {
+  _WidgetPdfBackend(
+    this.modelLimits, {
+    this.inspectionFailure,
+    this.failRender = false,
+    this.rgbaColor = const [255, 255, 255, 255],
+  });
+
+  @override
+  final lifecycle = PdfBackendLifecycle();
+  int inspections = 0;
+  final PdfModelLimits modelLimits;
+  final PdfInspectOutcome? inspectionFailure;
+  final bool failRender;
+  final List<int> rgbaColor;
+  final List<int> renderedPageIndexes = <int>[];
+
+  @override
+  Future<PdfInspectOutcome> inspect(
+    PdfInspectRequest request, {
+    required PdfResourceReader resourceReader,
+  }) async {
+    inspections++;
+    final rejected = inspectionFailure;
+    if (rejected != null) return rejected;
+    final resource = await resourceReader.read(
+      identity: request.resourceIdentity,
+      limits: request.limits,
+      cancellationToken: request.cancellationToken,
+    );
+    if (resource is! Ok<PdfResourceBytes, StructuredFailure>) {
+      return const PdfMissing();
+    }
+    final identity = _ok(PdfBackendIdentity.parse('test.pdf.backend'));
+    final firstBox = _ok(
+      PdfSourceBox.create(
+        left: 10,
+        bottom: 20,
+        right: 190,
+        top: 90,
+        limits: modelLimits,
+      ),
+    );
+    final secondBox = _ok(
+      PdfSourceBox.create(
+        left: -20,
+        bottom: -40,
+        right: 280,
+        top: 160,
+        limits: modelLimits,
+      ),
+    );
+    return PdfInspectSuccess.capture(
+      backendIdentity: identity,
+      pages: <PdfInspectedPage>[
+        _ok(
+          PdfInspectedPage.create(
+            pageIndex: 0,
+            boxKind: PdfPageBoxKind.cropBox,
+            sourceBox: firstBox,
+            rotation: PdfPageRotation.degrees0,
+            displayedWidth: 180,
+            displayedHeight: 70,
+            limits: modelLimits,
+          ),
+        ),
+        _ok(
+          PdfInspectedPage.create(
+            pageIndex: 1,
+            boxKind: PdfPageBoxKind.mediaBox,
+            sourceBox: secondBox,
+            rotation: PdfPageRotation.degrees270,
+            displayedWidth: 200,
+            displayedHeight: 300,
+            limits: modelLimits,
+          ),
+        ),
+      ],
+      modelLimits: modelLimits,
+      limits: request.limits,
+      cancellationToken: request.cancellationToken,
+    );
+  }
+
+  @override
+  Future<PdfRenderOutcome> render(
+    PdfRenderRequest request, {
+    required PdfResourceReader resourceReader,
+  }) async {
+    if (failRender) {
+      return const PdfRenderFailure(PdfRenderFailureReason.missing);
+    }
+    final resource = await resourceReader.read(
+      identity: request.reference.resourceIdentity,
+      limits: request.limits,
+      cancellationToken: request.cancellationToken,
+    );
+    if (resource is! Ok<PdfResourceBytes, StructuredFailure>) {
+      return const PdfRenderFailure(PdfRenderFailureReason.missing);
+    }
+    renderedPageIndexes.add(request.reference.pageIndex);
+    final output = PdfRenderOutput.capture(
+      backendIdentity: _ok(PdfBackendIdentity.parse('test.pdf.backend')),
+      region: request.region,
+      pixelWidth: request.pixelWidth,
+      pixelHeight: request.pixelHeight,
+      rgbaBytes: List<int>.generate(
+        request.pixelWidth * request.pixelHeight * 4,
+        (i) => rgbaColor[i % 4],
+      ),
+      limits: request.limits,
+      cancellationToken: request.cancellationToken,
+    );
+    return output is Ok<PdfRenderOutput, StructuredFailure>
+        ? PdfRenderSuccess(output.value)
+        : const PdfRenderFailure(PdfRenderFailureReason.corrupt);
+  }
+
+  @override
+  Future<Result<PdfExtractedText, StructuredFailure>> extractText(
+    PdfTextExtractRequest request, {
+    required PdfResourceReader resourceReader,
+  }) async => Err<PdfExtractedText, StructuredFailure>(_widgetPdfFailure());
+
+  @override
+  Future<Result<PdfSafeLinks, StructuredFailure>> extractLinks(
+    PdfLinkExtractRequest request, {
+    required PdfResourceReader resourceReader,
+  }) async => Err<PdfSafeLinks, StructuredFailure>(_widgetPdfFailure());
+}
+
+StructuredFailure _widgetPdfFailure() => StructuredFailure(
+  code: 'test.pdf.unavailable',
+  category: FailureCategory.dependency,
+  retryDisposition: RetryDisposition.never,
+  message: 'Unavailable.',
 );
 
 TextPayload _widgetRichText(TextLimits limits) {
@@ -6848,6 +7415,9 @@ TextPayload _widgetStyleUnknownText(TextLimits limits) {
 
 Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
   UuidGenerator? uuidGenerator,
+  PdfProcessingLimits? pdfProcessingLimits,
+  PdfBackend? pdfBackend,
+  LocalPdfOpenWorkflow? localPdfOpenWorkflow,
   int storageCeiling = 10000000,
   int maximumPenSamples = 10000,
   int maximumPenPreviewLayers = 8,
@@ -6968,6 +7538,21 @@ Result<Phase6CanvasRuntime, StructuredFailure> _runtimeResult({
         maximumPendingEdits: 1024,
       ),
     ),
+    pdfModelLimits: _ok(
+      PdfModelLimits.create(
+        maximumPageCount: 10000,
+        maximumCoordinateMagnitude: 1000000,
+        maximumPageDimension: 1000000,
+        maximumPageArea: 1000000000000,
+        maximumUnknownFields: 256,
+        maximumUnknownNodes: 100000,
+        maximumNestingDepth: 32,
+        maximumUnknownStringCodeUnits: 1000000,
+      ),
+    ),
+    pdfProcessingLimits: pdfProcessingLimits,
+    pdfBackend: pdfBackend,
+    localPdfOpenWorkflow: localPdfOpenWorkflow,
     penStyle: _ok(
       StrokeStyle.create(
         argb: 0xff17324d,
@@ -7192,6 +7777,14 @@ Phase6CanvasPersistenceEvidence _canvasPainter(WidgetTester tester) =>
             .painter
         as Phase6CanvasPersistenceEvidence;
 
+Phase6CanvasPersistenceEvidence _documentPainter(WidgetTester tester) =>
+    tester
+            .widget<CustomPaint>(
+              find.byKey(const Key('phase6-committed-paint')),
+            )
+            .painter
+        as Phase6CanvasPersistenceEvidence;
+
 Phase6PenPreviewEvidence _penPreview(WidgetTester tester) =>
     tester
             .widget<CustomPaint>(find.byKey(const Key('phase6-pen-preview')))
@@ -7384,3 +7977,11 @@ final class _ToggleRuntimeUuidGenerator implements UuidGenerator {
 }
 
 T _ok<T, E>(Result<T, E> value) => (value as Ok<T, E>).value;
+
+final class _PendingWidgetPdfPicker implements LocalPdfPickerHost {
+  final done = Completer<LocalPdfFileHandle?>();
+  @override
+  Future<LocalPdfFileHandle?> selectOnePdf({
+    required CancellationToken cancellationToken,
+  }) => done.future;
+}

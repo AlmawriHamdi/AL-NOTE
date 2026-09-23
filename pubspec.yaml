@@ -4,20 +4,28 @@ publish_to: none
 version: 0.0.1+1
 
 environment:
-  sdk: 3.12.2
-  flutter: 3.44.6
+  sdk: 3.13.3
+  flutter: 3.47.4
 
 dependencies:
   archive: 4.0.9
   characters: 1.4.1
   crypto: 3.0.7
+  file_selector: 1.1.0
   flutter:
     sdk: flutter
+  pdfrx: 2.4.8
   uuid: 4.6.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
+dependency_overrides:
+  pdfrx:
+    path: third_party/pdfrx-2.4.8
+  pdfrx_engine:
+    path: third_party/pdfrx_engine-0.4.7
 
 flutter:
   uses-material-design: true

@@ -17,6 +17,7 @@ import '../../documents/commands.dart';
 import '../../documents/document_model.dart';
 import '../../documents/files.dart';
 import '../../documents/objects/handwriting.dart';
+import '../../documents/pdf/pdf_admission_policy.dart';
 import '../../drawing/geometry.dart';
 import '../../drawing/hit_testing.dart';
 import '../../drawing/renderer.dart';
@@ -128,6 +129,10 @@ final class Phase6CanvasRuntime {
     required this.shapeInteractionLimits,
     required this.imageLimits,
     required this.textLimits,
+    required this.pdfModelLimits,
+    required this.pdfProcessingLimits,
+    required this.pdfBackend,
+    required this.localPdfOpenWorkflow,
     required this.textLayoutEngine,
     required this.penStyle,
     required this.geometryResolver,
@@ -172,6 +177,10 @@ final class Phase6CanvasRuntime {
     required ShapeInteractionLimits shapeInteractionLimits,
     required ImageLimits imageLimits,
     required TextLimits textLimits,
+    required PdfModelLimits pdfModelLimits,
+    PdfProcessingLimits? pdfProcessingLimits,
+    PdfBackend? pdfBackend,
+    LocalPdfOpenWorkflow? localPdfOpenWorkflow,
     required StrokeStyle penStyle,
     required StrokeGeometryLimits geometryLimits,
     required RenderingLimits renderingLimits,
@@ -255,8 +264,8 @@ final class Phase6CanvasRuntime {
         maximumCommittedPaintChunkPrimitives >
             renderingLimits.maximumPrimitives ||
         maximumPenPreviewLayers > 64 ||
-        maximumRenderingDefinitions < 4 ||
-        maximumHitTestingDefinitions < 4 ||
+        maximumRenderingDefinitions < 5 ||
+        maximumHitTestingDefinitions < 5 ||
         maximumTools < 5 ||
         maximumActions < 5 ||
         maximumBindings < 11 ||
@@ -282,11 +291,13 @@ final class Phase6CanvasRuntime {
       ShapeObjectTypeDefinition(shapeLimits),
       ImageObjectTypeDefinition(imageLimits),
       TextObjectTypeDefinition(textLimits, textLayoutEngine),
+      PdfPageObjectTypeDefinition(pdfModelLimits),
     ]).fold<ObjectRegistry?>(onOk: (value) => value, onErr: (_) => null);
-    if (objectRegistry == null || objectRegistry.definitions.length != 4) {
+    if (objectRegistry == null || objectRegistry.definitions.length != 5) {
       return Err(_failure('initialization_failed'));
     }
     final components = _createRuntimeComponents(
+      pdfModelLimits: pdfModelLimits,
       handwritingLimits: handwritingLimits,
       shapeLimits: shapeLimits,
       shapeInteractionLimits: shapeInteractionLimits,
@@ -325,16 +336,14 @@ final class Phase6CanvasRuntime {
       }
       generated.add(result.value);
     }
-    final schema = SchemaVersion.create(
-      1,
-    ).fold<SchemaVersion?>(onOk: (value) => value, onErr: (_) => null);
+    final schema = SchemaVersion.create(1)
+        .fold<SchemaVersion?>(onOk: (value) => value, onErr: (_) => null);
     final size = Size2.create(
       width: 640,
       height: 800,
     ).fold<Size2?>(onOk: (value) => value, onErr: (_) => null);
-    final resources = ResourceCatalog.create(
-      const [],
-    ).fold<ResourceCatalog?>(onOk: (value) => value, onErr: (_) => null);
+    final resources = ResourceCatalog.create(const [])
+        .fold<ResourceCatalog?>(onOk: (value) => value, onErr: (_) => null);
     if (schema == null || size == null || resources == null) {
       return Err(_failure('initialization_failed'));
     }
@@ -406,6 +415,10 @@ final class Phase6CanvasRuntime {
         shapeInteractionLimits: shapeInteractionLimits,
         imageLimits: imageLimits,
         textLimits: textLimits,
+        pdfModelLimits: pdfModelLimits,
+        pdfProcessingLimits: pdfProcessingLimits,
+        pdfBackend: pdfBackend ?? const QuarantinedPdfBackend(),
+        localPdfOpenWorkflow: localPdfOpenWorkflow,
         textLayoutEngine: textLayoutEngine,
         penStyle: penStyle,
         geometryResolver: geometry,
@@ -477,6 +490,24 @@ final class Phase6CanvasRuntime {
   /// Built-in Text validation and layout limits.
   final TextLimits textLimits;
 
+  /// Persistent PDF Page-reference and Object validation ceilings.
+  final PdfModelLimits pdfModelLimits;
+
+  /// Runtime PDF operation ceilings, absent when PDF opening is disabled.
+  final PdfProcessingLimits? pdfProcessingLimits;
+
+  /// Replaceable backend used for already-validated PDF source rendering.
+  final PdfBackend pdfBackend;
+
+  PdfAdmissionPolicy get pdfAdmission => pdfAdmissionFor(pdfBackend);
+
+  PdfBackendLifecycle? get pdfLifecycle => pdfBackend is PdfLifecycleProvider
+      ? (pdfBackend as PdfLifecycleProvider).lifecycle
+      : null;
+
+  /// Trusted-development local-open workflow, absent in ordinary releases.
+  final LocalPdfOpenWorkflow? localPdfOpenWorkflow;
+
   /// Runtime-wide authoritative Flutter Text layout configuration.
   final TextLayoutEngine textLayoutEngine;
 
@@ -497,6 +528,21 @@ final class Phase6CanvasRuntime {
   final ResourceLimitSnapshot storageLimits;
   final NotebookDocument initialRoot;
   final DocumentMutationCoordinator initialCoordinator;
+
+  /// Creates a fresh validated coordinator without publishing it.
+  Result<DocumentMutationCoordinator, CommandFailure> coordinatorFor({
+    required DocumentRoot root,
+    required Iterable<DocumentResourceSnapshot> resources,
+  }) => DocumentMutationCoordinator.create(
+    initialRoot: root,
+    initialResources: resources,
+    requireCompleteInitialResources: true,
+    validator: DocumentValidator(objectRegistry),
+    uuidGenerator: uuidGenerator,
+    historyLimits: historyLimits,
+    retainedCostEstimator: historyCostEstimator,
+    maximumListeners: maximumListeners,
+  );
 
   /// Staged package reopen boundary used by the Canvas.
   final Phase6ReopenGateway reopenGateway;
@@ -626,6 +672,7 @@ typedef _RuntimeComponents = ({
 });
 
 _RuntimeComponents? _createRuntimeComponents({
+  required PdfModelLimits pdfModelLimits,
   required HandwritingLimits handwritingLimits,
   required ShapeLimits shapeLimits,
   required ShapeInteractionLimits shapeInteractionLimits,
@@ -650,6 +697,7 @@ _RuntimeComponents? _createRuntimeComponents({
       ),
       ShapeRenderingDefinition(shapeLimits: shapeLimits),
       ImageRenderingDefinition(imageLimits),
+      PdfPageRenderingDefinition(pdfModelLimits),
       TextRenderingDefinition(textLimits, textLayoutEngine),
     ],
     maximumDefinitions: maximumRenderingDefinitions,
@@ -666,6 +714,7 @@ _RuntimeComponents? _createRuntimeComponents({
         interactionLimits: shapeInteractionLimits,
       ),
       ImageHitTestingDefinition(imageLimits),
+      PdfPageHitTestingDefinition(pdfModelLimits),
       TextHitTestingDefinition(textLimits, textLayoutEngine),
     ],
     maximumDefinitions: maximumHitTestingDefinitions,
@@ -676,12 +725,10 @@ _RuntimeComponents? _createRuntimeComponents({
   final actions = <InteractionActionDefinition>[];
   final bindings = <InteractionBinding>[];
   for (final name in toolNames) {
-    final toolId = ToolId.parse(
-      'alnote.tools.$name',
-    ).fold<ToolId?>(onOk: (value) => value, onErr: (_) => null);
-    final actionId = InteractionActionId.parse(
-      'alnote.actions.$name',
-    ).fold<InteractionActionId?>(onOk: (value) => value, onErr: (_) => null);
+    final toolId = ToolId.parse('alnote.tools.$name')
+        .fold<ToolId?>(onOk: (value) => value, onErr: (_) => null);
+    final actionId = InteractionActionId.parse('alnote.actions.$name')
+        .fold<InteractionActionId?>(onOk: (value) => value, onErr: (_) => null);
     if (toolId == null || actionId == null) return null;
     tools.add(ToolDefinition(id: toolId, supportsPressure: name == 'pen'));
     actions.add(

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "release_url": "https://github.com/AlmawriHamdi/AL-NOTE/releases/tag/ci-resources-linux-pdf-65ab051ea8c3d74a",
+  "release_id": 394888285,
+  "tag_target": "921e43f41a31b0649a2ae890c993fd4e406ad39a",
+  "archive_url": "https://github.com/AlmawriHamdi/AL-NOTE/releases/download/ci-resources-linux-pdf-65ab051ea8c3d74a/alnote-linux-pdf-65ab051ea8c3d74a.tar",
+  "archive_bytes": 21760000,
+  "archive_sha256": "249e08ec2c895c20651c3e13fe81318490f71a62640cffa4455b000097808b01",
+  "manifest_sha256": "65ab051ea8c3d74ad0307f53c9d45cb55a90ddcb80bec3e2c923403ab43f3157"
+}

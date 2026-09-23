@@ -1,0 +1,24 @@
+{
+  "release_id": 394888285,
+  "tag": "ci-resources-linux-pdf-65ab051ea8c3d74a",
+  "target": "921e43f41a31b0649a2ae890c993fd4e406ad39a",
+  "immutable": true,
+  "assets_verified_before_publication": 8,
+  "resources_verified": 114,
+  "anonymous_fresh_provisioning": true,
+  "fresh_linux_build": true,
+  "focused_acquisition_tests": 30,
+  "installed_extraction_tests": 20,
+  "legacy_cases_still_unverified": 5,
+  "full_suite_rerun": false,
+  "ci_triggered": false,
+  "old_release_changed": false,
+  "app_process_preserved": true,
+  "new_source_files": [
+    "docs/testing-release/phase8-pdf-extraction-publication.md"
+  ],
+  "modified_source_files": [
+    "docs/testing-release/phase8-pdf-extraction.md",
+    "tool/linux_pdf/distribution.json"
+  ]
+}

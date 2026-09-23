@@ -995,9 +995,8 @@ final class ImageInsertionPreparer {
     final bytes = _captureBytes(encodedBytes, limits.maximumEncodedBytes);
     if (bytes is! Ok<List<int>, StructuredFailure>)
       return Err(_failure('invalid_bytes'));
-    final preflight = ImageHeaderPreflight(
-      limits,
-    ).inspect(encodedBytes: bytes.value, mediaType: mediaType);
+    final preflight = ImageHeaderPreflight(limits)
+        .inspect(encodedBytes: bytes.value, mediaType: mediaType);
     if (preflight is Err<ImagePreflightResult, StructuredFailure>) {
       return Err(preflight.error);
     }
@@ -1391,34 +1390,31 @@ double? _number(PreservedData? value) => switch (value) {
   PreservedInteger(:final value) => value.toDouble(),
   _ => null,
 };
-PreservedDouble _double(double value) =>
-    (PreservedDouble.create(value) as Ok<PreservedDouble, StructuredFailure>)
-        .value;
-PreservedInteger _integer(int value) =>
-    (PreservedInteger.create(value) as Ok<PreservedInteger, StructuredFailure>)
-        .value;
+PreservedDouble _double(double value) => (PreservedDouble.create(
+  value,
+) as Ok<PreservedDouble, StructuredFailure>).value;
+PreservedInteger _integer(int value) => (PreservedInteger.create(
+  value,
+) as Ok<PreservedInteger, StructuredFailure>).value;
 Rect2 _rect(double left, double top, double right, double bottom) =>
-    (Rect2.fromEdges(left: left, top: top, right: right, bottom: bottom)
-            as Ok<Rect2, StructuredFailure>)
-        .value;
-ValidationIssue _invalidIssue() =>
-    (ValidationIssue.create(
-              code: ValidationIssueCode.invalidObjectPayload,
-              severity: ValidationSeverity.error,
-              path:
-                  (ValidationPath.fromSegments(const <ValidationPathSegment>[])
-                          as Ok<ValidationPath, StructuredFailure>)
-                      .value,
-            )
-            as Ok<ValidationIssue, StructuredFailure>)
-        .value;
+    (Rect2.fromEdges(
+      left: left,
+      top: top,
+      right: right,
+      bottom: bottom,
+    ) as Ok<Rect2, StructuredFailure>).value;
+ValidationIssue _invalidIssue() => (ValidationIssue.create(
+  code: ValidationIssueCode.invalidObjectPayload,
+  severity: ValidationSeverity.error,
+  path: (ValidationPath.fromSegments(
+    const <ValidationPathSegment>[],
+  ) as Ok<ValidationPath, StructuredFailure>).value,
+) as Ok<ValidationIssue, StructuredFailure>).value;
 SchemaVersion _schemaOne() =>
     (SchemaVersion.create(1) as Ok<SchemaVersion, StructuredFailure>).value;
-NamespacedIdentifier _trustedTypeIdentifier() =>
-    (ObjectTypeKey.parse('alnote.image')
-            as Ok<ObjectTypeKey, StructuredFailure>)
-        .value
-        .identifier;
+NamespacedIdentifier _trustedTypeIdentifier() => (ObjectTypeKey.parse(
+  'alnote.image',
+) as Ok<ObjectTypeKey, StructuredFailure>).value.identifier;
 StructuredFailure _failure(String leaf) => StructuredFailure(
   code: 'documents.image.$leaf',
   category: FailureCategory.validation,

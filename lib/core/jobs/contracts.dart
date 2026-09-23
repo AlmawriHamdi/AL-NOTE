@@ -214,9 +214,9 @@ final class JobAdmissionEvidence {
           maximumCapabilities < 0 ||
           copied.length > maximumCapabilities ||
           copied.any(
-            (value) => !RegExp(
-              r'^alnote\.platform\.[a-z][a-z0-9._-]*$',
-            ).hasMatch(value),
+            (value) =>
+                !RegExp(r'^alnote\.platform\.[a-z][a-z0-9._-]*$')
+                    .hasMatch(value),
           )) {
         return Err(_failure('invalid_admission_evidence'));
       }
@@ -299,8 +299,10 @@ final class JobProgress {
 typedef JobInputValidator<T> = Result<T, StructuredFailure> Function(T input);
 
 /// Executes one validated Job input within a cooperative context.
-typedef JobRunner<T, R> =
-    Future<R> Function(T input, JobExecutionContext context);
+typedef JobRunner<T, R> = Future<R> Function(
+  T input,
+  JobExecutionContext context,
+);
 
 /// Potentially hostile metadata source captured once by [JobRegistry].
 abstract interface class JobKindSource<T, R, S> {
@@ -484,9 +486,9 @@ final class JobRequest<T, R, S> {
           maximumAttempts > 9007199254740991 ||
           capabilities.toSet().length != capabilities.length ||
           capabilities.any(
-            (value) => !RegExp(
-              r'^alnote\.platform\.[a-z][a-z0-9._-]*$',
-            ).hasMatch(value),
+            (value) =>
+                !RegExp(r'^alnote\.platform\.[a-z][a-z0-9._-]*$')
+                    .hasMatch(value),
           ) ||
           (retryClassification == JobRetryClassification.transient &&
               (idempotency != JobIdempotency.idempotent ||

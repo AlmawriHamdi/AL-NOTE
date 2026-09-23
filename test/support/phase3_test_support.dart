@@ -79,22 +79,18 @@ DocumentMutationCoordinator phase3Coordinator({
     for (var value = 100; value < 140; value += 1) testUuid(value),
   ]);
   return (DocumentMutationCoordinator.create(
-            maximumListeners: maximumListeners,
-            initialRoot: root ?? phase3Notebook(),
-            validator: validator,
-            uuidGenerator: generator,
-            historyLimits: commandValue(
-              HistoryLimits.create(
-                maximumRetainedCommandCount: historyCount,
-                maximumEstimatedRetainedBytes: historyBytes,
-              ),
-            ),
-            retainedCostEstimator: FixedHistoryCostEstimator(
-              estimatedEntryBytes,
-            ),
-          )
-          as Ok<DocumentMutationCoordinator, CommandFailure>)
-      .value;
+    maximumListeners: maximumListeners,
+    initialRoot: root ?? phase3Notebook(),
+    validator: validator,
+    uuidGenerator: generator,
+    historyLimits: commandValue(
+      HistoryLimits.create(
+        maximumRetainedCommandCount: historyCount,
+        maximumEstimatedRetainedBytes: historyBytes,
+      ),
+    ),
+    retainedCostEstimator: FixedHistoryCostEstimator(estimatedEntryBytes),
+  ) as Ok<DocumentMutationCoordinator, CommandFailure>).value;
 }
 
 /// Standard deterministic command metadata.

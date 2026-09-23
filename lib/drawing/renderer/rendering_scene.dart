@@ -520,6 +520,58 @@ final class ImageBoxPrimitive extends ScenePrimitive {
   final List<double> localToViewCoefficients;
 }
 
+/// A PDF raster request and its clipped, transformed placement.
+final class PdfPagePrimitive extends ScenePrimitive {
+  PdfPagePrimitive._({
+    required super.plane,
+    required super.bounds,
+    required super.opacity,
+    required this.payload,
+    required List<double> localToViewCoefficients,
+  }) : localToViewCoefficients = List<double>.unmodifiable(
+         localToViewCoefficients,
+       ),
+       super._();
+
+  /// Creates a primitive with six finite affine coefficients.
+  static Result<PdfPagePrimitive, StructuredFailure> create({
+    required RenderPlane plane,
+    required Rect2 bounds,
+    required double opacity,
+    required PdfPageObjectPayload payload,
+    required Iterable<double> localToViewCoefficients,
+  }) {
+    final captured = _capture(
+      localToViewCoefficients,
+      6,
+      'transform_coefficients',
+    );
+    if (captured is! Ok<List<double>, StructuredFailure> ||
+        captured.value.length != 6 ||
+        captured.value.any((value) => !value.isFinite) ||
+        !opacity.isFinite ||
+        opacity < 0 ||
+        opacity > 1) {
+      return Err(_failure('invalid_pdf_primitive', FailureCategory.validation));
+    }
+    return Ok(
+      PdfPagePrimitive._(
+        plane: plane,
+        bounds: bounds,
+        opacity: opacity,
+        payload: payload,
+        localToViewCoefficients: captured.value,
+      ),
+    );
+  }
+
+  /// Validated persistent PDF page payload.
+  final PdfPageObjectPayload payload;
+
+  /// Local-to-view affine coefficients in AL NOTE storage order.
+  final List<double> localToViewCoefficients;
+}
+
 /// Portable semantic Text primitive resolved by a Flutter layout adapter.
 final class TextBoxPrimitive extends ScenePrimitive {
   TextBoxPrimitive._({
@@ -1390,9 +1442,12 @@ bool _intersects(Rect2 first, Rect2 second) =>
 Point2 _point(double x, double y) =>
     (Point2.create(x: x, y: y) as Ok<Point2, StructuredFailure>).value;
 Rect2 _rect(double left, double top, double right, double bottom) =>
-    (Rect2.fromEdges(left: left, top: top, right: right, bottom: bottom)
-            as Ok<Rect2, StructuredFailure>)
-        .value;
+    (Rect2.fromEdges(
+      left: left,
+      top: top,
+      right: right,
+      bottom: bottom,
+    ) as Ok<Rect2, StructuredFailure>).value;
 StructuredFailure _failure(String leaf, FailureCategory category) =>
     StructuredFailure(
       code: 'drawing.renderer.$leaf',

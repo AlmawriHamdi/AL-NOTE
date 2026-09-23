@@ -243,9 +243,8 @@ final class ViewportSnapshot {
     if (expectedRevision != revision) return Err(_failure('stale_revision'));
     if (!newZoom.isFinite || newZoom < minimumZoom || newZoom > maximumZoom)
       return Err(_failure('invalid_zoom'));
-    final fixed = viewToPage(
-      viewPivot,
-    ).fold<Point2?>(onOk: (value) => value, onErr: (_) => null);
+    final fixed = viewToPage(viewPivot)
+        .fold<Point2?>(onOk: (value) => value, onErr: (_) => null);
     final next = revision.increment().fold<Revision?>(
       onOk: (value) => value,
       onErr: (_) => null,

@@ -77,8 +77,9 @@ typedef SettingMigration<T> = Result<T, StructuredFailure> Function(T value);
 
 /// Applies mandatory security, accessibility, preservation, capability,
 /// resource, and domain constraints to one typed candidate.
-typedef MandatorySettingConstraints<T> =
-    Result<T, StructuredFailure> Function(T value);
+typedef MandatorySettingConstraints<T> = Result<T, StructuredFailure> Function(
+  T value,
+);
 
 /// One typed, adjacent Setting schema migration.
 final class SettingMigrationStep<T> {

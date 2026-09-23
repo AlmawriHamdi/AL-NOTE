@@ -36,22 +36,20 @@ void main() {
       InMemorySettingsAdapter(initial: _emptyPersistence()),
     );
     final definition = registry.definition<int>(_IntDefinition().key)!;
-    final changes =
-        first.validate(
-              _draft(
-                expectedRevision: first.snapshot.storeRevision,
-                operations: [
-                  SetSettingValue(
-                    key: definition.key,
-                    scope: SettingScope.user,
-                    definition: definition,
-                    value: 6,
-                  ),
-                ],
-              ),
-              maximumOperations: 1,
-            )
-            as Ok<ValidatedSettingsChangeSet, StructuredFailure>;
+    final changes = first.validate(
+      _draft(
+        expectedRevision: first.snapshot.storeRevision,
+        operations: [
+          SetSettingValue(
+            key: definition.key,
+            scope: SettingScope.user,
+            definition: definition,
+            value: 6,
+          ),
+        ],
+      ),
+      maximumOperations: 1,
+    ) as Ok<ValidatedSettingsChangeSet, StructuredFailure>;
     expect(
       await second.apply(
         changes.value,
@@ -90,23 +88,20 @@ void main() {
         ..returnUnexpectedCommitRevision = true;
       final repository = await _openRepository(registry, adapter);
       final definition = registry.definition<int>(_IntDefinition().key)!;
-      final changes =
-          (repository.validate(
-                    _draft(
-                      expectedRevision: repository.snapshot.storeRevision,
-                      operations: [
-                        SetSettingValue(
-                          key: definition.key,
-                          scope: SettingScope.user,
-                          definition: definition,
-                          value: 6,
-                        ),
-                      ],
-                    ),
-                    maximumOperations: 1,
-                  )
-                  as Ok<ValidatedSettingsChangeSet, StructuredFailure>)
-              .value;
+      final changes = (repository.validate(
+        _draft(
+          expectedRevision: repository.snapshot.storeRevision,
+          operations: [
+            SetSettingValue(
+              key: definition.key,
+              scope: SettingScope.user,
+              definition: definition,
+              value: 6,
+            ),
+          ],
+        ),
+        maximumOperations: 1,
+      ) as Ok<ValidatedSettingsChangeSet, StructuredFailure>).value;
       expect(
         await repository.apply(
           changes,
@@ -244,24 +239,21 @@ void main() {
         );
       }
 
-      final record =
-          (SettingsLogicalRecord.create(
-                    key: key,
-                    scope: SettingScope.user,
-                    schemaVersion: 1,
-                    codecIdentity: 'test.int',
-                    recordRevision: recordRevision,
-                    valueBytes: const [1, 2],
-                    unknownFields: HostileMap(const [
-                      MapEntry('future', <int>[3, 4]),
-                    ], reportedLength: 0),
-                    active: true,
-                    lastKnownGood: true,
-                    maximumValueBytes: 2,
-                    maximumUnknownFields: 1,
-                  )
-                  as Ok<SettingsLogicalRecord, StructuredFailure>)
-              .value;
+      final record = (SettingsLogicalRecord.create(
+        key: key,
+        scope: SettingScope.user,
+        schemaVersion: 1,
+        codecIdentity: 'test.int',
+        recordRevision: recordRevision,
+        valueBytes: const [1, 2],
+        unknownFields: HostileMap(const [
+          MapEntry('future', <int>[3, 4]),
+        ], reportedLength: 0),
+        active: true,
+        lastKnownGood: true,
+        maximumValueBytes: 2,
+        maximumUnknownFields: 1,
+      ) as Ok<SettingsLogicalRecord, StructuredFailure>).value;
       expect(
         SettingsPersistenceSnapshot.create(
           storeRevision: SettingsStoreRevision(zero),
@@ -290,20 +282,17 @@ void main() {
         ),
         isA<Err<SettingsPersistenceSnapshot, StructuredFailure>>(),
       );
-      final oldSnapshot =
-          (SettingsPersistenceSnapshot.create(
-                    storeRevision: SettingsStoreRevision(zero),
-                    records: [record],
-                    unknownRecords: const [],
-                    damaged: false,
-                    lastKnownGoodAvailable: true,
-                    maximumRecords: 1,
-                    maximumUnknownRecords: 0,
-                    maximumUnknownFieldsPerRecord: 1,
-                    maximumValueBytes: 2,
-                  )
-                  as Ok<SettingsPersistenceSnapshot, StructuredFailure>)
-              .value;
+      final oldSnapshot = (SettingsPersistenceSnapshot.create(
+        storeRevision: SettingsStoreRevision(zero),
+        records: [record],
+        unknownRecords: const [],
+        damaged: false,
+        lastKnownGoodAvailable: true,
+        maximumRecords: 1,
+        maximumUnknownRecords: 0,
+        maximumUnknownFieldsPerRecord: 1,
+        maximumValueBytes: 2,
+      ) as Ok<SettingsPersistenceSnapshot, StructuredFailure>).value;
       final registry = SettingRegistry(
         maximumPersistentScopes: 2,
         maximumMigrations: 0,
@@ -325,141 +314,136 @@ void main() {
     },
   );
 
-  test(
-    'defaults, user/device precedence, preview, cancel and reset are transactional',
-    () async {
-      final registry = SettingRegistry(
-        maximumPersistentScopes: 8,
-        maximumMigrations: 16,
-        maximumResourceLimits: 16,
-      );
-      registry.register(_IntDefinition());
-      final key =
-          (SettingKey.parse('alnote.settings.test.number')
-                  as Ok<SettingKey, StructuredFailure>)
-              .value;
-      final definition = registry.definition<int>(key)!;
-      final zero =
-          (Revision.create(0) as Ok<Revision, StructuredFailure>).value;
-      final adapter = InMemorySettingsAdapter(
-        initial:
-            (SettingsPersistenceSnapshot.create(
-                      maximumUnknownRecords: 16,
-                      maximumUnknownFieldsPerRecord: 16,
-                      storeRevision: SettingsStoreRevision(zero),
-                      records: const [],
-                      unknownRecords: [
-                        (UnknownSettingsRecord.create(
-                                  identity: 'future',
-                                  bytes: [9],
-                                  supported: false,
-                                  maximumBytes: 10,
-                                )
-                                as Ok<UnknownSettingsRecord, StructuredFailure>)
-                            .value,
-                      ],
-                      damaged: false,
-                      lastKnownGoodAvailable: true,
-                      maximumRecords: 10,
-                      maximumValueBytes: 10,
-                    )
-                    as Ok<SettingsPersistenceSnapshot, StructuredFailure>)
-                .value,
-      );
-      final opened = await SettingsRepository.open(
+  test('defaults, user/device precedence, preview, cancel and reset are transactional', () async {
+    final registry = SettingRegistry(
+      maximumPersistentScopes: 8,
+      maximumMigrations: 16,
+      maximumResourceLimits: 16,
+    );
+    registry.register(_IntDefinition());
+    final key = (SettingKey.parse(
+      'alnote.settings.test.number',
+    ) as Ok<SettingKey, StructuredFailure>).value;
+    final definition = registry.definition<int>(key)!;
+    final zero = (Revision.create(0) as Ok<Revision, StructuredFailure>).value;
+    final adapter = InMemorySettingsAdapter(
+      initial: (SettingsPersistenceSnapshot.create(
         maximumUnknownRecords: 16,
         maximumUnknownFieldsPerRecord: 16,
-        maximumListeners: 16,
-        registry: registry,
-        adapter: adapter,
+        storeRevision: SettingsStoreRevision(zero),
+        records: const [],
+        unknownRecords: [
+          (UnknownSettingsRecord.create(
+            identity: 'future',
+            bytes: [9],
+            supported: false,
+            maximumBytes: 10,
+          ) as Ok<UnknownSettingsRecord, StructuredFailure>).value,
+        ],
+        damaged: false,
+        lastKnownGoodAvailable: true,
         maximumRecords: 10,
         maximumValueBytes: 10,
-        cancellationToken: CancellationController().token,
-      );
-      final repository =
-          (opened as Completed<SettingsRepository, StructuredFailure>).value;
-      expect(
-        (repository.snapshot.resolve(definition) as Ok<int, StructuredFailure>)
-            .value,
-        5,
-      );
-      final user = repository.validate(
-        _draft(
-          expectedRevision: repository.snapshot.storeRevision,
-          operations: [
-            SetSettingValue(
-              key: key,
-              scope: SettingScope.user,
-              definition: definition,
-              value: 7,
-            ),
-          ],
-        ),
-        maximumOperations: 10,
-      );
-      await repository.apply(
-        (user as Ok<ValidatedSettingsChangeSet, StructuredFailure>).value,
-        maximumValueBytes: 10,
-        cancellationToken: CancellationController().token,
-      );
-      expect(
-        (repository.snapshot.resolve(definition) as Ok<int, StructuredFailure>)
-            .value,
-        7,
-      );
-      final device = repository.validate(
-        _draft(
-          expectedRevision: repository.snapshot.storeRevision,
-          operations: [
-            SetSettingValue(
-              key: key,
-              scope: SettingScope.deviceLocal,
-              definition: definition,
-              value: 8,
-            ),
-          ],
-        ),
-        maximumOperations: 10,
-      );
-      await repository.apply(
-        (device as Ok<ValidatedSettingsChangeSet, StructuredFailure>).value,
-        maximumValueBytes: 10,
-        cancellationToken: CancellationController().token,
-      );
-      repository.installPreview(definition, 9, maximumPreviews: 1);
-      expect(
-        (repository.snapshot.resolve(definition) as Ok<int, StructuredFailure>)
-            .value,
-        9,
-      );
-      repository.cancelPreviews();
-      expect(
-        (repository.snapshot.resolve(definition) as Ok<int, StructuredFailure>)
-            .value,
-        8,
-      );
-      final reset = repository.validate(
-        _draft(
-          expectedRevision: repository.snapshot.storeRevision,
-          operations: [
-            ResetSettingValue(key: key, scope: SettingScope.deviceLocal),
-          ],
-        ),
-        maximumOperations: 10,
-      );
-      await repository.apply(
-        (reset as Ok<ValidatedSettingsChangeSet, StructuredFailure>).value,
-        maximumValueBytes: 10,
-        cancellationToken: CancellationController().token,
-      );
-      expect(
-        (repository.snapshot.resolve(definition) as Ok<int, StructuredFailure>)
-            .value,
-        7,
-      );
-      expect(repository.snapshot.unknownRecords.single.bytes, [9]);
-    },
-  );
+      ) as Ok<SettingsPersistenceSnapshot, StructuredFailure>).value,
+    );
+    final opened = await SettingsRepository.open(
+      maximumUnknownRecords: 16,
+      maximumUnknownFieldsPerRecord: 16,
+      maximumListeners: 16,
+      registry: registry,
+      adapter: adapter,
+      maximumRecords: 10,
+      maximumValueBytes: 10,
+      cancellationToken: CancellationController().token,
+    );
+    final repository =
+        (opened as Completed<SettingsRepository, StructuredFailure>).value;
+    expect(
+      (repository.snapshot.resolve(
+        definition,
+      ) as Ok<int, StructuredFailure>).value,
+      5,
+    );
+    final user = repository.validate(
+      _draft(
+        expectedRevision: repository.snapshot.storeRevision,
+        operations: [
+          SetSettingValue(
+            key: key,
+            scope: SettingScope.user,
+            definition: definition,
+            value: 7,
+          ),
+        ],
+      ),
+      maximumOperations: 10,
+    );
+    await repository.apply(
+      (user as Ok<ValidatedSettingsChangeSet, StructuredFailure>).value,
+      maximumValueBytes: 10,
+      cancellationToken: CancellationController().token,
+    );
+    expect(
+      (repository.snapshot.resolve(
+        definition,
+      ) as Ok<int, StructuredFailure>).value,
+      7,
+    );
+    final device = repository.validate(
+      _draft(
+        expectedRevision: repository.snapshot.storeRevision,
+        operations: [
+          SetSettingValue(
+            key: key,
+            scope: SettingScope.deviceLocal,
+            definition: definition,
+            value: 8,
+          ),
+        ],
+      ),
+      maximumOperations: 10,
+    );
+    await repository.apply(
+      (device as Ok<ValidatedSettingsChangeSet, StructuredFailure>).value,
+      maximumValueBytes: 10,
+      cancellationToken: CancellationController().token,
+    );
+    repository.installPreview(definition, 9, maximumPreviews: 1);
+    expect(
+      (repository.snapshot.resolve(
+        definition,
+      ) as Ok<int, StructuredFailure>).value,
+      9,
+    );
+    repository.cancelPreviews();
+    expect(
+      (repository.snapshot.resolve(
+        definition,
+      ) as Ok<int, StructuredFailure>).value,
+      8,
+    );
+    final reset = repository.validate(
+      _draft(
+        expectedRevision: repository.snapshot.storeRevision,
+        operations: [
+          ResetSettingValue(key: key, scope: SettingScope.deviceLocal),
+        ],
+      ),
+      maximumOperations: 10,
+    );
+    await repository.apply(
+      (reset as Ok<ValidatedSettingsChangeSet, StructuredFailure>).value,
+      maximumValueBytes: 10,
+      cancellationToken: CancellationController().token,
+    );
+    expect(
+      (repository.snapshot.resolve(
+        definition,
+      ) as Ok<int, StructuredFailure>).value,
+      7,
+    );
+    expect(repository.snapshot.unknownRecords.single.bytes, [9]);
+  });
 
   test(
     'stale writers and hostile adapter exceptions become fixed failures',
@@ -472,20 +456,17 @@ void main() {
       final zero =
           (Revision.create(0) as Ok<Revision, StructuredFailure>).value;
       final adapter = InMemorySettingsAdapter(
-        initial:
-            (SettingsPersistenceSnapshot.create(
-                      maximumUnknownRecords: 16,
-                      maximumUnknownFieldsPerRecord: 16,
-                      storeRevision: SettingsStoreRevision(zero),
-                      records: const [],
-                      unknownRecords: const [],
-                      damaged: false,
-                      lastKnownGoodAvailable: true,
-                      maximumRecords: 1,
-                      maximumValueBytes: 1,
-                    )
-                    as Ok<SettingsPersistenceSnapshot, StructuredFailure>)
-                .value,
+        initial: (SettingsPersistenceSnapshot.create(
+          maximumUnknownRecords: 16,
+          maximumUnknownFieldsPerRecord: 16,
+          storeRevision: SettingsStoreRevision(zero),
+          records: const [],
+          unknownRecords: const [],
+          damaged: false,
+          lastKnownGoodAvailable: true,
+          maximumRecords: 1,
+          maximumValueBytes: 1,
+        ) as Ok<SettingsPersistenceSnapshot, StructuredFailure>).value,
         fault: TestAdapterFault.exception,
       );
       final outcome = await SettingsRepository.open(
@@ -863,21 +844,19 @@ ValidatedSettingsChangeSet _change(
 ) {
   final definition = registry.definition<int>(_IntDefinition().key)!;
   return (repository.validate(
-            _draft(
-              expectedRevision: repository.snapshot.storeRevision,
-              operations: [
-                SetSettingValue(
-                  key: definition.key,
-                  scope: SettingScope.user,
-                  definition: definition,
-                  value: value,
-                ),
-              ],
-            ),
-            maximumOperations: 1,
-          )
-          as Ok<ValidatedSettingsChangeSet, StructuredFailure>)
-      .value;
+    _draft(
+      expectedRevision: repository.snapshot.storeRevision,
+      operations: [
+        SetSettingValue(
+          key: definition.key,
+          scope: SettingScope.user,
+          definition: definition,
+          value: value,
+        ),
+      ],
+    ),
+    maximumOperations: 1,
+  ) as Ok<ValidatedSettingsChangeSet, StructuredFailure>).value;
 }
 
 final class _InfiniteBytes extends Iterable<int> {
@@ -933,48 +912,40 @@ final class _InfiniteOperationIterator
 SettingsDraftTransaction _draft({
   required SettingsStoreRevision expectedRevision,
   required List<SettingsDraftOperation> operations,
-}) =>
-    (SettingsDraftTransaction.create(
-              expectedRevision: expectedRevision,
-              operations: operations,
-              maximumOperations: 10,
-            )
-            as Ok<SettingsDraftTransaction, StructuredFailure>)
-        .value;
+}) => (SettingsDraftTransaction.create(
+  expectedRevision: expectedRevision,
+  operations: operations,
+  maximumOperations: 10,
+) as Ok<SettingsDraftTransaction, StructuredFailure>).value;
 
 SettingsPersistenceSnapshot _emptyPersistence() {
   final zero = (Revision.create(0) as Ok<Revision, StructuredFailure>).value;
   return (SettingsPersistenceSnapshot.create(
-            maximumUnknownRecords: 16,
-            maximumUnknownFieldsPerRecord: 16,
-            storeRevision: SettingsStoreRevision(zero),
-            records: const [],
-            unknownRecords: const [],
-            damaged: false,
-            lastKnownGoodAvailable: true,
-            maximumRecords: 10,
-            maximumValueBytes: 10,
-          )
-          as Ok<SettingsPersistenceSnapshot, StructuredFailure>)
-      .value;
+    maximumUnknownRecords: 16,
+    maximumUnknownFieldsPerRecord: 16,
+    storeRevision: SettingsStoreRevision(zero),
+    records: const [],
+    unknownRecords: const [],
+    damaged: false,
+    lastKnownGoodAvailable: true,
+    maximumRecords: 10,
+    maximumValueBytes: 10,
+  ) as Ok<SettingsPersistenceSnapshot, StructuredFailure>).value;
 }
 
 Future<SettingsRepository> _openRepository(
   SettingRegistry registry,
   InMemorySettingsAdapter adapter,
-) async =>
-    ((await SettingsRepository.open(
-              maximumUnknownRecords: 16,
-              maximumUnknownFieldsPerRecord: 16,
-              maximumListeners: 16,
-              registry: registry,
-              adapter: adapter,
-              maximumRecords: 10,
-              maximumValueBytes: 10,
-              cancellationToken: CancellationController().token,
-            ))
-            as Completed<SettingsRepository, StructuredFailure>)
-        .value;
+) async => ((await SettingsRepository.open(
+  maximumUnknownRecords: 16,
+  maximumUnknownFieldsPerRecord: 16,
+  maximumListeners: 16,
+  registry: registry,
+  adapter: adapter,
+  maximumRecords: 10,
+  maximumValueBytes: 10,
+  cancellationToken: CancellationController().token,
+)) as Completed<SettingsRepository, StructuredFailure>).value;
 
 class _IntDefinition implements SettingDefinitionSource<int> {
   @override
@@ -994,10 +965,9 @@ class _IntDefinition implements SettingDefinitionSource<int> {
   SettingDeprecationState get deprecationState =>
       SettingDeprecationState.active;
   @override
-  SettingKey get key =>
-      (SettingKey.parse('alnote.settings.test.number')
-              as Ok<SettingKey, StructuredFailure>)
-          .value;
+  SettingKey get key => (SettingKey.parse(
+    'alnote.settings.test.number',
+  ) as Ok<SettingKey, StructuredFailure>).value;
   @override
   List<SettingMigrationStep<int>> get migrations => const [];
   @override

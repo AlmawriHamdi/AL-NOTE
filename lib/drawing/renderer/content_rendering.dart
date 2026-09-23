@@ -49,6 +49,48 @@ final class ImageRenderingDefinition implements ObjectRenderingDefinition {
   }
 }
 
+/// Built-in PDF page rendering definition producing a semantic decode primitive.
+final class PdfPageRenderingDefinition implements ObjectRenderingDefinition {
+  /// Creates a definition with explicit PDF model limits.
+  const PdfPageRenderingDefinition(this.pdfLimits);
+
+  /// Image payload limits.
+  final PdfModelLimits pdfLimits;
+  @override
+  ObjectTypeKey get typeKey => pdfPageObjectTypeKey;
+  @override
+  Result<List<ScenePrimitive>, StructuredFailure> render({
+    required ObjectEnvelope object,
+    required ViewportSnapshot viewport,
+    required double layerOpacity,
+    required RenderPlane plane,
+    required RenderingLimits limits,
+  }) {
+    final payload = PdfPageObjectPayload.decode(
+      object.payload,
+      limits: pdfLimits,
+    );
+    if (object.typeKey != pdfPageObjectTypeKey ||
+        object.typeSchemaVersion != pdfPageObjectSchemaVersion ||
+        payload is! Ok<PdfPageObjectPayload, StructuredFailure>)
+      return Err(_failure('invalid_pdf'));
+    final transform = _localToView(object, viewport);
+    final bounds = _viewBounds(payload.value.bounds, object, viewport);
+    if (transform == null || bounds == null)
+      return Err(_failure('transform_unavailable'));
+    final primitive = PdfPagePrimitive.create(
+      plane: plane,
+      bounds: bounds,
+      opacity: layerOpacity,
+      payload: payload.value,
+      localToViewCoefficients: transform,
+    );
+    return primitive is Ok<PdfPagePrimitive, StructuredFailure>
+        ? Ok(List<ScenePrimitive>.unmodifiable([primitive.value]))
+        : Err(_failure('primitive_unavailable'));
+  }
+}
+
 /// Built-in Text rendering definition producing a semantic layout primitive.
 final class TextRenderingDefinition implements ObjectRenderingDefinition {
   /// Creates a definition with explicit Text limits.

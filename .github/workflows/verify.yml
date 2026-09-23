@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FLUTTER_COMMIT: ee80f08bbf97172ec030b8751ceab557177a34a6
-  FLUTTER_VERSION: 3.44.6
+  FLUTTER_COMMIT: 9584c6713b324636289d067944a46fd6b49df14b
+  FLUTTER_VERSION: 3.47.4
   FLUTTER_REPOSITORY: https://github.com/flutter/flutter.git
 
 jobs:
@@ -71,8 +71,19 @@ jobs:
       - name: Analyze
         run: flutter analyze --fatal-infos
 
+      - name: Provision verified fixture PDFium
+        run: python3 tool/provision_pdf_fixture.py
+
       - name: Test
         run: flutter test
+
+      - name: Test resource provisioning boundaries
+        run: python3 -m unittest discover -s tool -p 'test_pdf*.py'
+
+      - name: Provision verified isolated Linux PDF package
+        # Keep the mandatory CMake/runtime manifest guards. The fixture engine
+        # above is a separate dependency and cannot replace this package.
+        run: python3 tool/linux_pdf/provision_package.py
 
       - name: Build Linux debug application
         run: flutter build linux --debug
@@ -87,6 +98,13 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+
+      - name: Select JDK 17
+        shell: bash
+        run: |
+          test -d "$JAVA_HOME_17_X64"
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          "$JAVA_HOME_17_X64/bin/java" -version
 
       - name: Install pinned Flutter SDK
         shell: bash
@@ -191,6 +209,9 @@ jobs:
 
       - name: Analyze
         run: flutter analyze --fatal-infos
+
+      - name: Provision verified fixture PDFium
+        run: python tool/provision_pdf_fixture.py
 
       - name: Test
         run: flutter test

@@ -404,9 +404,9 @@ final class AlnoteMigrationPlan {
         ) ||
         !_sameResources(original, candidate) ||
         !_samePreservation(original.preservation, candidate.preservation) ||
-        !DocumentValidator(
-          objectRegistry,
-        ).validate(candidate.document).isValid) {
+        !DocumentValidator(objectRegistry)
+            .validate(candidate.document)
+            .isValid) {
       return Failed<AlnotePackageMigrationResult, StructuredFailure>(
         _candidateFailure(),
       );
@@ -773,9 +773,9 @@ bool _samePreservedMaps(
   return true;
 }
 
-PreservedInteger _preservedInteger(int value) =>
-    (PreservedInteger.create(value) as Ok<PreservedInteger, StructuredFailure>)
-        .value;
+PreservedInteger _preservedInteger(int value) => (PreservedInteger.create(
+  value,
+) as Ok<PreservedInteger, StructuredFailure>).value;
 
 bool _bytesEqual(List<int> left, List<int> right) {
   if (left.length != right.length) return false;

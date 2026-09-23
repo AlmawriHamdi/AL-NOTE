@@ -18,4 +18,5 @@ export 'objects/object_envelope.dart';
 export 'objects/object_registry.dart';
 export 'objects/shape.dart';
 export 'objects/text.dart';
+export 'pdf.dart';
 export 'resources/resources.dart';

@@ -38,26 +38,26 @@ void main() {
     });
 
     test('requires equal majors and a sufficient provider minor', () {
-      final required =
-          (ContractVersion.create(2, 3)
-                  as Ok<ContractVersion, StructuredFailure>)
-              .value;
-      final equal =
-          (ContractVersion.create(2, 3)
-                  as Ok<ContractVersion, StructuredFailure>)
-              .value;
-      final newer =
-          (ContractVersion.create(2, 4)
-                  as Ok<ContractVersion, StructuredFailure>)
-              .value;
-      final older =
-          (ContractVersion.create(2, 2)
-                  as Ok<ContractVersion, StructuredFailure>)
-              .value;
-      final differentMajor =
-          (ContractVersion.create(3, 3)
-                  as Ok<ContractVersion, StructuredFailure>)
-              .value;
+      final required = (ContractVersion.create(
+        2,
+        3,
+      ) as Ok<ContractVersion, StructuredFailure>).value;
+      final equal = (ContractVersion.create(
+        2,
+        3,
+      ) as Ok<ContractVersion, StructuredFailure>).value;
+      final newer = (ContractVersion.create(
+        2,
+        4,
+      ) as Ok<ContractVersion, StructuredFailure>).value;
+      final older = (ContractVersion.create(
+        2,
+        2,
+      ) as Ok<ContractVersion, StructuredFailure>).value;
+      final differentMajor = (ContractVersion.create(
+        3,
+        3,
+      ) as Ok<ContractVersion, StructuredFailure>).value;
 
       expect(equal.isCompatibleProviderFor(required), isTrue);
       expect(newer.isCompatibleProviderFor(required), isTrue);
@@ -91,10 +91,9 @@ void main() {
     });
 
     test('returns a structured overflow failure at the maximum', () {
-      final maximum =
-          (Revision.create(Revision.maximumValue)
-                  as Ok<Revision, StructuredFailure>)
-              .value;
+      final maximum = (Revision.create(
+        Revision.maximumValue,
+      ) as Ok<Revision, StructuredFailure>).value;
 
       final result = maximum.increment();
       final failure = (result as Err<Revision, StructuredFailure>).error;
@@ -108,9 +107,10 @@ void main() {
   test('schema, contract, and revision types remain distinct', () {
     final Object schema =
         (SchemaVersion.create(1) as Ok<SchemaVersion, StructuredFailure>).value;
-    final Object contract =
-        (ContractVersion.create(1, 0) as Ok<ContractVersion, StructuredFailure>)
-            .value;
+    final Object contract = (ContractVersion.create(
+      1,
+      0,
+    ) as Ok<ContractVersion, StructuredFailure>).value;
     final Object revision =
         (Revision.create(1) as Ok<Revision, StructuredFailure>).value;
 
@@ -120,10 +120,9 @@ void main() {
   });
 
   test('ContentIdentity is UUID-backed with value equality', () {
-    final uuid =
-        (UuidIdentifier.parse('a987fbc9-4bed-4078-8f07-9141ba07c9f3')
-                as Ok<UuidIdentifier, StructuredFailure>)
-            .value;
+    final uuid = (UuidIdentifier.parse(
+      'a987fbc9-4bed-4078-8f07-9141ba07c9f3',
+    ) as Ok<UuidIdentifier, StructuredFailure>).value;
 
     final first = ContentIdentity(uuid);
     final second = ContentIdentity(uuid);

@@ -51,14 +51,12 @@ void main() {
     });
 
     test('has value equality and hashing', () {
-      final first =
-          (NamespacedIdentifier.parse('al.note')
-                  as Ok<NamespacedIdentifier, StructuredFailure>)
-              .value;
-      final second =
-          (NamespacedIdentifier.parse('al.note')
-                  as Ok<NamespacedIdentifier, StructuredFailure>)
-              .value;
+      final first = (NamespacedIdentifier.parse(
+        'al.note',
+      ) as Ok<NamespacedIdentifier, StructuredFailure>).value;
+      final second = (NamespacedIdentifier.parse(
+        'al.note',
+      ) as Ok<NamespacedIdentifier, StructuredFailure>).value;
 
       expect(first, second);
       expect(first.hashCode, second.hashCode);
@@ -96,14 +94,12 @@ void main() {
     });
 
     test('has value equality and hashing', () {
-      final lower =
-          (UuidIdentifier.parse('a987fbc9-4bed-4078-8f07-9141ba07c9f3')
-                  as Ok<UuidIdentifier, StructuredFailure>)
-              .value;
-      final upper =
-          (UuidIdentifier.parse('A987FBC9-4BED-4078-8F07-9141BA07C9F3')
-                  as Ok<UuidIdentifier, StructuredFailure>)
-              .value;
+      final lower = (UuidIdentifier.parse(
+        'a987fbc9-4bed-4078-8f07-9141ba07c9f3',
+      ) as Ok<UuidIdentifier, StructuredFailure>).value;
+      final upper = (UuidIdentifier.parse(
+        'A987FBC9-4BED-4078-8F07-9141BA07C9F3',
+      ) as Ok<UuidIdentifier, StructuredFailure>).value;
 
       expect(lower, upper);
       expect(lower.hashCode, upper.hashCode);

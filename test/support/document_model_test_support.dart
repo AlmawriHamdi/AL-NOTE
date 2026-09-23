@@ -6,9 +6,9 @@ import 'package:al_note/documents/document_model.dart';
 /// Parses a deterministic non-nil RFC 9562-shaped test UUID.
 UuidIdentifier testUuid(int value) {
   final suffix = value.toString().padLeft(12, '0');
-  return (UuidIdentifier.parse('00000000-0000-4000-8000-$suffix')
-          as Ok<UuidIdentifier, StructuredFailure>)
-      .value;
+  return (UuidIdentifier.parse(
+    '00000000-0000-4000-8000-$suffix',
+  ) as Ok<UuidIdentifier, StructuredFailure>).value;
 }
 
 /// Returns schema version one.
@@ -16,15 +16,15 @@ SchemaVersion get testSchemaVersion =>
     (SchemaVersion.create(1) as Ok<SchemaVersion, StructuredFailure>).value;
 
 /// Returns the identity affine transform.
-AffineTransform2D get testTransform =>
-    (AffineTransform2D.fromOperation(const IdentityTransformOperation2D())
-            as Ok<AffineTransform2D, StructuredFailure>)
-        .value;
+AffineTransform2D get testTransform => (AffineTransform2D.fromOperation(
+  const IdentityTransformOperation2D(),
+) as Ok<AffineTransform2D, StructuredFailure>).value;
 
 /// Returns a strictly positive test Page size.
-Size2 get testPageSize =>
-    (Size2.create(width: 600, height: 800) as Ok<Size2, StructuredFailure>)
-        .value;
+Size2 get testPageSize => (Size2.create(
+  width: 600,
+  height: 800,
+) as Ok<Size2, StructuredFailure>).value;
 
 /// Unwraps a successful model result.
 T modelValue<T>(Result<T, StructuredFailure> result) =>

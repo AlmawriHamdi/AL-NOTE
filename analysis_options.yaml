@@ -1,4 +1,11 @@
 analyzer:
+  exclude:
+    - third_party/**
+    - build/**
+    - android/**
+    - web/**
+    - windows/**
+    - linux/**
   language:
     strict-casts: true
     strict-inference: true

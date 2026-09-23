@@ -126,3 +126,19 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# Reviewed isolated PDF runtime, separate from Flutter/native-asset loading.
+# Build-time staging only; runtime discovers data/pdf_linux beside the executable.
+set(ALNOTE_PDF_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../build/linux-pdf-resources")
+install(CODE "
+  if(NOT EXISTS \"${ALNOTE_PDF_RESOURCES}/manifest.json\")
+    message(FATAL_ERROR \"Package the reviewed Linux PDF resources first; see tool/linux_pdf/package_resources.py\")
+  endif()
+  file(SHA256 \"${ALNOTE_PDF_RESOURCES}/manifest.json\" actual_pdf_manifest)
+  if(NOT actual_pdf_manifest STREQUAL \"65ab051ea8c3d74ad0307f53c9d45cb55a90ddcb80bec3e2c923403ab43f3157\")
+    message(FATAL_ERROR \"Linux PDF resource manifest differs from the compiled review pin\")
+  endif()
+" COMPONENT Runtime)
+install(DIRECTORY "${ALNOTE_PDF_RESOURCES}/"
+  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/pdf_linux"
+  USE_SOURCE_PERMISSIONS COMPONENT Runtime)

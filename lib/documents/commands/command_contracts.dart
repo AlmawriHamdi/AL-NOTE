@@ -152,8 +152,10 @@ enum CommandExecutionDiagnosticStage {
 
 /// Optional synchronous diagnostic sink. Implementations must not throw;
 /// coordinator callers defensively contain sink failures regardless.
-typedef CommandExecutionDiagnosticSink =
-    void Function(CommandExecutionDiagnosticStage stage, int elapsedMicros);
+typedef CommandExecutionDiagnosticSink = void Function(
+  CommandExecutionDiagnosticStage stage,
+  int elapsedMicros,
+);
 
 /// An explicit event that prevents history coalescing across it.
 enum CoalescingBoundary {
@@ -289,6 +291,29 @@ sealed class CommandRequest {
   @override
   String toString() =>
       '$runtimeType(document: $documentId, family: ${metadata.family})';
+}
+
+/// One bounded, non-coalescing insertion of prepared PDF-backed notebook Pages.
+/// The coordinator validates destination ownership and the complete candidate.
+final class ImportPdfPagesRequest extends CommandRequest {
+  ImportPdfPagesRequest({
+    required super.documentId,
+    required super.metadata,
+    required super.preconditions,
+    required this.sectionId,
+    required this.afterPageId,
+    required List<DocumentPage> pages,
+    required this.resource,
+  }) : pages = List.unmodifiable(pages.take(maximumImportedPages + 1));
+
+  static const maximumImportedPages = 1000;
+  static const maximumNotebookPages = 10000;
+  final SectionId sectionId;
+  final PageId afterPageId;
+  final List<DocumentPage> pages;
+
+  /// Exact immutable resource; reused when its identity is already present.
+  final DocumentResourceSnapshot resource;
 }
 
 /// One ordered Object addition to an explicitly identified content Layer.
@@ -942,6 +967,7 @@ final class HistoryCostEstimateInput {
     required this.afterRoot,
     required this.replacedObjectCount,
     this.retainedResourceBytes = 0,
+    this.retainedStructureBytes = 0,
   });
 
   /// Exact before root.
@@ -955,6 +981,9 @@ final class HistoryCostEstimateInput {
 
   /// Exact resource octets retained exclusively by this history transition.
   final int retainedResourceBytes;
+
+  /// Conservative additional retained structure for prepared Page insertions.
+  final int retainedStructureBytes;
 }
 
 /// Injected AL NOTE-owned history retained-cost estimator.

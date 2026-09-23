@@ -15,15 +15,12 @@ void main() {
     final first = _authority(clock, 940);
     final second = _authority(clock, 941);
     final bindings = _bindings();
-    final token =
-        (first.authorization(
-                  owner: bindings.$1,
-                  operation: bindings.$2,
-                  scope: bindings.$3,
-                  expiresAtUtc: clock.nowUtc().add(const Duration(seconds: 5)),
-                )
-                as Ok<AuthorizationToken, StructuredFailure>)
-            .value;
+    final token = (first.authorization(
+      owner: bindings.$1,
+      operation: bindings.$2,
+      scope: bindings.$3,
+      expiresAtUtc: clock.nowUtc().add(const Duration(seconds: 5)),
+    ) as Ok<AuthorizationToken, StructuredFailure>).value;
     expect(
       second.revalidate(
         token,
@@ -46,18 +43,15 @@ void main() {
       for (var index = 0; index < 5; index += 1) testUuid(942 + index),
     ]);
     final policy = _MutableTokenPolicy()..allowed = false;
-    final denied =
-        (OpaqueTokenAuthority.create(
-                  uuidGenerator: generator,
-                  clock: clock,
-                  maximumLifetime: const Duration(minutes: 1),
-                  capabilityPolicy: policy,
-                  maximumIssuedTokens: 1,
-                  maximumConsumedTokens: 1,
-                  maximumRevocationOwners: 1,
-                )
-                as Ok<OpaqueTokenAuthority, StructuredFailure>)
-            .value;
+    final denied = (OpaqueTokenAuthority.create(
+      uuidGenerator: generator,
+      clock: clock,
+      maximumLifetime: const Duration(minutes: 1),
+      capabilityPolicy: policy,
+      maximumIssuedTokens: 1,
+      maximumConsumedTokens: 1,
+      maximumRevocationOwners: 1,
+    ) as Ok<OpaqueTokenAuthority, StructuredFailure>).value;
     expect(
       denied.resource(
         owner: bindings.$1,
@@ -123,18 +117,15 @@ void main() {
         testUuid(948),
       ]);
       final policy = _MutableTokenPolicy()..throwNow = true;
-      final authority =
-          (OpaqueTokenAuthority.create(
-                    uuidGenerator: generator,
-                    clock: clock,
-                    maximumLifetime: const Duration(minutes: 1),
-                    capabilityPolicy: policy,
-                    maximumIssuedTokens: 1,
-                    maximumConsumedTokens: 1,
-                    maximumRevocationOwners: 1,
-                  )
-                  as Ok<OpaqueTokenAuthority, StructuredFailure>)
-              .value;
+      final authority = (OpaqueTokenAuthority.create(
+        uuidGenerator: generator,
+        clock: clock,
+        maximumLifetime: const Duration(minutes: 1),
+        capabilityPolicy: policy,
+        maximumIssuedTokens: 1,
+        maximumConsumedTokens: 1,
+        maximumRevocationOwners: 1,
+      ) as Ok<OpaqueTokenAuthority, StructuredFailure>).value;
       expect(
         authority.resource(
           owner: bindings.$1,
@@ -145,14 +136,11 @@ void main() {
       );
       expect(generator.remaining, 2);
       policy.throwNow = false;
-      final token =
-          (authority.resource(
-                    owner: bindings.$1,
-                    operation: bindings.$2,
-                    scope: bindings.$3,
-                  )
-                  as Ok<ResourceToken, StructuredFailure>)
-              .value;
+      final token = (authority.resource(
+        owner: bindings.$1,
+        operation: bindings.$2,
+        scope: bindings.$3,
+      ) as Ok<ResourceToken, StructuredFailure>).value;
       policy.allowed = false;
       expect(
         authority.revalidate(
@@ -174,15 +162,12 @@ void main() {
     final clock = ControllableClock(DateTime.utc(2026));
     final bindings = _bindings();
     final limited = _authority(clock, 943, maximumIssued: 1);
-    final token =
-        (limited.authorization(
-                  owner: bindings.$1,
-                  operation: bindings.$2,
-                  scope: bindings.$3,
-                  expiresAtUtc: clock.nowUtc().add(const Duration(seconds: 5)),
-                )
-                as Ok<AuthorizationToken, StructuredFailure>)
-            .value;
+    final token = (limited.authorization(
+      owner: bindings.$1,
+      operation: bindings.$2,
+      scope: bindings.$3,
+      expiresAtUtc: clock.nowUtc().add(const Duration(seconds: 5)),
+    ) as Ok<AuthorizationToken, StructuredFailure>).value;
     expect(
       limited.authorization(
         owner: bindings.$1,
@@ -213,26 +198,20 @@ void main() {
       repeated,
       testUuid(950),
     ]);
-    final authority =
-        (OpaqueTokenAuthority.create(
-                  uuidGenerator: generator,
-                  clock: clock,
-                  maximumLifetime: const Duration(minutes: 1),
-                  capabilityPolicy: _AllowTokenPolicy(),
-                  maximumIssuedTokens: 2,
-                  maximumConsumedTokens: 2,
-                  maximumRevocationOwners: 1,
-                )
-                as Ok<OpaqueTokenAuthority, StructuredFailure>)
-            .value;
-    final original =
-        (authority.resource(
-                  owner: bindings.$1,
-                  operation: bindings.$2,
-                  scope: bindings.$3,
-                )
-                as Ok<ResourceToken, StructuredFailure>)
-            .value;
+    final authority = (OpaqueTokenAuthority.create(
+      uuidGenerator: generator,
+      clock: clock,
+      maximumLifetime: const Duration(minutes: 1),
+      capabilityPolicy: _AllowTokenPolicy(),
+      maximumIssuedTokens: 2,
+      maximumConsumedTokens: 2,
+      maximumRevocationOwners: 1,
+    ) as Ok<OpaqueTokenAuthority, StructuredFailure>).value;
+    final original = (authority.resource(
+      owner: bindings.$1,
+      operation: bindings.$2,
+      scope: bindings.$3,
+    ) as Ok<ResourceToken, StructuredFailure>).value;
     final collision = authority.resource(
       owner: bindings.$1,
       operation: bindings.$2,
@@ -274,18 +253,15 @@ void main() {
     final bindings = _bindings();
     final repeated = testUuid(951);
     final generator = UuidSequenceGenerator.fromValues([repeated, repeated]);
-    final authority =
-        (OpaqueTokenAuthority.create(
-                  uuidGenerator: generator,
-                  clock: clock,
-                  maximumLifetime: const Duration(minutes: 1),
-                  capabilityPolicy: _AllowTokenPolicy(),
-                  maximumIssuedTokens: 2,
-                  maximumConsumedTokens: 2,
-                  maximumRevocationOwners: 1,
-                )
-                as Ok<OpaqueTokenAuthority, StructuredFailure>)
-            .value;
+    final authority = (OpaqueTokenAuthority.create(
+      uuidGenerator: generator,
+      clock: clock,
+      maximumLifetime: const Duration(minutes: 1),
+      capabilityPolicy: _AllowTokenPolicy(),
+      maximumIssuedTokens: 2,
+      maximumConsumedTokens: 2,
+      maximumRevocationOwners: 1,
+    ) as Ok<OpaqueTokenAuthority, StructuredFailure>).value;
     expect(
       authority.resource(
         owner: bindings.$1,
@@ -313,18 +289,15 @@ void main() {
       testUuid(953),
     ]);
     final policy = _MutableTokenPolicy();
-    final authority =
-        (OpaqueTokenAuthority.create(
-                  uuidGenerator: generator,
-                  clock: clock,
-                  maximumLifetime: const Duration(minutes: 1),
-                  capabilityPolicy: policy,
-                  maximumIssuedTokens: 1,
-                  maximumConsumedTokens: 1,
-                  maximumRevocationOwners: 1,
-                )
-                as Ok<OpaqueTokenAuthority, StructuredFailure>)
-            .value;
+    final authority = (OpaqueTokenAuthority.create(
+      uuidGenerator: generator,
+      clock: clock,
+      maximumLifetime: const Duration(minutes: 1),
+      capabilityPolicy: policy,
+      maximumIssuedTokens: 1,
+      maximumConsumedTokens: 1,
+      maximumRevocationOwners: 1,
+    ) as Ok<OpaqueTokenAuthority, StructuredFailure>).value;
     expect(
       authority.resource(
         owner: bindings.$1,
@@ -362,13 +335,10 @@ void main() {
   test(
     'reentrant registry disposal invokes accepted disposer exactly once',
     () {
-      final registry =
-          (CapabilityRegistry.create(
-                    maximumListeners: 16,
-                    maximumCapabilities: 2,
-                  )
-                  as Ok<CapabilityRegistry, StructuredFailure>)
-              .value;
+      final registry = (CapabilityRegistry.create(
+        maximumListeners: 16,
+        maximumCapabilities: 2,
+      ) as Ok<CapabilityRegistry, StructuredFailure>).value;
       var disposals = 0;
       registry.addListener((_) => registry.dispose());
       expect(
@@ -390,13 +360,10 @@ void main() {
   test(
     'typed capability initialization enforces contract compatibility',
     () async {
-      final registry =
-          (CapabilityRegistry.create(
-                    maximumListeners: 16,
-                    maximumCapabilities: 2,
-                  )
-                  as Ok<CapabilityRegistry, StructuredFailure>)
-              .value;
+      final registry = (CapabilityRegistry.create(
+        maximumListeners: 16,
+        maximumCapabilities: 2,
+      ) as Ok<CapabilityRegistry, StructuredFailure>).value;
       final adapter = _TestCapabilityAdapter(_capabilityEvidence());
       expect(
         await registry.initialize<void>(
@@ -410,13 +377,10 @@ void main() {
       registry.dispose();
       registry.dispose();
       expect(adapter.disposals, 1);
-      final other =
-          (CapabilityRegistry.create(
-                    maximumListeners: 16,
-                    maximumCapabilities: 2,
-                  )
-                  as Ok<CapabilityRegistry, StructuredFailure>)
-              .value;
+      final other = (CapabilityRegistry.create(
+        maximumListeners: 16,
+        maximumCapabilities: 2,
+      ) as Ok<CapabilityRegistry, StructuredFailure>).value;
       expect(
         await other.initialize<void>(
           adapter: _TestCapabilityAdapter(_capabilityEvidence()),
@@ -430,23 +394,20 @@ void main() {
 
   test('equal-but-distinct adapter evidence transfers ownership', () async {
     final metadata = _capabilityEvidence();
-    final equalAdapter =
-        (AdapterEvidence.create(
-                  identity: metadata.adapter.identity,
-                  version: metadata.adapter.version,
-                )
-                as Ok<AdapterEvidence, StructuredFailure>)
-            .value;
+    final equalAdapter = (AdapterEvidence.create(
+      identity: metadata.adapter.identity,
+      version: metadata.adapter.version,
+    ) as Ok<AdapterEvidence, StructuredFailure>).value;
     expect(equalAdapter, equals(metadata.adapter));
     expect(identical(equalAdapter, metadata.adapter), isFalse);
     final adapter = _MismatchCapabilityAdapter(
       metadata,
       _evidenceLike(metadata, adapter: equalAdapter),
     );
-    final registry =
-        (CapabilityRegistry.create(maximumListeners: 16, maximumCapabilities: 1)
-                as Ok<CapabilityRegistry, StructuredFailure>)
-            .value;
+    final registry = (CapabilityRegistry.create(
+      maximumListeners: 16,
+      maximumCapabilities: 1,
+    ) as Ok<CapabilityRegistry, StructuredFailure>).value;
     expect(
       await registry.initialize<void>(
         adapter: adapter,
@@ -464,13 +425,10 @@ void main() {
     'capability initialization failure and exception publish evidence',
     () async {
       for (final throws in [false, true]) {
-        final registry =
-            (CapabilityRegistry.create(
-                      maximumListeners: 16,
-                      maximumCapabilities: 1,
-                    )
-                    as Ok<CapabilityRegistry, StructuredFailure>)
-                .value;
+        final registry = (CapabilityRegistry.create(
+          maximumListeners: 16,
+          maximumCapabilities: 1,
+        ) as Ok<CapabilityRegistry, StructuredFailure>).value;
         final adapter = _TestCapabilityAdapter(
           _capabilityEvidence(),
           failInitialization: !throws,
@@ -499,13 +457,10 @@ void main() {
   test(
     'reentrant initialization collision releases the losing adapter',
     () async {
-      final registry =
-          (CapabilityRegistry.create(
-                    maximumListeners: 16,
-                    maximumCapabilities: 2,
-                  )
-                  as Ok<CapabilityRegistry, StructuredFailure>)
-              .value;
+      final registry = (CapabilityRegistry.create(
+        maximumListeners: 16,
+        maximumCapabilities: 2,
+      ) as Ok<CapabilityRegistry, StructuredFailure>).value;
       final evidence = _capabilityEvidence();
       final adapter = _ReentrantCapabilityAdapter(evidence, () {
         expect(registry.register(evidence), isA<Ok<void, StructuredFailure>>());
@@ -532,10 +487,9 @@ void main() {
           base,
           _evidenceLike(
             base,
-            key:
-                (CapabilityKey.parse('alnote.platform.other')
-                        as Ok<CapabilityKey, StructuredFailure>)
-                    .value,
+            key: (CapabilityKey.parse(
+              'alnote.platform.other',
+            ) as Ok<CapabilityKey, StructuredFailure>).value,
           ),
         ),
         (base, _evidenceLike(base, version: _version(1, 2))),
@@ -543,31 +497,28 @@ void main() {
           base,
           _evidenceLike(
             base,
-            adapter:
-                (AdapterEvidence.create(identity: 'other', version: '1')
-                        as Ok<AdapterEvidence, StructuredFailure>)
-                    .value,
+            adapter: (AdapterEvidence.create(
+              identity: 'other',
+              version: '1',
+            ) as Ok<AdapterEvidence, StructuredFailure>).value,
           ),
         ),
         (
           base,
           _evidenceLike(
             base,
-            adapter:
-                (AdapterEvidence.create(identity: 'test', version: '2')
-                        as Ok<AdapterEvidence, StructuredFailure>)
-                    .value,
+            adapter: (AdapterEvidence.create(
+              identity: 'test',
+              version: '2',
+            ) as Ok<AdapterEvidence, StructuredFailure>).value,
           ),
         ),
       ];
       for (final values in cases) {
-        final registry =
-            (CapabilityRegistry.create(
-                      maximumListeners: 16,
-                      maximumCapabilities: 1,
-                    )
-                    as Ok<CapabilityRegistry, StructuredFailure>)
-                .value;
+        final registry = (CapabilityRegistry.create(
+          maximumListeners: 16,
+          maximumCapabilities: 1,
+        ) as Ok<CapabilityRegistry, StructuredFailure>).value;
         final adapter = _MismatchCapabilityAdapter(values.$1, values.$2);
         expect(
           await registry.initialize<void>(
@@ -587,10 +538,10 @@ void main() {
   test('initialization cancellation has exact invocation ownership', () async {
     final preCancelled = CancellationController()..cancel('before');
     final untouched = _TestCapabilityAdapter(_capabilityEvidence());
-    final first =
-        (CapabilityRegistry.create(maximumListeners: 16, maximumCapabilities: 1)
-                as Ok<CapabilityRegistry, StructuredFailure>)
-            .value;
+    final first = (CapabilityRegistry.create(
+      maximumListeners: 16,
+      maximumCapabilities: 1,
+    ) as Ok<CapabilityRegistry, StructuredFailure>).value;
     expect(
       await first.initialize<void>(
         adapter: untouched,
@@ -608,10 +559,10 @@ void main() {
       _capabilityEvidence(),
       onInitialize: () => during.cancel('during'),
     );
-    final second =
-        (CapabilityRegistry.create(maximumListeners: 16, maximumCapabilities: 1)
-                as Ok<CapabilityRegistry, StructuredFailure>)
-            .value;
+    final second = (CapabilityRegistry.create(
+      maximumListeners: 16,
+      maximumCapabilities: 1,
+    ) as Ok<CapabilityRegistry, StructuredFailure>).value;
     expect(
       await second.initialize<void>(
         adapter: invoked,
@@ -629,13 +580,10 @@ void main() {
     () async {
       final base = _capabilityEvidence();
       late CapabilityRegistry registry;
-      registry =
-          (CapabilityRegistry.create(
-                    maximumListeners: 16,
-                    maximumCapabilities: 1,
-                  )
-                  as Ok<CapabilityRegistry, StructuredFailure>)
-              .value;
+      registry = (CapabilityRegistry.create(
+        maximumListeners: 16,
+        maximumCapabilities: 1,
+      ) as Ok<CapabilityRegistry, StructuredFailure>).value;
       final disposedDuring = _MismatchCapabilityAdapter(
         _capabilityEvidence(),
         _capabilityEvidence(),
@@ -651,21 +599,17 @@ void main() {
       );
       expect(disposedDuring.disposals, 1);
 
-      final other =
-          (CapabilityRegistry.create(
-                    maximumListeners: 16,
-                    maximumCapabilities: 1,
-                  )
-                  as Ok<CapabilityRegistry, StructuredFailure>)
-              .value;
+      final other = (CapabilityRegistry.create(
+        maximumListeners: 16,
+        maximumCapabilities: 1,
+      ) as Ok<CapabilityRegistry, StructuredFailure>).value;
       final throwing = _MismatchCapabilityAdapter(
         base,
         _evidenceLike(
           base,
-          key:
-              (CapabilityKey.parse('alnote.platform.other')
-                      as Ok<CapabilityKey, StructuredFailure>)
-                  .value,
+          key: (CapabilityKey.parse(
+            'alnote.platform.other',
+          ) as Ok<CapabilityKey, StructuredFailure>).value,
         ),
         throwOnDispose: true,
       );
@@ -697,15 +641,12 @@ void main() {
       isA<Err<AuthorizationToken, StructuredFailure>>(),
     );
     clock.throwNow = false;
-    final token =
-        (authority.authorization(
-                  owner: bindings.$1,
-                  operation: bindings.$2,
-                  scope: bindings.$3,
-                  expiresAtUtc: DateTime.utc(2026, 1, 1, 0, 0, 1),
-                )
-                as Ok<AuthorizationToken, StructuredFailure>)
-            .value;
+    final token = (authority.authorization(
+      owner: bindings.$1,
+      operation: bindings.$2,
+      scope: bindings.$3,
+      expiresAtUtc: DateTime.utc(2026, 1, 1, 0, 0, 1),
+    ) as Ok<AuthorizationToken, StructuredFailure>).value;
     clock.throwNow = true;
     expect(
       authority.revalidate(
@@ -721,30 +662,25 @@ void main() {
   test('private storage evidence factories reject inconsistent states', () {
     final zero = (Revision.create(0) as Ok<Revision, StructuredFailure>).value;
     final one = (Revision.create(1) as Ok<Revision, StructuredFailure>).value;
-    final repository =
-        (PrivateRepositoryId.parse('alnote.settings')
-                as Ok<PrivateRepositoryId, StructuredFailure>)
-            .value;
-    final id =
-        (PrivateRecordId.parse('record')
-                as Ok<PrivateRecordId, StructuredFailure>)
-            .value;
-    final durability =
-        (StorageDurabilityEvidence.create(durable: true, flushed: true)
-                as Ok<StorageDurabilityEvidence, StructuredFailure>)
-            .value;
-    final record =
-        (PrivateByteRecord.create(
-                  id: id,
-                  recordRevision: one,
-                  bytes: const [1],
-                  checksum: const [1],
-                  lastKnownGood: true,
-                  maximumBytes: 1,
-                  maximumChecksumBytes: 1,
-                )
-                as Ok<PrivateByteRecord, StructuredFailure>)
-            .value;
+    final repository = (PrivateRepositoryId.parse(
+      'alnote.settings',
+    ) as Ok<PrivateRepositoryId, StructuredFailure>).value;
+    final id = (PrivateRecordId.parse(
+      'record',
+    ) as Ok<PrivateRecordId, StructuredFailure>).value;
+    final durability = (StorageDurabilityEvidence.create(
+      durable: true,
+      flushed: true,
+    ) as Ok<StorageDurabilityEvidence, StructuredFailure>).value;
+    final record = (PrivateByteRecord.create(
+      id: id,
+      recordRevision: one,
+      bytes: const [1],
+      checksum: const [1],
+      lastKnownGood: true,
+      maximumBytes: 1,
+      maximumChecksumBytes: 1,
+    ) as Ok<PrivateByteRecord, StructuredFailure>).value;
     expect(
       StorageDurabilityEvidence.create(durable: false, flushed: true),
       isA<Err<StorageDurabilityEvidence, StructuredFailure>>(),
@@ -800,41 +736,30 @@ void main() {
 
   test('token replay and revocation are authority-owned', () {
     final clock = ControllableClock(DateTime.utc(2026));
-    final authority =
-        (OpaqueTokenAuthority.create(
-                  uuidGenerator: UuidSequenceGenerator.fromValues([
-                    testUuid(949),
-                  ]),
-                  clock: clock,
-                  maximumLifetime: const Duration(minutes: 1),
-                  capabilityPolicy: _AllowTokenPolicy(),
-                  maximumIssuedTokens: 4,
-                  maximumConsumedTokens: 4,
-                  maximumRevocationOwners: 4,
-                )
-                as Ok<OpaqueTokenAuthority, StructuredFailure>)
-            .value;
-    final owner =
-        (OpaqueTokenOwner.parse('sessions')
-                as Ok<OpaqueTokenOwner, StructuredFailure>)
-            .value;
-    final operation =
-        (OpaqueTokenOperation.parse('save')
-                as Ok<OpaqueTokenOperation, StructuredFailure>)
-            .value;
-    final scope =
-        (OpaqueTokenScope.parse('one')
-                as Ok<OpaqueTokenScope, StructuredFailure>)
-            .value;
-    final token =
-        (authority.authorization(
-                  owner: owner,
-                  operation: operation,
-                  scope: scope,
-                  expiresAtUtc: clock.nowUtc().add(const Duration(seconds: 5)),
-                )
-                as Ok<AuthorizationToken, StructuredFailure>)
-            .value;
+    final authority = (OpaqueTokenAuthority.create(
+      uuidGenerator: UuidSequenceGenerator.fromValues([testUuid(949)]),
+      clock: clock,
+      maximumLifetime: const Duration(minutes: 1),
+      capabilityPolicy: _AllowTokenPolicy(),
+      maximumIssuedTokens: 4,
+      maximumConsumedTokens: 4,
+      maximumRevocationOwners: 4,
+    ) as Ok<OpaqueTokenAuthority, StructuredFailure>).value;
+    final owner = (OpaqueTokenOwner.parse(
+      'sessions',
+    ) as Ok<OpaqueTokenOwner, StructuredFailure>).value;
+    final operation = (OpaqueTokenOperation.parse(
+      'save',
+    ) as Ok<OpaqueTokenOperation, StructuredFailure>).value;
+    final scope = (OpaqueTokenScope.parse(
+      'one',
+    ) as Ok<OpaqueTokenScope, StructuredFailure>).value;
+    final token = (authority.authorization(
+      owner: owner,
+      operation: operation,
+      scope: scope,
+      expiresAtUtc: clock.nowUtc().add(const Duration(seconds: 5)),
+    ) as Ok<AuthorizationToken, StructuredFailure>).value;
     expect(
       authority.revalidate(
         token,
@@ -875,10 +800,9 @@ void main() {
       sequence.next(kind: PlatformLifecycleKind.background, sequence: 1),
       isA<Err<PlatformLifecycleEvent, StructuredFailure>>(),
     );
-    final id =
-        (PrivateRecordId.parse('record')
-                as Ok<PrivateRecordId, StructuredFailure>)
-            .value;
+    final id = (PrivateRecordId.parse(
+      'record',
+    ) as Ok<PrivateRecordId, StructuredFailure>).value;
     expect(
       WritePrivateRecord.create(id: id, bytes: const [-1], maximumBytes: 1),
       isA<Err<WritePrivateRecord, StructuredFailure>>(),
@@ -887,46 +811,36 @@ void main() {
 
   test('opaque tokens are distinct, redacted, owner-bound and expiring', () {
     final clock = ControllableClock(DateTime.utc(2026));
-    final issuer =
-        (OpaqueTokenAuthority.create(
-                  uuidGenerator: UuidSequenceGenerator.fromValues([
-                    testUuid(950),
-                    testUuid(951),
-                  ]),
-                  clock: clock,
-                  maximumLifetime: const Duration(minutes: 1),
-                  capabilityPolicy: _AllowTokenPolicy(),
-                  maximumIssuedTokens: 4,
-                  maximumConsumedTokens: 4,
-                  maximumRevocationOwners: 4,
-                )
-                as Ok<OpaqueTokenAuthority, StructuredFailure>)
-            .value;
-    final owner =
-        (OpaqueTokenOwner.parse('sessions')
-                as Ok<OpaqueTokenOwner, StructuredFailure>)
-            .value;
-    final other =
-        (OpaqueTokenOwner.parse('other')
-                as Ok<OpaqueTokenOwner, StructuredFailure>)
-            .value;
-    final operation =
-        (OpaqueTokenOperation.parse('overwrite')
-                as Ok<OpaqueTokenOperation, StructuredFailure>)
-            .value;
-    final scope =
-        (OpaqueTokenScope.parse('one')
-                as Ok<OpaqueTokenScope, StructuredFailure>)
-            .value;
-    final token =
-        (issuer.authorization(
-                  owner: owner,
-                  operation: operation,
-                  scope: scope,
-                  expiresAtUtc: clock.nowUtc().add(const Duration(seconds: 1)),
-                )
-                as Ok<AuthorizationToken, StructuredFailure>)
-            .value;
+    final issuer = (OpaqueTokenAuthority.create(
+      uuidGenerator: UuidSequenceGenerator.fromValues([
+        testUuid(950),
+        testUuid(951),
+      ]),
+      clock: clock,
+      maximumLifetime: const Duration(minutes: 1),
+      capabilityPolicy: _AllowTokenPolicy(),
+      maximumIssuedTokens: 4,
+      maximumConsumedTokens: 4,
+      maximumRevocationOwners: 4,
+    ) as Ok<OpaqueTokenAuthority, StructuredFailure>).value;
+    final owner = (OpaqueTokenOwner.parse(
+      'sessions',
+    ) as Ok<OpaqueTokenOwner, StructuredFailure>).value;
+    final other = (OpaqueTokenOwner.parse(
+      'other',
+    ) as Ok<OpaqueTokenOwner, StructuredFailure>).value;
+    final operation = (OpaqueTokenOperation.parse(
+      'overwrite',
+    ) as Ok<OpaqueTokenOperation, StructuredFailure>).value;
+    final scope = (OpaqueTokenScope.parse(
+      'one',
+    ) as Ok<OpaqueTokenScope, StructuredFailure>).value;
+    final token = (issuer.authorization(
+      owner: owner,
+      operation: operation,
+      scope: scope,
+      expiresAtUtc: clock.nowUtc().add(const Duration(seconds: 1)),
+    ) as Ok<AuthorizationToken, StructuredFailure>).value;
     expect(
       issuer.revalidate(
         token,
@@ -973,47 +887,40 @@ void main() {
   test(
     'capability publication is immutable, generation-based and listener-safe',
     () {
-      final registry =
-          (CapabilityRegistry.create(
-                    maximumListeners: 16,
-                    maximumCapabilities: 4,
-                  )
-                  as Ok<CapabilityRegistry, StructuredFailure>)
-              .value;
+      final registry = (CapabilityRegistry.create(
+        maximumListeners: 16,
+        maximumCapabilities: 4,
+      ) as Ok<CapabilityRegistry, StructuredFailure>).value;
       var calls = 0;
       registry.addListener((event) {
         calls++;
         throw StateError('listener');
       });
-      final key =
-          (CapabilityKey.parse('alnote.platform.private_storage')
-                  as Ok<CapabilityKey, StructuredFailure>)
-              .value;
-      final version =
-          (CapabilityContractVersion.create(major: 1, minor: 0)
-                  as Ok<CapabilityContractVersion, StructuredFailure>)
-              .value;
-      final evidence =
-          (CapabilityEvidence.create(
-                    maximumLimitEntries: 16,
-                    key: key,
-                    contractVersion: version,
-                    adapter:
-                        (AdapterEvidence.create(identity: 'test', version: '1')
-                                as Ok<AdapterEvidence, StructuredFailure>)
-                            .value,
-                    availability: CapabilityAvailability.supported,
-                    health: CapabilityHealth.healthy,
-                    degradation: CapabilityDegradation.none,
-                    permission: CapabilityPermission.notApplicable,
-                    limits: const {'bytes': 10},
-                    initialization: const CapabilityInitializationEvidence(
-                      attempted: true,
-                      completed: true,
-                    ),
-                  )
-                  as Ok<CapabilityEvidence, StructuredFailure>)
-              .value;
+      final key = (CapabilityKey.parse(
+        'alnote.platform.private_storage',
+      ) as Ok<CapabilityKey, StructuredFailure>).value;
+      final version = (CapabilityContractVersion.create(
+        major: 1,
+        minor: 0,
+      ) as Ok<CapabilityContractVersion, StructuredFailure>).value;
+      final evidence = (CapabilityEvidence.create(
+        maximumLimitEntries: 16,
+        key: key,
+        contractVersion: version,
+        adapter: (AdapterEvidence.create(
+          identity: 'test',
+          version: '1',
+        ) as Ok<AdapterEvidence, StructuredFailure>).value,
+        availability: CapabilityAvailability.supported,
+        health: CapabilityHealth.healthy,
+        degradation: CapabilityDegradation.none,
+        permission: CapabilityPermission.notApplicable,
+        limits: const {'bytes': 10},
+        initialization: const CapabilityInitializationEvidence(
+          attempted: true,
+          completed: true,
+        ),
+      ) as Ok<CapabilityEvidence, StructuredFailure>).value;
       expect(registry.register(evidence), isA<Ok<void, StructuredFailure>>());
       expect(calls, 1);
       expect(registry.register(evidence), isA<Err<void, StructuredFailure>>());
@@ -1030,34 +937,27 @@ void main() {
     'private storage enforces expected revisions, defensive bytes and bounds',
     () async {
       final store = InMemoryPrivateStorage();
-      final repository =
-          (PrivateRepositoryId.parse('alnote.settings')
-                  as Ok<PrivateRepositoryId, StructuredFailure>)
-              .value;
-      final record =
-          (PrivateRecordId.parse('record')
-                  as Ok<PrivateRecordId, StructuredFailure>)
-              .value;
+      final repository = (PrivateRepositoryId.parse(
+        'alnote.settings',
+      ) as Ok<PrivateRepositoryId, StructuredFailure>).value;
+      final record = (PrivateRecordId.parse(
+        'record',
+      ) as Ok<PrivateRecordId, StructuredFailure>).value;
       final zero =
           (Revision.create(0) as Ok<Revision, StructuredFailure>).value;
       final bytes = [1, 2];
-      final batch =
-          (PrivateStorageBatch.create(
-                    repository: repository,
-                    expectedStoreRevision: zero,
-                    operations: [
-                      (WritePrivateRecord.create(
-                                id: record,
-                                bytes: bytes,
-                                maximumBytes: 10,
-                              )
-                              as Ok<WritePrivateRecord, StructuredFailure>)
-                          .value,
-                    ],
-                    maximumOperations: 1,
-                  )
-                  as Ok<PrivateStorageBatch, StructuredFailure>)
-              .value;
+      final batch = (PrivateStorageBatch.create(
+        repository: repository,
+        expectedStoreRevision: zero,
+        operations: [
+          (WritePrivateRecord.create(
+            id: record,
+            bytes: bytes,
+            maximumBytes: 10,
+          ) as Ok<WritePrivateRecord, StructuredFailure>).value,
+        ],
+        maximumOperations: 1,
+      ) as Ok<PrivateStorageBatch, StructuredFailure>).value;
       bytes[0] = 9;
       final committed = await store.commit(
         batch,
@@ -1150,10 +1050,9 @@ void main() {
     expect(finiteDigest.currentReads, 2);
 
     final bytes = _InfinitePlatformBytes();
-    final id =
-        (PrivateRecordId.parse('hostile')
-                as Ok<PrivateRecordId, StructuredFailure>)
-            .value;
+    final id = (PrivateRecordId.parse(
+      'hostile',
+    ) as Ok<PrivateRecordId, StructuredFailure>).value;
     expect(
       WritePrivateRecord.create(id: id, bytes: bytes, maximumBytes: 2),
       isA<Err<WritePrivateRecord, StructuredFailure>>(),
@@ -1273,10 +1172,10 @@ void main() {
       ),
       isA<Ok<CapabilityEvidence, StructuredFailure>>(),
     );
-    final registry =
-        (CapabilityRegistry.create(maximumCapabilities: 1, maximumListeners: 1)
-                as Ok<CapabilityRegistry, StructuredFailure>)
-            .value;
+    final registry = (CapabilityRegistry.create(
+      maximumCapabilities: 1,
+      maximumListeners: 1,
+    ) as Ok<CapabilityRegistry, StructuredFailure>).value;
     void listener(CapabilityRegistryChange _) {}
     expect(registry.addListener(listener), isA<Ok<void, StructuredFailure>>());
     expect(registry.addListener(listener), isA<Ok<void, StructuredFailure>>());
@@ -1339,90 +1238,79 @@ OpaqueTokenAuthority _authority(
   int uuid, {
   OpaqueTokenCapabilityPolicy? policy,
   int maximumIssued = 4,
-}) =>
-    (OpaqueTokenAuthority.create(
-              uuidGenerator: UuidSequenceGenerator.fromValues([
-                testUuid(uuid),
-                testUuid(uuid + 100),
-              ]),
-              clock: clock,
-              maximumLifetime: const Duration(minutes: 1),
-              capabilityPolicy: policy ?? _AllowTokenPolicy(),
-              maximumIssuedTokens: maximumIssued,
-              maximumConsumedTokens: 4,
-              maximumRevocationOwners: 4,
-            )
-            as Ok<OpaqueTokenAuthority, StructuredFailure>)
-        .value;
+}) => (OpaqueTokenAuthority.create(
+  uuidGenerator: UuidSequenceGenerator.fromValues([
+    testUuid(uuid),
+    testUuid(uuid + 100),
+  ]),
+  clock: clock,
+  maximumLifetime: const Duration(minutes: 1),
+  capabilityPolicy: policy ?? _AllowTokenPolicy(),
+  maximumIssuedTokens: maximumIssued,
+  maximumConsumedTokens: 4,
+  maximumRevocationOwners: 4,
+) as Ok<OpaqueTokenAuthority, StructuredFailure>).value;
 
 (OpaqueTokenOwner, OpaqueTokenOperation, OpaqueTokenScope) _bindings() => (
-  (OpaqueTokenOwner.parse('sessions')
-          as Ok<OpaqueTokenOwner, StructuredFailure>)
-      .value,
-  (OpaqueTokenOperation.parse('save')
-          as Ok<OpaqueTokenOperation, StructuredFailure>)
-      .value,
-  (OpaqueTokenScope.parse('one') as Ok<OpaqueTokenScope, StructuredFailure>)
-      .value,
+  (OpaqueTokenOwner.parse(
+    'sessions',
+  ) as Ok<OpaqueTokenOwner, StructuredFailure>).value,
+  (OpaqueTokenOperation.parse(
+    'save',
+  ) as Ok<OpaqueTokenOperation, StructuredFailure>).value,
+  (OpaqueTokenScope.parse(
+    'one',
+  ) as Ok<OpaqueTokenScope, StructuredFailure>).value,
 );
 
 CapabilityContractVersion _version(int major, int minor) =>
-    (CapabilityContractVersion.create(major: major, minor: minor)
-            as Ok<CapabilityContractVersion, StructuredFailure>)
-        .value;
+    (CapabilityContractVersion.create(
+      major: major,
+      minor: minor,
+    ) as Ok<CapabilityContractVersion, StructuredFailure>).value;
 
 CapabilityEvidence _capabilityEvidence({
   String keyIdentity = 'alnote.platform.test',
   int minorVersion = 1,
   String adapterIdentity = 'test',
-}) =>
-    (CapabilityEvidence.create(
-              maximumLimitEntries: 16,
-              key:
-                  (CapabilityKey.parse(keyIdentity)
-                          as Ok<CapabilityKey, StructuredFailure>)
-                      .value,
-              contractVersion: _version(1, minorVersion),
-              adapter:
-                  (AdapterEvidence.create(
-                            identity: adapterIdentity,
-                            version: '1',
-                          )
-                          as Ok<AdapterEvidence, StructuredFailure>)
-                      .value,
-              availability: CapabilityAvailability.supported,
-              health: CapabilityHealth.healthy,
-              degradation: CapabilityDegradation.none,
-              permission: CapabilityPermission.notApplicable,
-              limits: const {},
-              initialization: const CapabilityInitializationEvidence(
-                attempted: true,
-                completed: true,
-              ),
-            )
-            as Ok<CapabilityEvidence, StructuredFailure>)
-        .value;
+}) => (CapabilityEvidence.create(
+  maximumLimitEntries: 16,
+  key: (CapabilityKey.parse(
+    keyIdentity,
+  ) as Ok<CapabilityKey, StructuredFailure>).value,
+  contractVersion: _version(1, minorVersion),
+  adapter: (AdapterEvidence.create(
+    identity: adapterIdentity,
+    version: '1',
+  ) as Ok<AdapterEvidence, StructuredFailure>).value,
+  availability: CapabilityAvailability.supported,
+  health: CapabilityHealth.healthy,
+  degradation: CapabilityDegradation.none,
+  permission: CapabilityPermission.notApplicable,
+  limits: const {},
+  initialization: const CapabilityInitializationEvidence(
+    attempted: true,
+    completed: true,
+  ),
+) as Ok<CapabilityEvidence, StructuredFailure>).value;
 
 CapabilityEvidence _evidenceLike(
   CapabilityEvidence source, {
   CapabilityKey? key,
   CapabilityContractVersion? version,
   AdapterEvidence? adapter,
-}) =>
-    (CapabilityEvidence.create(
-              maximumLimitEntries: 16,
-              key: key ?? source.key,
-              contractVersion: version ?? source.contractVersion,
-              adapter: adapter ?? source.adapter,
-              availability: source.availability,
-              health: source.health,
-              degradation: source.degradation,
-              permission: source.permission,
-              limits: source.limits,
-              initialization: source.initialization,
-            )
-            as Ok<CapabilityEvidence, StructuredFailure>)
-        .value;
+}) => (CapabilityEvidence.create(
+  maximumLimitEntries: 16,
+  key: key ?? source.key,
+  contractVersion: version ?? source.contractVersion,
+  adapter: adapter ?? source.adapter,
+  availability: source.availability,
+  health: source.health,
+  degradation: source.degradation,
+  permission: source.permission,
+  limits: source.limits,
+  initialization: source.initialization,
+) as Ok<CapabilityEvidence, StructuredFailure>).value;
 
 final class _TestCapabilityAdapter implements CapabilityAdapter<void> {
   _TestCapabilityAdapter(

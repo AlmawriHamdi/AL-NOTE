@@ -32,23 +32,18 @@ void main() {
               Ok<PreservedData, StructuredFailure>(_replaceVersion(value, 2)),
         ),
       ]);
-      final plan =
-          (registry.plan(
-                    scope: AlnoteMigrationScope.documentRoot,
-                    sourceVersion: 1,
-                    targetVersion: 3,
-                  )
-                  as Ok<AlnoteMigrationPlan, StructuredFailure>)
-              .value;
+      final plan = (registry.plan(
+        scope: AlnoteMigrationScope.documentRoot,
+        sourceVersion: 1,
+        targetVersion: 3,
+      ) as Ok<AlnoteMigrationPlan, StructuredFailure>).value;
 
       expect(plan.steps.map((step) => step.sourceVersion), <int>[1, 2]);
-      final outcome =
-          plan.apply(
-                input,
-                limits: phase4Limits(),
-                cancellationToken: CancellationController().token,
-              )
-              as Completed<AlnoteMigrationResult, StructuredFailure>;
+      final outcome = plan.apply(
+        input,
+        limits: phase4Limits(),
+        cancellationToken: CancellationController().token,
+      ) as Completed<AlnoteMigrationResult, StructuredFailure>;
       final result = outcome.value.value as PreservedMap;
       expect((result.values['version']! as PreservedInteger).value, 3);
       expect(result.values['unknown'], const PreservedString('retained'));
@@ -125,13 +120,11 @@ void main() {
                     )
                     as Ok<AlnoteMigrationPlan, StructuredFailure>)
                 .value;
-        final outcome =
-            plan.apply(
-                  const PreservedString(secret),
-                  limits: phase4Limits(),
-                  cancellationToken: CancellationController().token,
-                )
-                as Failed<AlnoteMigrationResult, StructuredFailure>;
+        final outcome = plan.apply(
+          const PreservedString(secret),
+          limits: phase4Limits(),
+          cancellationToken: CancellationController().token,
+        ) as Failed<AlnoteMigrationResult, StructuredFailure>;
         expect(outcome.failure.code, 'documents.migration.handler');
         expect(outcome.failure.toString(), isNot(contains(secret)));
       });
@@ -200,19 +193,15 @@ void main() {
                   as Ok<AlnoteMigrationPlan, StructuredFailure>)
               .value;
       final original = _snapshot();
-      final versionTwo =
-          (AlnotePackageVersion.create(2)
-                  as Ok<AlnotePackageVersion, StructuredFailure>)
-              .value;
-      final migratedSnapshot =
-          (AlnotePackageSnapshot.create(
-                    version: versionTwo,
-                    document: original.document,
-                    resources: original.resources,
-                    preservation: original.preservation,
-                  )
-                  as Ok<AlnotePackageSnapshot, StructuredFailure>)
-              .value;
+      final versionTwo = (AlnotePackageVersion.create(
+        2,
+      ) as Ok<AlnotePackageVersion, StructuredFailure>).value;
+      final migratedSnapshot = (AlnotePackageSnapshot.create(
+        version: versionTwo,
+        document: original.document,
+        resources: original.resources,
+        preservation: original.preservation,
+      ) as Ok<AlnotePackageSnapshot, StructuredFailure>).value;
       final completed = plan.applyToPackage(
         _packageRecord(1),
         original: original,
@@ -258,13 +247,10 @@ void main() {
           ),
         ],
       );
-      final invalidSnapshot =
-          (AlnotePackageSnapshot.create(
-                    document: invalidDocument,
-                    resources: const <DocumentResourceSnapshot>[],
-                  )
-                  as Ok<AlnotePackageSnapshot, StructuredFailure>)
-              .value;
+      final invalidSnapshot = (AlnotePackageSnapshot.create(
+        document: invalidDocument,
+        resources: const <DocumentResourceSnapshot>[],
+      ) as Ok<AlnotePackageSnapshot, StructuredFailure>).value;
       final invalid = plan.applyToPackage(
         _packageRecord(1),
         original: original,
@@ -279,16 +265,14 @@ void main() {
         isA<Failed<AlnotePackageMigrationResult, StructuredFailure>>(),
       );
 
-      final thrown =
-          plan.applyToPackage(
-                _packageRecord(1),
-                original: original,
-                buildCandidate: (_, _) => throw StateError(secret),
-                objectRegistry: testRegistry(),
-                limits: phase4Limits(),
-                cancellationToken: CancellationController().token,
-              )
-              as Failed<AlnotePackageMigrationResult, StructuredFailure>;
+      final thrown = plan.applyToPackage(
+        _packageRecord(1),
+        original: original,
+        buildCandidate: (_, _) => throw StateError(secret),
+        objectRegistry: testRegistry(),
+        limits: phase4Limits(),
+        cancellationToken: CancellationController().token,
+      ) as Failed<AlnotePackageMigrationResult, StructuredFailure>;
       expect(thrown.failure.code, 'documents.migration.candidate');
       expect(thrown.failure.toString(), isNot(contains(secret)));
     });
@@ -352,9 +336,9 @@ void main() {
     });
 
     test('validates document-root and typed Object target transitions', () {
-      final schemaTwo =
-          (SchemaVersion.create(2) as Ok<SchemaVersion, StructuredFailure>)
-              .value;
+      final schemaTwo = (SchemaVersion.create(
+        2,
+      ) as Ok<SchemaVersion, StructuredFailure>).value;
       final original = _snapshot();
       final sourceDocument = original.document as NotebookDocument;
       final migratedDocument = modelValue<NotebookDocument>(
@@ -532,10 +516,14 @@ void main() {
       final changedSize = modelValue<Size2>(
         Size2.create(width: 601, height: 800),
       );
-      final changedTransform =
-          (AffineTransform2D.restoreFromStorage(<double>[1, 0, 0, 1, 1, 0])
-                  as Ok<AffineTransform2D, StructuredFailure>)
-              .value;
+      final changedTransform = (AffineTransform2D.restoreFromStorage(<double>[
+        1,
+        0,
+        0,
+        1,
+        1,
+        0,
+      ]) as Ok<AffineTransform2D, StructuredFailure>).value;
       final changedExtension = PreservedMap(<String, PreservedData>{
         'future': const PreservedString('changed'),
       });
@@ -717,25 +705,19 @@ void main() {
                   )
                   as Ok<AlnoteMigrationPlan, StructuredFailure>)
               .value;
-      final preservation =
-          (AlnotePackagePreservation.create(
-                    optionalFeatures: const <String>['future_feature'],
-                    entryCatalogFields: <String, PreservedMap>{
-                      'mimetype': PreservedMap(<String, PreservedData>{
-                        'future': const PreservedString('retained'),
-                      }),
-                    },
-                  )
-                  as Ok<AlnotePackagePreservation, StructuredFailure>)
-              .value;
-      final original =
-          (AlnotePackageSnapshot.create(
-                    document: testNotebook(),
-                    resources: const <DocumentResourceSnapshot>[],
-                    preservation: preservation,
-                  )
-                  as Ok<AlnotePackageSnapshot, StructuredFailure>)
-              .value;
+      final preservation = (AlnotePackagePreservation.create(
+        optionalFeatures: const <String>['future_feature'],
+        entryCatalogFields: <String, PreservedMap>{
+          'mimetype': PreservedMap(<String, PreservedData>{
+            'future': const PreservedString('retained'),
+          }),
+        },
+      ) as Ok<AlnotePackagePreservation, StructuredFailure>).value;
+      final original = (AlnotePackageSnapshot.create(
+        document: testNotebook(),
+        resources: const <DocumentResourceSnapshot>[],
+        preservation: preservation,
+      ) as Ok<AlnotePackageSnapshot, StructuredFailure>).value;
       final wrongPreservation = _snapshot(version: _schemaPackageVersion(2));
       expect(
         plan.applyToPackage(
@@ -750,26 +732,20 @@ void main() {
         isA<Failed<AlnotePackageMigrationResult, StructuredFailure>>(),
       );
 
-      final changedNestedPreservation =
-          (AlnotePackagePreservation.create(
-                    optionalFeatures: const <String>['future_feature'],
-                    entryCatalogFields: <String, PreservedMap>{
-                      'mimetype': PreservedMap(<String, PreservedData>{
-                        'future': const PreservedString('changed'),
-                      }),
-                    },
-                  )
-                  as Ok<AlnotePackagePreservation, StructuredFailure>)
-              .value;
-      final changedNestedCandidate =
-          (AlnotePackageSnapshot.create(
-                    version: _schemaPackageVersion(2),
-                    document: original.document,
-                    resources: original.resources,
-                    preservation: changedNestedPreservation,
-                  )
-                  as Ok<AlnotePackageSnapshot, StructuredFailure>)
-              .value;
+      final changedNestedPreservation = (AlnotePackagePreservation.create(
+        optionalFeatures: const <String>['future_feature'],
+        entryCatalogFields: <String, PreservedMap>{
+          'mimetype': PreservedMap(<String, PreservedData>{
+            'future': const PreservedString('changed'),
+          }),
+        },
+      ) as Ok<AlnotePackagePreservation, StructuredFailure>).value;
+      final changedNestedCandidate = (AlnotePackageSnapshot.create(
+        version: _schemaPackageVersion(2),
+        document: original.document,
+        resources: original.resources,
+        preservation: changedNestedPreservation,
+      ) as Ok<AlnotePackageSnapshot, StructuredFailure>).value;
       expect(
         plan.applyToPackage(
           _packageRecord(1),
@@ -1115,14 +1091,12 @@ void main() {
         durable: false,
         atomic: false,
       );
-      final outcome =
-          await _coordinator().save(
-                destination: destination,
-                expectedFingerprint: null,
-                limits: phase4Limits(),
-                cancellationToken: CancellationController().token,
-              )
-              as Completed<AlnoteSaveEvidence, StructuredFailure>;
+      final outcome = await _coordinator().save(
+        destination: destination,
+        expectedFingerprint: null,
+        limits: phase4Limits(),
+        cancellationToken: CancellationController().token,
+      ) as Completed<AlnoteSaveEvidence, StructuredFailure>;
       expect(outcome.value.flush.flushed, isFalse);
       expect(outcome.value.flush.durable, isFalse);
       expect(outcome.value.replacement.atomic, isFalse);
@@ -1132,9 +1106,9 @@ void main() {
 }
 
 AlnoteMigrationRegistry _registry(Iterable<AlnoteMigrationStep> steps) =>
-    (AlnoteMigrationRegistry.create(steps)
-            as Ok<AlnoteMigrationRegistry, StructuredFailure>)
-        .value;
+    (AlnoteMigrationRegistry.create(
+      steps,
+    ) as Ok<AlnoteMigrationRegistry, StructuredFailure>).value;
 
 PreservedMap _replaceVersion(PreservedData source, int version) {
   final map = source as PreservedMap;
@@ -1144,26 +1118,23 @@ PreservedMap _replaceVersion(PreservedData source, int version) {
   });
 }
 
-PreservedInteger _integer(int value) =>
-    (PreservedInteger.create(value) as Ok<PreservedInteger, StructuredFailure>)
-        .value;
+PreservedInteger _integer(int value) => (PreservedInteger.create(
+  value,
+) as Ok<PreservedInteger, StructuredFailure>).value;
 
 AlnotePackageSnapshot _snapshot({
   DocumentRoot? document,
   AlnotePackageVersion version = AlnotePackageVersion.version1,
-}) =>
-    (AlnotePackageSnapshot.create(
-              version: version,
-              document: document ?? testNotebook(),
-              resources: const <DocumentResourceSnapshot>[],
-            )
-            as Ok<AlnotePackageSnapshot, StructuredFailure>)
-        .value;
+}) => (AlnotePackageSnapshot.create(
+  version: version,
+  document: document ?? testNotebook(),
+  resources: const <DocumentResourceSnapshot>[],
+) as Ok<AlnotePackageSnapshot, StructuredFailure>).value;
 
 AlnotePackageVersion _schemaPackageVersion(int value) =>
-    (AlnotePackageVersion.create(value)
-            as Ok<AlnotePackageVersion, StructuredFailure>)
-        .value;
+    (AlnotePackageVersion.create(
+      value,
+    ) as Ok<AlnotePackageVersion, StructuredFailure>).value;
 
 SchemaVersion _schemaVersion(int value) =>
     (SchemaVersion.create(value) as Ok<SchemaVersion, StructuredFailure>).value;

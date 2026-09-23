@@ -1,0 +1,15 @@
+{
+  "release": {
+    "hash": "9584c6713b324636289d067944a46fd6b49df14b",
+    "channel": "stable",
+    "version": "3.47.4",
+    "dart_sdk_version": "3.13.3",
+    "dart_sdk_arch": "x64",
+    "release_date": "2026-09-11T20:58:20.370514Z",
+    "archive": "stable/linux/flutter_linux_3.47.4-stable.tar.xz",
+    "sha256": "5b45f0ceda99b9bebdc873e7e69f6450aeb4c30f454b505e2e62fc9255a907d3"
+  },
+  "archive_sha256": "5b45f0ceda99b9bebdc873e7e69f6450aeb4c30f454b505e2e62fc9255a907d3",
+  "provenance_signatures": "UNVERIFIED",
+  "exception": "User explicitly approved this exact archive over official HTTPS with matching SHA-256; no signature authentication or verified build provenance claimed."
+}

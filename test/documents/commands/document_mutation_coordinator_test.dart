@@ -70,22 +70,19 @@ DocumentMutationCoordinator customCoordinator({
   int historyCount = 10,
   int historyBytes = 10000,
   int maximumListeners = 16,
-}) =>
-    (DocumentMutationCoordinator.create(
-              maximumListeners: maximumListeners,
-              initialRoot: root ?? phase3Notebook(),
-              validator: DocumentValidator(registry ?? editableTestRegistry()),
-              uuidGenerator: uuidGenerator,
-              historyLimits: commandValue(
-                HistoryLimits.create(
-                  maximumRetainedCommandCount: historyCount,
-                  maximumEstimatedRetainedBytes: historyBytes,
-                ),
-              ),
-              retainedCostEstimator: estimator,
-            )
-            as Ok<DocumentMutationCoordinator, CommandFailure>)
-        .value;
+}) => (DocumentMutationCoordinator.create(
+  maximumListeners: maximumListeners,
+  initialRoot: root ?? phase3Notebook(),
+  validator: DocumentValidator(registry ?? editableTestRegistry()),
+  uuidGenerator: uuidGenerator,
+  historyLimits: commandValue(
+    HistoryLimits.create(
+      maximumRetainedCommandCount: historyCount,
+      maximumEstimatedRetainedBytes: historyBytes,
+    ),
+  ),
+  retainedCostEstimator: estimator,
+) as Ok<DocumentMutationCoordinator, CommandFailure>).value;
 
 void expectPersistentStateUnchanged(
   DocumentMutationCoordinator coordinator,
@@ -102,6 +99,133 @@ void expectPersistentStateUnchanged(
 }
 
 void main() {
+  for (final mode in ['cancelled', 'throws', 'current']) {
+    test('final publication condition $mode preserves atomic history', () {
+      final coordinator = customCoordinator(
+        uuidGenerator: UuidSequenceGenerator.fromValues([
+          testUuid(900),
+          testUuid(901),
+          testUuid(902),
+        ]),
+        estimator: FixedHistoryCostEstimator(1),
+      );
+      final before = coordinator.snapshot;
+      final target = before.root.pages.first.layers.first.objects.first.id;
+      final request = replacementRequest(before, target, 'after');
+      var notified = 0;
+      var checked = 0;
+      coordinator.addListener((_) => notified++);
+      final token = CancellationController();
+      if (mode == 'cancelled') token.cancel();
+      final outcome = coordinator.execute(
+        request,
+        stillCurrent: () {
+          checked++;
+          expectPersistentStateUnchanged(coordinator, before, 0);
+          // The final condition runs under the same mutation boundary.
+          expect(
+            coordinator.execute(request),
+            isA<Err<CommandCommit, CommandFailure>>(),
+          );
+          if (mode == 'throws') throw StateError('controlled rejection');
+          return !token.token.isCancelled;
+        },
+      );
+      expect(checked, 1);
+      if (mode == 'current') {
+        expect(outcome, isA<Ok<CommandCommit, CommandFailure>>());
+        expect(notified, 1);
+        expect(coordinator.retainedHistoryCount, 1);
+      } else {
+        expect(outcome, isA<Err<CommandCommit, CommandFailure>>());
+        expectPersistentStateUnchanged(coordinator, before, 0);
+        expect(notified, 0);
+        expect(coordinator.snapshot.canUndo, before.canUndo);
+        expect(coordinator.snapshot.canRedo, before.canRedo);
+        expect(
+          coordinator.execute(request),
+          isA<Ok<CommandCommit, CommandFailure>>(),
+        );
+        expect(notified, 1);
+      }
+    });
+  }
+  for (final mode in ['success', 'rejected', 'hookThrows']) {
+    test(
+      'compound publication $mode orders companion state before observers',
+      () {
+        final coordinator = customCoordinator(
+          uuidGenerator: UuidSequenceGenerator.fromValues([
+            testUuid(800),
+            testUuid(801),
+            testUuid(802),
+          ]),
+          estimator: FixedHistoryCostEstimator(1),
+        );
+        final before = coordinator.snapshot;
+        final target = before.root.pages.first.layers.first.objects.first.id;
+        final request = replacementRequest(before, target, 'after');
+        final events = <String>[];
+        var companionInstalled = false;
+        var reentryBlocked = false;
+        coordinator.addListener((_) {
+          events.add('first');
+          if (mode != 'hookThrows') expect(companionInstalled, isTrue);
+          throw StateError('controlled listener failure');
+        });
+        coordinator.addListener((_) {
+          events.add('second');
+          reentryBlocked = coordinator.execute(
+            request,
+          ) is Err<CommandCommit, CommandFailure>;
+        });
+        Result<CommandCommit, CommandFailure> execute() => coordinator.execute(
+          request,
+          stillCurrent: () {
+            events.add('checked');
+            expectPersistentStateUnchanged(coordinator, before, 0);
+            return mode != 'rejected';
+          },
+          publishCompanionState: () {
+            events.add('companion');
+            expect(coordinator.snapshot.root, isNot(same(before.root)));
+            expect(coordinator.retainedHistoryCount, 1);
+            expect(
+              coordinator.undo(),
+              isA<Err<CommandCommit, CommandFailure>>(),
+            );
+            if (mode == 'hookThrows')
+              throw StateError('invalid companion hook');
+            companionInstalled = true;
+          },
+        );
+        if (mode == 'hookThrows') {
+          expect(execute, throwsStateError);
+        } else {
+          final result = execute();
+          if (mode == 'rejected') {
+            expect(result, isA<Err<CommandCommit, CommandFailure>>());
+            expect(events, ['checked']);
+            expectPersistentStateUnchanged(coordinator, before, 0);
+            return;
+          }
+          expect(
+            (result as Ok<CommandCommit, CommandFailure>)
+                .value
+                .observerFailureCount,
+            1,
+          );
+        }
+        expect(events, ['checked', 'companion', 'first', 'second']);
+        expect(reentryBlocked, isTrue);
+        expect(coordinator.retainedHistoryCount, 1);
+        // Even an invalid throwing hook flushes the command event and releases
+        // the boundary. It never rolls back an already published command.
+        expect(coordinator.undo(), isA<Ok<CommandCommit, CommandFailure>>());
+        expect(coordinator.snapshot.root, same(before.root));
+      },
+    );
+  }
   group('DocumentMutationCoordinator', () {
     test('listener ceiling accepts exact capacity, duplicates and removal', () {
       final coordinator = customCoordinator(
@@ -252,9 +376,9 @@ void main() {
           );
           throw StateError('private observer exception');
         });
-        final first =
-            coordinator.execute(replacementRequest(initial, target, 'one'))
-                as Ok<CommandCommit, CommandFailure>;
+        final first = coordinator.execute(
+          replacementRequest(initial, target, 'one'),
+        ) as Ok<CommandCommit, CommandFailure>;
         expect(first.value.observerFailureCount, 1);
         expect(calls, ['first']);
         final current = coordinator.snapshot;
@@ -588,9 +712,9 @@ void main() {
         ..addListener((_) => calls.add(2));
       final snapshot = coordinator.snapshot;
       final target = snapshot.root.pages.single.layers.single.objects.first.id;
-      final result =
-          coordinator.execute(replacementRequest(snapshot, target, 'x'))
-              as Ok<CommandCommit, CommandFailure>;
+      final result = coordinator.execute(
+        replacementRequest(snapshot, target, 'x'),
+      ) as Ok<CommandCommit, CommandFailure>;
       expect(calls, [1, 2]);
       expect(result.value.observerFailureCount, 1);
     });
@@ -823,9 +947,9 @@ void main() {
           pivot: modelValue(Point2.create(x: 5, y: 5)),
         ),
       );
-      final commit =
-          coordinator.execute(transformRequest(before, operation))
-              as Ok<CommandCommit, CommandFailure>;
+      final commit = coordinator.execute(
+        transformRequest(before, operation),
+      ) as Ok<CommandCommit, CommandFailure>;
       final transformed = coordinator
           .snapshot
           .root
@@ -1093,27 +1217,25 @@ void main() {
       final geometryBefore = coordinator.snapshot;
       final geometrySource =
           geometryBefore.root.pages.single.layers.single.objects.first;
-      final geometryCommit =
-          coordinator.execute(
-                commandValue(
-                  AtomicObjectReplacementRequest.create(
-                    documentId: geometryBefore.root.id,
-                    metadata: phase3Metadata(),
-                    preconditions: objectPreconditions(
-                      geometryBefore,
-                      geometrySource.id,
-                    ),
-                    targetIds: [geometrySource.id],
-                    replacements: [replacementObject(geometrySource, 'large')],
-                    changeCategories: const ObjectReplacementChangeCategories(
-                      appearance: false,
-                      text: false,
-                      metadata: false,
-                    ),
-                  ),
-                ),
-              )
-              as Ok<CommandCommit, CommandFailure>;
+      final geometryCommit = coordinator.execute(
+        commandValue(
+          AtomicObjectReplacementRequest.create(
+            documentId: geometryBefore.root.id,
+            metadata: phase3Metadata(),
+            preconditions: objectPreconditions(
+              geometryBefore,
+              geometrySource.id,
+            ),
+            targetIds: [geometrySource.id],
+            replacements: [replacementObject(geometrySource, 'large')],
+            changeCategories: const ObjectReplacementChangeCategories(
+              appearance: false,
+              text: false,
+              metadata: false,
+            ),
+          ),
+        ),
+      ) as Ok<CommandCommit, CommandFailure>;
       expect(geometryCommit.value.change.flags.geometry, isTrue);
       expect(geometryCommit.value.change.flags.appearance, isFalse);
     });
@@ -1315,25 +1437,21 @@ void main() {
         final geometryBefore = geometryOnly.snapshot;
         final geometrySource =
             geometryBefore.root.pages.single.layers.single.objects.first;
-        final geometryCommit =
-            geometryOnly.execute(
-                  commandValue(
-                    AtomicObjectReplacementRequest.create(
-                      documentId: geometryBefore.root.id,
-                      metadata: phase3Metadata(),
-                      preconditions: objectPreconditions(
-                        geometryBefore,
-                        geometrySource.id,
-                      ),
-                      targetIds: [geometrySource.id],
-                      replacements: [
-                        replacementObject(geometrySource, 'large'),
-                      ],
-                      changeCategories: _noDeclaredChange,
-                    ),
-                  ),
-                )
-                as Ok<CommandCommit, CommandFailure>;
+        final geometryCommit = geometryOnly.execute(
+          commandValue(
+            AtomicObjectReplacementRequest.create(
+              documentId: geometryBefore.root.id,
+              metadata: phase3Metadata(),
+              preconditions: objectPreconditions(
+                geometryBefore,
+                geometrySource.id,
+              ),
+              targetIds: [geometrySource.id],
+              replacements: [replacementObject(geometrySource, 'large')],
+              changeCategories: _noDeclaredChange,
+            ),
+          ),
+        ) as Ok<CommandCommit, CommandFailure>;
         expect(geometryCommit.value.change.flags.geometry, isTrue);
         expect(geometryCommit.value.change.flags.resources, isFalse);
 
@@ -1344,25 +1462,23 @@ void main() {
         final resourceBefore = resourceOnly.snapshot;
         final resourceSource =
             resourceBefore.root.pages.single.layers.single.objects.first;
-        final resourceCommit =
-            resourceOnly.execute(
-                  commandValue(
-                    AtomicObjectReplacementRequest.create(
-                      documentId: resourceBefore.root.id,
-                      metadata: phase3Metadata(),
-                      preconditions: objectPreconditions(
-                        resourceBefore,
-                        resourceSource.id,
-                      ),
-                      targetIds: [resourceSource.id],
-                      replacements: [
-                        replacementObject(resourceSource, 'needs-resource'),
-                      ],
-                      changeCategories: _noDeclaredChange,
-                    ),
-                  ),
-                )
-                as Ok<CommandCommit, CommandFailure>;
+        final resourceCommit = resourceOnly.execute(
+          commandValue(
+            AtomicObjectReplacementRequest.create(
+              documentId: resourceBefore.root.id,
+              metadata: phase3Metadata(),
+              preconditions: objectPreconditions(
+                resourceBefore,
+                resourceSource.id,
+              ),
+              targetIds: [resourceSource.id],
+              replacements: [
+                replacementObject(resourceSource, 'needs-resource'),
+              ],
+              changeCategories: _noDeclaredChange,
+            ),
+          ),
+        ) as Ok<CommandCommit, CommandFailure>;
         expect(resourceCommit.value.change.flags.geometry, isFalse);
         expect(resourceCommit.value.change.flags.resources, isTrue);
         expect(resourceCommit.value.change.addedResourceReferences, [resource]);
@@ -1549,11 +1665,9 @@ void main() {
         );
         final before = coordinator.snapshot;
         final target = before.root.pages.single.layers.single.objects.first.id;
-        final result =
-            coordinator.execute(
-                  replacementRequest(before, target, 'secret payload'),
-                )
-                as Err<CommandCommit, CommandFailure>;
+        final result = coordinator.execute(
+          replacementRequest(before, target, 'secret payload'),
+        ) as Err<CommandCommit, CommandFailure>;
         expect(
           result.error.code,
           'documents.commands.history_cost_estimation_failed',
@@ -1569,11 +1683,9 @@ void main() {
       final limitedBefore = limited.snapshot;
       final limitedTarget =
           limitedBefore.root.pages.single.layers.single.objects.first.id;
-      final limitedResult =
-          limited.execute(
-                replacementRequest(limitedBefore, limitedTarget, 'changed'),
-              )
-              as Err<CommandCommit, CommandFailure>;
+      final limitedResult = limited.execute(
+        replacementRequest(limitedBefore, limitedTarget, 'changed'),
+      ) as Err<CommandCommit, CommandFailure>;
       expect(
         limitedResult.error.code,
         'documents.commands.history_limit_exceeded',
@@ -1601,16 +1713,14 @@ void main() {
         ),
       );
       overflowSnapshot = overflow.snapshot;
-      final overflowResult =
-          overflow.execute(
-                replacementRequest(
-                  overflowSnapshot,
-                  overflowTarget,
-                  'two',
-                  metadata: phase3Metadata(description: 'a'),
-                ),
-              )
-              as Err<CommandCommit, CommandFailure>;
+      final overflowResult = overflow.execute(
+        replacementRequest(
+          overflowSnapshot,
+          overflowTarget,
+          'two',
+          metadata: phase3Metadata(description: 'a'),
+        ),
+      ) as Err<CommandCommit, CommandFailure>;
       expect(
         overflowResult.error.code,
         'documents.commands.history_cost_overflow',

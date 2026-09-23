@@ -11,8 +11,9 @@ import 'contracts.dart';
 typedef RecoveredValueValidator<T> = bool Function(T value);
 
 /// Verifies that one retained resource is currently available and valid.
-typedef RecoveryResourceValidator =
-    bool Function(RetainedResourceEvidence resource);
+typedef RecoveryResourceValidator = bool Function(
+  RetainedResourceEvidence resource,
+);
 
 /// Caller-supplied current coordination facts used to judge separate opening.
 final class RecoveryReconstructionContext {

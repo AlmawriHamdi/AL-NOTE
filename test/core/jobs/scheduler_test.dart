@@ -401,11 +401,9 @@ void main() {
     );
     final childKind = ok(
       registry.register<int, int, String>(
-        _ControlledKind(
-          'alnote.jobs.optional_child',
-          {SchedulingClass.userVisible},
-          (value, context) async => throw StateError('child'),
-        ),
+        _ControlledKind('alnote.jobs.optional_child', {
+          SchedulingClass.userVisible,
+        }, (value, context) async => throw StateError('child')),
       ),
     );
     final scheduler = _scheduler(registry);

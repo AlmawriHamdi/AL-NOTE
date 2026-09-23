@@ -1,0 +1,4338 @@
+[
+  {
+    "path": ".dart-version",
+    "type": "file",
+    "bytes": 7,
+    "sha256": "cab2a6ef71f91553b8974b642a96ec579e64be71518251f7f2501dffc228ec55",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": ".flutter-version",
+    "type": "file",
+    "bytes": 7,
+    "sha256": "eda0b6dfe4b88b8b2e5d2b111019cb0ca24e3d48df1f3c0e5f12282b94648ef1",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": ".github/workflows/verify.yml",
+    "type": "file",
+    "bytes": 6970,
+    "sha256": "4527dd6be55ee15dc18c4f70a6117c309fba0f5aae9eb52eee86aa6c0bd3d377",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": ".gitignore",
+    "type": "file",
+    "bytes": 703,
+    "sha256": "4a8d984279954e0461e0ffef9b9e7455340a0a762f227c01065a53482a83a4f1",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": ".metadata",
+    "type": "file",
+    "bytes": 1412,
+    "sha256": "6be6bd7ea85e96384643187dd636a26a0e42eb7652375b142b7c837a3d1c872b",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "ARCHITECTURE.md",
+    "type": "file",
+    "bytes": 172668,
+    "sha256": "b41528c9a1c29ea8a5c221cf6f6c94a5d05f91c2fea2d86316bc962a68463c33",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "LICENSE",
+    "type": "file",
+    "bytes": 35149,
+    "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "README.md",
+    "type": "file",
+    "bytes": 346,
+    "sha256": "0dc896753a7a8ed46722c2092f149998b42a13d3dff233cec4d57c0629df4de3",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "analysis_options.yaml",
+    "type": "file",
+    "bytes": 1386,
+    "sha256": "8e97d30f4466c52137fcc5132d79a5152e219afb4305fc2759abe6dda6fe49f9",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "android/.gitignore",
+    "type": "file",
+    "bytes": 253,
+    "sha256": "b027c9de1011765c015e5819bf857c0d75bfcd0886fb01721c091159012e50f1",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "android/app/build.gradle.kts",
+    "type": "file",
+    "bytes": 1287,
+    "sha256": "e63f91e86ae2478f5172ac86559af62f4eaf86ed3ed37b1c780f8942788609f8",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "android/app/src/debug/AndroidManifest.xml",
+    "type": "file",
+    "bytes": 378,
+    "sha256": "30b0832ed8b92dfbd6ae2abfa939ccf26333d37600056b1572bd4a397a18a74b",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "android/app/src/main/AndroidManifest.xml",
+    "type": "file",
+    "bytes": 2195,
+    "sha256": "e7acd35eccc8f0060dd72da6be6169e58048cfadd98ece21061da286046465aa",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "android/app/src/main/kotlin/io/github/almawrihamdi/alnote/MainActivity.kt",
+    "type": "file",
+    "bytes": 1119,
+    "sha256": "22d99d3341d969efc876efd62be91e323c115830b87c9b9c0e0d464fd491a720",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "android/app/src/main/kotlin/io/github/almawrihamdi/alnote/PdfFixtureReader.kt",
+    "type": "file",
+    "bytes": 11092,
+    "sha256": "1de4d78f5336848f25867a0931fdddadd0e01d5efee6d7815a87cedd1434aeeb",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "android/app/src/main/res/drawable-v21/launch_background.xml",
+    "type": "file",
+    "bytes": 438,
+    "sha256": "7ca6d5cec2169c5a98661a119db23a6f3399c8fef2256ff04f3a642831282478",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "android/app/src/main/res/drawable/launch_background.xml",
+    "type": "file",
+    "bytes": 434,
+    "sha256": "94433756fe10005ddd6fc55cc5c0b1e9f3c10b66a08ceac795ece6713d34e28a",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "android/app/src/main/res/mipmap-hdpi/ic_launcher.png",
+    "type": "file",
+    "bytes": 544,
+    "sha256": "6a7c8f0d703e3682108f9662f813302236240d3f8f638bb391e32bfb96055fef",
+    "binary": true,
+    "tracked": true
+  },
+  {
+    "path": "android/app/src/main/res/mipmap-mdpi/ic_launcher.png",
+    "type": "file",
+    "bytes": 442,
+    "sha256": "c7c0c0189145e4e32a401c61c9bdc615754b0264e7afae24e834bb81049eaf81",
+    "binary": true,
+    "tracked": true
+  },
+  {
+    "path": "android/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
+    "type": "file",
+    "bytes": 721,
+    "sha256": "e14aa40904929bf313fded22cf7e7ffcbf1d1aac4263b5ef1be8bfce650397aa",
+    "binary": true,
+    "tracked": true
+  },
+  {
+    "path": "android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
+    "type": "file",
+    "bytes": 1031,
+    "sha256": "4d470bf22d5c17d84edc5f82516d1ba8a1c09559cd761cefb792f86d9f52b540",
+    "binary": true,
+    "tracked": true
+  },
+  {
+    "path": "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+    "type": "file",
+    "bytes": 1443,
+    "sha256": "3c34e1f298d0c9ea3455d46db6b7759c8211a49e9ec6e44b635fc5c87dfb4180",
+    "binary": true,
+    "tracked": true
+  },
+  {
+    "path": "android/app/src/main/res/values-night/styles.xml",
+    "type": "file",
+    "bytes": 995,
+    "sha256": "8c5bad5152f217e837519f9c15211d19f39bd45f5f67faf6dd81cb4b299e518f",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "android/app/src/main/res/values/styles.xml",
+    "type": "file",
+    "bytes": 996,
+    "sha256": "937d7c82f539c72eb94fd3a3773f29b3d3fef1997213c92cb632298cedf4bda9",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "android/app/src/profile/AndroidManifest.xml",
+    "type": "file",
+    "bytes": 378,
+    "sha256": "30b0832ed8b92dfbd6ae2abfa939ccf26333d37600056b1572bd4a397a18a74b",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "android/build.gradle.kts",
+    "type": "file",
+    "bytes": 537,
+    "sha256": "6a26dba2cb8dfba1e74f540b0d17a89d96c1301d3c3bfda14348bed257fddcba",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "android/gradle.properties",
+    "type": "file",
+    "bytes": 300,
+    "sha256": "0f82b18017fba6bb5ce3aa4b2d1a00c9382fc8aae7b1d9326e44b18abd66d80b",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "android/gradle/wrapper/gradle-wrapper.properties",
+    "type": "file",
+    "bytes": 202,
+    "sha256": "3221993eac1057198d652b7437105e2953ca4850d415eb0eb2b9625874fd059e",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "android/settings.gradle.kts",
+    "type": "file",
+    "bytes": 771,
+    "sha256": "b76d554153a63772dddbe2ee91abdf582f5f871af40698b80a2ef7b70903d96f",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "docs/dependency-review/README.md",
+    "type": "file",
+    "bytes": 26625,
+    "sha256": "37aa2025961f3159f99ecf97498b6dc6d6d77b3fb064b9cc85df142e1e94b119",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "docs/dependency-review/pdfrx-vendor.json",
+    "type": "file",
+    "bytes": 10603,
+    "sha256": "61caf8ca0442348d84ce8aef749b5f9f3b51943c5ffeb25ea46e4e50662e0640",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/file-format/README.md",
+    "type": "file",
+    "bytes": 12670,
+    "sha256": "d269ad872545599cfe2c202522e6d7e8f7f77b5cf870c63149b2ee54a845502a",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "docs/implementation-roadmap/README.md",
+    "type": "file",
+    "bytes": 10305,
+    "sha256": "b48cb179873466c0cd097d1bbf0fa99bcd6de9a340e0e41ef7670c13cb6b56e1",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "docs/testing-release/README.md",
+    "type": "file",
+    "bytes": 22099,
+    "sha256": "5a7995a2c2407e44a7883b7e0d8f7bb9a6353d308d601acb5c8fb4019a6161a6",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "docs/testing-release/flutter-3.47.4-upgrade.md",
+    "type": "file",
+    "bytes": 17864,
+    "sha256": "8f05b25284c6f17dee1d4d3c27be6e0c28c02ef0356c410d26753ef1b13c8cba",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/testing-release/phase8-consolidated.md",
+    "type": "file",
+    "bytes": 23125,
+    "sha256": "9585991802e98095bec96b04f253549e88044fee0cc03d12d4a1072b93f3dbac",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/testing-release/phase8-correction1.md",
+    "type": "file",
+    "bytes": 12371,
+    "sha256": "c648df60b6cfa25e59e9f180b87bcd9929096af116f3262bb1fb6e2d3f9d57de",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/testing-release/phase8-correction2.md",
+    "type": "file",
+    "bytes": 38506,
+    "sha256": "a41ba4d797c2a4b53960370bd5742f3e54e14ec07920ba6428d0d4c58183aadd",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/testing-release/phase8-linux-integration.md",
+    "type": "file",
+    "bytes": 35403,
+    "sha256": "319cdc57e7a7d6ae2dfd0dadfa2e26ca5cebb2c33c7efc4e5e4cf4381ba865ae",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/testing-release/phase8-linux-isolation-prototype.md",
+    "type": "file",
+    "bytes": 19747,
+    "sha256": "2d31ad85cc1bc77f7c2397745b7be5d8bb7736414b9463eefb9732a601822251",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/testing-release/phase8-linux-private-testing.md",
+    "type": "file",
+    "bytes": 16477,
+    "sha256": "1517d9978a03c1967420a8775568efd9b79f1c948af6b4fb4a40987b200ab336",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/testing-release/phase8-linux-prototype-correction.md",
+    "type": "file",
+    "bytes": 9892,
+    "sha256": "1d4cfdcfb2cfd5c1a832f6848add66df4c2c750f0bf6fec8f1b3d20f3f91ea1d",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/testing-release/phase8-linux-source-c1.md",
+    "type": "file",
+    "bytes": 5633,
+    "sha256": "b24532c022b8d63aad8cc8f3f1bef41ac4fce4bb7190e80e8ff817b5628872b2",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/testing-release/phase8-notebook-pdf-import.md",
+    "type": "file",
+    "bytes": 11540,
+    "sha256": "9b427729b6872dc9e919968960fa705763fb6e52f577bff6bce10d6f1f5e2a42",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/testing-release/phase8-pdf-extraction-publication.md",
+    "type": "file",
+    "bytes": 14050,
+    "sha256": "1dadb677dbce71a09127b6745bceec1a5f90794a5c5d29fc23d048141e2d47bd",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/testing-release/phase8-pdf-extraction.md",
+    "type": "file",
+    "bytes": 16757,
+    "sha256": "1737bf3b75416cb20548bd4fa124e75f2d4836d2aa472b0140e0e1511c471683",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/testing-release/phase8-pdf-objects-f1.md",
+    "type": "file",
+    "bytes": 7940,
+    "sha256": "9a2ab12da6b6e117b762ebd888b0e2450d1e8de19f68f5210fef600eab62a3d4",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/testing-release/phase8-pdf-objects.md",
+    "type": "file",
+    "bytes": 14129,
+    "sha256": "690bdb048d329ddd25080b51e49a2b741a85649978710ee8a32b19818a0584ff",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/testing-release/sdk-347-ci-provisioning.md",
+    "type": "file",
+    "bytes": 10034,
+    "sha256": "c40455fa24ee9e38aba1c8a8117d0f7d8c76d39ce0ebe981361d96128f70a206",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "docs/testing-release/sdk-347-ci-resource-publication.md",
+    "type": "file",
+    "bytes": 12168,
+    "sha256": "039516daac0c3d481a1363408ae99c3ae787c747aa0dfbd007017cbf7ff7bc9c",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/.gitkeep",
+    "type": "file",
+    "bytes": 1,
+    "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/app/.gitkeep",
+    "type": "file",
+    "bytes": 33,
+    "sha256": "db7ade24e24824f70d62f3a9df3f0cc3b4078d0c0a2384d620fb25ff49aa5291",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/app/al_note_app.dart",
+    "type": "file",
+    "bytes": 1103,
+    "sha256": "fd7018f55155e090ac4894f69515893d3e349be62c2349f2d938b71d1357f5d1",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/app/plugins/README.md",
+    "type": "file",
+    "bytes": 13453,
+    "sha256": "d5fd27bcf0d2db1ac4ad45664b78447fc5b746cba949a7401c0bae4e8a366120",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/app/settings.dart",
+    "type": "file",
+    "bytes": 117,
+    "sha256": "5b93b72d071abf2af85194342f893e10078383c2fb7bd9100333366b2eecae63",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/app/settings/README.md",
+    "type": "file",
+    "bytes": 17405,
+    "sha256": "25784c5dfebe96745cbdac281374ad8fa179d03e6feaf8f6d0b6a09f51a2ccb2",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/app/settings/definitions.dart",
+    "type": "file",
+    "bytes": 18196,
+    "sha256": "2679b1eda5cd88d6349497c3c8775738f6c4a41fc3f2dfe3fd2f5dd8fe6e463a",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/app/settings/repository.dart",
+    "type": "file",
+    "bytes": 39521,
+    "sha256": "e5335516f764a36907e15d5e49b61122ba09668aedae729ec22717257e4c9bba",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/app/state.dart",
+    "type": "file",
+    "bytes": 135,
+    "sha256": "d48c296aaf34f844f9543c1a515bf20686305c1b25e472d1f568dc437449d406",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/app/state/application_state.dart",
+    "type": "file",
+    "bytes": 9705,
+    "sha256": "a5c950ba138445207b68e3438e6614e8094380110d3530bcc0fb0d85fd6fd063",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/.gitkeep",
+    "type": "file",
+    "bytes": 33,
+    "sha256": "db7ade24e24824f70d62f3a9df3f0cc3b4078d0c0a2384d620fb25ff49aa5291",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/geometry/affine_transform_2d.dart",
+    "type": "file",
+    "bytes": 11901,
+    "sha256": "b4c80838d124740133e40b33dee8d15cb3ec2a8d1f2262959854ca5ce061720a",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/geometry/geometry_values.dart",
+    "type": "file",
+    "bytes": 9803,
+    "sha256": "9086e8014747b4d498de2e92e0b50f33cb10a69c4b2f44d27359ab5842090e36",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/geometry/transform_operations.dart",
+    "type": "file",
+    "bytes": 5536,
+    "sha256": "762b3821f6a58a698e4934728cbff879dddc76e4c71fbfa0547c619016649f89",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/identity/namespaced_identifier.dart",
+    "type": "file",
+    "bytes": 1579,
+    "sha256": "8f794c19485f5069154809bc1a316d4f1289f01cb76b883e3bb44945a9e06359",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/identity/src/uuid_v4_adapter.dart",
+    "type": "file",
+    "bytes": 578,
+    "sha256": "de61a482e3f46f7b7ce7414badf84bfa531e03683e830708cab9a3e997c7298d",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/identity/uuid_generator.dart",
+    "type": "file",
+    "bytes": 1609,
+    "sha256": "2df2edbcff2b3df2018e9dc3bf4ce0f11913988501c47488043454d90b94a8d4",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/identity/uuid_identifier.dart",
+    "type": "file",
+    "bytes": 1607,
+    "sha256": "5f44625a60156e7a05c23ded04f802f57c44aa2ef15384261ded0089205ac404",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/interaction.dart",
+    "type": "file",
+    "bytes": 165,
+    "sha256": "623424f343c5321943f88681658674504376e0aee2d372993c803b0e2e99e45f",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/interaction/README.md",
+    "type": "file",
+    "bytes": 14737,
+    "sha256": "6062b980219ffe18686e600aa084cdb3c412f2f0d0331c01a79eba7aebb12007",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/interaction/interaction.dart",
+    "type": "file",
+    "bytes": 16530,
+    "sha256": "25bfab9b6a11b170d45028c222898345f97f65de6e2318e2ee2dcbf74611dbb5",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/jobs.dart",
+    "type": "file",
+    "bytes": 106,
+    "sha256": "70fec9b107d882dd61272dcc26791355be9eee1b29ed1b6a00763648515af35e",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/jobs/README.md",
+    "type": "file",
+    "bytes": 18911,
+    "sha256": "c7a43e67b679f45d4b0200851c915d800e8e6d16d91aae665fbd41dd78c07f2b",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/jobs/contracts.dart",
+    "type": "file",
+    "bytes": 21034,
+    "sha256": "6241cddbdc3609e2ec382ad8462f208368a6ecb9f6076ef3b7369cfdfc7b7620",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/jobs/scheduler.dart",
+    "type": "file",
+    "bytes": 27942,
+    "sha256": "45483dc9682e6984d5af471f2391f6aa5bcffc7f2ccb70aecd9f7781a689ad68",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/outcomes/cancellation.dart",
+    "type": "file",
+    "bytes": 3160,
+    "sha256": "e87fa44a04e51dfb84a158e027736ef6f1f5417444e12639f52a48cc9a775d7a",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/outcomes/operation_outcome.dart",
+    "type": "file",
+    "bytes": 1890,
+    "sha256": "72a8cb12d384dff6cece3008cbf47a163dbed733a5845957072241c79f9ffbd2",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/outcomes/result.dart",
+    "type": "file",
+    "bytes": 2158,
+    "sha256": "51e0ad5356567dcf8eb5ab960e0bb284e8120d3c5d69a6c65de702f201a6e549",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/outcomes/structured_failure.dart",
+    "type": "file",
+    "bytes": 2684,
+    "sha256": "92267c02a68a81b62a58c90bbd61a9f360e4ecf98ce93ac894b3a1097d0aa63d",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/primitives.dart",
+    "type": "file",
+    "bytes": 1153,
+    "sha256": "e592aff12e996e7f2589df23457a6472c386d50143a23fc6d6958384c606617b",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/random/random_source.dart",
+    "type": "file",
+    "bytes": 374,
+    "sha256": "94d35a56ed61405a3a053e7a3017204cabf0138689ddfd98130e5efe967935a8",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/random/sdk_secure_random_source.dart",
+    "type": "file",
+    "bytes": 1399,
+    "sha256": "4d9c17c72d932d0f99625d5cdbe534ac238f2f9f22a8d56d9922d882b13e47f6",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/security/README.md",
+    "type": "file",
+    "bytes": 18994,
+    "sha256": "93274ab3c3c5f4bfaa5d5c8039c82550aa1844d40ae87169269106a8480fab4d",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/security/data_classification.dart",
+    "type": "file",
+    "bytes": 1198,
+    "sha256": "e1a9ba5eba1280f530daa1aa5e9cf0dcbdfaf1a82d0803fc0aece47b56fb098e",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/security/resource_limits.dart",
+    "type": "file",
+    "bytes": 7397,
+    "sha256": "cfc8077bd2350a45e3be724272ae853529dcd8511ac4cf752ec0b25a65b88938",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/time/clock.dart",
+    "type": "file",
+    "bytes": 185,
+    "sha256": "541302b9b7e8cb51637d5c4587e2df2acdd5408bfcfcee85d8e30dba796705f5",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/time/sdk_clock.dart",
+    "type": "file",
+    "bytes": 287,
+    "sha256": "ee7887a566753769c81353562250582d64d3201d874725500052db8287130603",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/validation/validation_failure.dart",
+    "type": "file",
+    "bytes": 1336,
+    "sha256": "a491c889fcdd6a302481133430f8566b3974813816674e456fe3f43968a62a3b",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/validation/validation_issue.dart",
+    "type": "file",
+    "bytes": 4853,
+    "sha256": "2b8437e374af6195a59eb1bde76065de61f7299c36831c590800d02d3a54f579",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/validation/validation_path.dart",
+    "type": "file",
+    "bytes": 5171,
+    "sha256": "818805089c5b3f13cd2ce9945c6673af77ffcd3cbb1199369794c587cd942c36",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/validation/validation_report.dart",
+    "type": "file",
+    "bytes": 2311,
+    "sha256": "ea1f4e2d17cd589a77dc5daee0ef0862b1fdad94c3ef357de0d73872d750b81f",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/validation/validator.dart",
+    "type": "file",
+    "bytes": 285,
+    "sha256": "1984c9ac7a223ffee156a1128ef1c65fe3e2ca10718be54569b7aaa043e213cb",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/versioning/content_identity.dart",
+    "type": "file",
+    "bytes": 609,
+    "sha256": "9c6da915ca1ec096f696874fadd1d34c8d354fda8a24b0aaeaf072dd617e9563",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/versioning/contract_version.dart",
+    "type": "file",
+    "bytes": 1898,
+    "sha256": "c9cc5b0b42786619d1ca4cb24f343e61c4eae9e847169b2b567a11dacfb1cc3b",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/versioning/revision.dart",
+    "type": "file",
+    "bytes": 1915,
+    "sha256": "6fd4ca1b8bea422678e27f71f4f5b299e484e88b8e265d3836f3a9bf80aefc6a",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/core/versioning/schema_version.dart",
+    "type": "file",
+    "bytes": 1181,
+    "sha256": "251c639c1e509a8fe8253063a15d92001cf2c755c667aadf2c76029ff0c2c5b3",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/.gitkeep",
+    "type": "file",
+    "bytes": 33,
+    "sha256": "db7ade24e24824f70d62f3a9df3f0cc3b4078d0c0a2384d620fb25ff49aa5291",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/commands.dart",
+    "type": "file",
+    "bytes": 318,
+    "sha256": "61bbaef249462e9df626cecd807276150ccecabf24ee3fc47a41e5fc99dcd1e9",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/commands/README.md",
+    "type": "file",
+    "bytes": 12550,
+    "sha256": "eedb62f6346dbd5a38209871ab659f4a6e28eb6b0ecf055547a38d64709653db",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/commands/command_contracts.dart",
+    "type": "file",
+    "bytes": 33850,
+    "sha256": "a10ed9ad4ad1ddbce7526dc55b36eb433322ead61cdb0b9bde86831044cb70e2",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/commands/document_mutation_coordinator.dart",
+    "type": "file",
+    "bytes": 89746,
+    "sha256": "6d33b11ca924c61e5250659a094fbd9d497654eb0a353f701aae9eabecd18d0a",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/commands/phase7_object_requests.dart",
+    "type": "file",
+    "bytes": 16215,
+    "sha256": "381a21fb2eb7375d6e396d18eac8a04933e5d537c2519a84dcf8b24a0cbbfe52",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/commands/revision_snapshot.dart",
+    "type": "file",
+    "bytes": 14763,
+    "sha256": "ed61df19a76a2d4b38597f36e8b0e50bd49aa885ffd2dcaa8954bb82e8d34b83",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/document_model.dart",
+    "type": "file",
+    "bytes": 729,
+    "sha256": "42d2bcc84e2ed5038fa3cfa03e34c2211cd927b607602cc44a44a845d7127716",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/export/README.md",
+    "type": "file",
+    "bytes": 8509,
+    "sha256": "cb76877e4012bf125d5df7812388c809be6dceade9e9f0289228072a7e0a1141",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/files.dart",
+    "type": "file",
+    "bytes": 351,
+    "sha256": "d2e5fa588f97963b618a8395ce6f415e9e40aef7beef7285ba53731944f10786",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/files/README.md",
+    "type": "file",
+    "bytes": 8578,
+    "sha256": "5de951e17560396461dbf7b8b975bacba946fd8a7ffa63e3b46e93e3d62e8154",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/files/contracts.dart",
+    "type": "file",
+    "bytes": 26474,
+    "sha256": "26ab743e5fe01f61908783b133334b66426c50863aea0018de816cdd28bdcb5f",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/files/migration.dart",
+    "type": "file",
+    "bytes": 26645,
+    "sha256": "a80dc80bd24a355cd6fbae6daca2d37c5389abb8d53f7803cb1d368d2d85daef",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/files/package_codec.dart",
+    "type": "file",
+    "bytes": 14318,
+    "sha256": "c10d74ab4fd99f72dd7fb7acc303715157753f25020ef3a351bf7d6371901ef6",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/files/package_reader.dart",
+    "type": "file",
+    "bytes": 38696,
+    "sha256": "fe39fc6d37c49d8b77e1743dfa6a52542b181413ddbae89b254923c8e87ae375",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/files/save_coordinator.dart",
+    "type": "file",
+    "bytes": 13603,
+    "sha256": "09b132a3caa37184ea21f284644211cef229e9d062f060e47699340f36ee041f",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/files/src/archive_adapter.dart",
+    "type": "file",
+    "bytes": 18048,
+    "sha256": "a3887dbccf133a6ecd11e3041209611e52157e5475495d59b9a5e18536557e0c",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/files/src/bounded_json.dart",
+    "type": "file",
+    "bytes": 14798,
+    "sha256": "b2710845656d43243d76f2630189d39ff024aa23e8abe9e533d7adef95bbf171",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/files/src/manifest_codec.dart",
+    "type": "file",
+    "bytes": 11718,
+    "sha256": "db271ae553b2e4b1cb50283e57ac7e2a14ac33fd6bb76efb2fd7819f0a28dc54",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/files/src/record_codec.dart",
+    "type": "file",
+    "bytes": 18726,
+    "sha256": "85b14e93fe413ac66348dca45f18daba0bf49891ae4da72c6eb30cb5e1109255",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/files/src/sha256_adapter.dart",
+    "type": "file",
+    "bytes": 1529,
+    "sha256": "e65012f69bb1587e5587f866257011ef0aed70f2e7f605f4a6479e3e86bb7f29",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/import/README.md",
+    "type": "file",
+    "bytes": 7416,
+    "sha256": "4c247d2c7d6387469ce0da5ed8e15f1650e26eaaa7eea065b6fe3783f7619247",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/layers/README.md",
+    "type": "file",
+    "bytes": 6909,
+    "sha256": "51e3269f766d6b79b6ab957d7784c20f205c4a6d0ccd2cddb7ad23d9e7262873",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/layers/document_layer.dart",
+    "type": "file",
+    "bytes": 14939,
+    "sha256": "832468508f4bd05b51e59a3bac39ceb81bd76b70cfb467c4fa463b64197f983c",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/model/document_duplication.dart",
+    "type": "file",
+    "bytes": 17352,
+    "sha256": "e55003ea03c0186f2ca7c4c492c6ed498ce90c8ddb8a00c96c0c41604e3d9953",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/model/document_identity_scope.dart",
+    "type": "file",
+    "bytes": 3757,
+    "sha256": "dba9b8bdd8d13d774bcc534e75e33aebb6be8aab2e7a4bb0e0ee44f990ea6ed3",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/model/document_replacement.dart",
+    "type": "file",
+    "bytes": 10853,
+    "sha256": "d96273a91294e726d261760da6daf9c4339e9f012a5b28272ce5813f340abee3",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/model/document_root.dart",
+    "type": "file",
+    "bytes": 16290,
+    "sha256": "bafcace11177f5983a14d9bccbb5fb899682873f1fdf7423164f02c913f6db6d",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/model/document_validator.dart",
+    "type": "file",
+    "bytes": 14572,
+    "sha256": "a170387d65732683fac76bcf21a068f6bcab47c16b1484304673954afafdbd5c",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/model/identifiers.dart",
+    "type": "file",
+    "bytes": 4533,
+    "sha256": "26ac80995e18f92f92b8cdd60faf10870ca421826ac7451a0a78906aba7764a8",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/model/identity_remapping.dart",
+    "type": "file",
+    "bytes": 3729,
+    "sha256": "f948b7f69655e3c8e07d4e2176bbfe9fcbb5a1368944ebf771e522cfac3d515e",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/model/placeholders.dart",
+    "type": "file",
+    "bytes": 3412,
+    "sha256": "88257ab981ab4cf9f4d4433680c9537c732860adc309a13da292f8e48f925532",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/model/preserved_data.dart",
+    "type": "file",
+    "bytes": 9100,
+    "sha256": "95a7ea7a711ee7a51f3f9d181b59784270fcbfd123caf85d10d024e7669cb4d5",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/notebooks/.gitkeep",
+    "type": "file",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/README.md",
+    "type": "file",
+    "bytes": 3698,
+    "sha256": "87823c92ca2ac6f07a0310eec394d0620490e1f5ec62fc4e858383acb60a2527",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/handwriting.dart",
+    "type": "file",
+    "bytes": 171,
+    "sha256": "22ac629f5915e30e40bf878867b7379cef20b5e4371f2484b65c4a80d202ac1e",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/handwriting/handwriting_model.dart",
+    "type": "file",
+    "bytes": 34076,
+    "sha256": "10f60c0dc947c9ba4f56d7984ed13256c36fa8a295e9e8cfd7fcb499482ea65b",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/image.dart",
+    "type": "file",
+    "bytes": 162,
+    "sha256": "ce784b11ecd6bf2b202c0cdb74b807a645c3d08ac28ffd1b5469e70503a34b72",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/image/README.md",
+    "type": "file",
+    "bytes": 13439,
+    "sha256": "8c489b809cebb08a3141f7d614cb137d1f2d80de5194a76c0a530d215b152969",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/image/image_model.dart",
+    "type": "file",
+    "bytes": 47823,
+    "sha256": "68e46886af850601009b80348fb9781b2b55ad52461f2c5555f89af658f46b9f",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/object_envelope.dart",
+    "type": "file",
+    "bytes": 3988,
+    "sha256": "da285bb53195f0124af02a40a644da7a6f4461fe09914d2f58bc3422fe5d976a",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/object_registry.dart",
+    "type": "file",
+    "bytes": 21790,
+    "sha256": "376b023af1394979a72b34ebfb71556620c65a04e51dcd9ba2cd3230258a95a6",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/shape.dart",
+    "type": "file",
+    "bytes": 198,
+    "sha256": "dacc573063b99cc8582341e75eae08c630d847df9ac111d92b7882328bf7196b",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/shape/README.md",
+    "type": "file",
+    "bytes": 13209,
+    "sha256": "bcc78d6cd1103fc8eef928192605f1bd7eb86ef3c68aa95e11b84382e4c6e864",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/shape/shape_geometry.dart",
+    "type": "file",
+    "bytes": 23035,
+    "sha256": "2ccc85e72ec66ef8642f94d82fe5ee96640e6cf26d308378c986c73fae9ee666",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/shape/shape_model.dart",
+    "type": "file",
+    "bytes": 34462,
+    "sha256": "9381118171a15315b71b1ba74c341fdc8d4116a56ac1ad392f966402b4294230",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/text.dart",
+    "type": "file",
+    "bytes": 159,
+    "sha256": "404bef4116f3a9dac7f1fb695b877d5abfb7a056f00cf971b6a00ab4552239f5",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/text/README.md",
+    "type": "file",
+    "bytes": 16401,
+    "sha256": "ed589f3681d8a9c291018290e31956814feda2feeffd3e8fda5d8341bd1eb1a3",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/text/src/grapheme_adapter.dart",
+    "type": "file",
+    "bytes": 713,
+    "sha256": "be57d0a7aae6985c8391889ae401184d779e6fd0bf3066730e86ea4c1f451db7",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/objects/text/text_model.dart",
+    "type": "file",
+    "bytes": 82800,
+    "sha256": "7594a4eed29e01c56eafded3fd5a9f480b141f9e1a6f44ded4390e900ffb4862",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/pages/.gitkeep",
+    "type": "file",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/pdf.dart",
+    "type": "file",
+    "bytes": 656,
+    "sha256": "30f19f9b35285f31826872d24ab761168e6bff7bd8845f8e74ae89b52478295e",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/README.md",
+    "type": "file",
+    "bytes": 22209,
+    "sha256": "7720ba48e26c50030bb18c514d858857b8e6ad694a2bc0812642844463b14f96",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/pdf/pdf_admission_policy.dart",
+    "type": "file",
+    "bytes": 2103,
+    "sha256": "2f01aeef4f022fc42e7a3b293fb1957fb6eaacb1a9644de97d553b061807c04f",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/pdf_backend.dart",
+    "type": "file",
+    "bytes": 30847,
+    "sha256": "ba26711a32f0c9617f09266459e0e89d786b3dbe9c64a089eb76a327b9e35030",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/pdf_file_selection.dart",
+    "type": "file",
+    "bytes": 7261,
+    "sha256": "656c90d9a4f5377308a26324bb576cc663e4fb17f51f331a4df1204da92ef649",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/pdf_fixture_admission.dart",
+    "type": "file",
+    "bytes": 7907,
+    "sha256": "aae51b47b4f6a3b02a547ea19f397eac2ba1488a3b1b1ac3b9f4820b16590733",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/pdf_model.dart",
+    "type": "file",
+    "bytes": 32598,
+    "sha256": "ad56325549fa51c765beb93a14703063e216192e465c931de277252c858fd13f",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/pdf_notebook_import.dart",
+    "type": "file",
+    "bytes": 6108,
+    "sha256": "3807b8822d545ebd5226eb8d71ee7a4a41f942acfbf48f242bcf2ea63666ddc5",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/pdf_object_insertion.dart",
+    "type": "file",
+    "bytes": 6710,
+    "sha256": "a6247563a433824ad612de8413bee252397fedee598903c363e493029eb927d1",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/pdf_open_workflow.dart",
+    "type": "file",
+    "bytes": 12958,
+    "sha256": "4e00e03f4735f6c1c17d59e17ec96ee49dab55b90c21f677574bce6da840d006",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/application_pdf_backend.dart",
+    "type": "file",
+    "bytes": 490,
+    "sha256": "27e466eea1b32d366722d2659de2846161c41ffc90d137fef5e9201864e777a0",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/file_selector_local_pdf_adapter.dart",
+    "type": "file",
+    "bytes": 1517,
+    "sha256": "9d22e99a967d791ff8d6a43cc8e3c2c4d442e9934e6288497d2bbf0ae625d158",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/linux/linux_pdf_backend.dart",
+    "type": "file",
+    "bytes": 25123,
+    "sha256": "4266a7aae1cac58178388fcf5b9192c6ed3d14aedd3ccb698938afa85dbceea7",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/linux/linux_pdf_extraction.dart",
+    "type": "file",
+    "bytes": 10251,
+    "sha256": "20f1ac381586972fe461816782511891a2003ea28210269b635b6c6e8ab83b9a",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/linux/linux_pdf_isolate.dart",
+    "type": "file",
+    "bytes": 2201,
+    "sha256": "0986cc151b5e856d3432a945b59863e7acb770ab84880456010ca249ff5226d3",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/linux/linux_pdf_protocol.dart",
+    "type": "file",
+    "bytes": 7238,
+    "sha256": "9ca5fb71c31077da537256a14e6d0e07f56f4f3c72c38aa896cdc3436e27ae72",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/linux/linux_pdf_resource_pin.dart",
+    "type": "file",
+    "bytes": 311,
+    "sha256": "e8baad7967bd8150c3680841b704d76e5028766b1bc5c1c833beeb873512e585",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/linux/linux_pdf_resources.dart",
+    "type": "file",
+    "bytes": 6897,
+    "sha256": "e5dd3f846a3629335167c56208aebcde661b2de3de637feceea260a9e84824fb",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/linux/linux_pdf_supervisor.dart",
+    "type": "file",
+    "bytes": 14023,
+    "sha256": "108e9a1ac74f461401f7347f6a41b719cd63602f3263014d2579b1ddaefb3464",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/linux_integration_test_gate_io.dart",
+    "type": "file",
+    "bytes": 323,
+    "sha256": "3e8c268e33b9922ab2fc420e3055ff0636734f9600c35ce1b6a6d0a6d8653cdf",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/linux_integration_test_gate_stub.dart",
+    "type": "file",
+    "bytes": 92,
+    "sha256": "250fd8d92e16546b9285c90322ba4136dd32d84722a219c02d5d0ad1c7d9c325",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/local_pdf_picker_android.dart",
+    "type": "file",
+    "bytes": 4330,
+    "sha256": "b95d05b3d21072c2d53b1ddd30fe8ee105bc65c61b46f7e77c89159ab09a5ed7",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/local_pdf_picker_io.dart",
+    "type": "file",
+    "bytes": 2094,
+    "sha256": "68ca9a8513817c2f3353217a8e1b77767ed2d8fd37a9ca27d910218891b4b19d",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/local_pdf_picker_stub.dart",
+    "type": "file",
+    "bytes": 427,
+    "sha256": "b2687db7c48309e54df9e0cf23bb08903d7682b063e4dc7c2eef39646d735117",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/local_pdf_picker_web.dart",
+    "type": "file",
+    "bytes": 5852,
+    "sha256": "ea51dda8013d62a48991bbb52fd5d7dc3d3a338d74923753665e0fb81f38ca76",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/pdf_operation_scheduler.dart",
+    "type": "file",
+    "bytes": 1904,
+    "sha256": "9997a5ece9597740a08df768a27573b966bf0b099c9267ca99808acadb7b87de",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/pdf_source_preparation.dart",
+    "type": "file",
+    "bytes": 436,
+    "sha256": "7a117e651fea4977a238aa8ebaf1f6a0dff0197dbb8bb207f4c8edf17aadf676",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/pdf_source_preparation_io.dart",
+    "type": "file",
+    "bytes": 1819,
+    "sha256": "a5c063ae4b2fbb88dfa04857260f17742b256da30ce37d55f0377525b1eef0d9",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/pdf_source_preparation_stub.dart",
+    "type": "file",
+    "bytes": 365,
+    "sha256": "5927ec7acf80bcdf1cb7c4b7b3a80cd6acf4f0bd4a25313c7762d695d8367ed1",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/pdfrx_pdf_backend_adapter.dart",
+    "type": "file",
+    "bytes": 14264,
+    "sha256": "e1e187f4901f51e73bc4681e8d37bd7b982bdecaa27c91c23e688bbb6046b47e",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/platform_pdf_backend_io.dart",
+    "type": "file",
+    "bytes": 247,
+    "sha256": "0631b407b57b76853d12a3839366f6a7bd0c9c161eb9c0c7548f5e663878dcbe",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/platform_pdf_backend_stub.dart",
+    "type": "file",
+    "bytes": 132,
+    "sha256": "fbb5156a1a4330a2df9bfee3957b1cf156776f30a0d99153c5cc5a3b612e07f3",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/pdf/src/reviewed_pdf_fixture_digests.dart",
+    "type": "file",
+    "bytes": 4827,
+    "sha256": "221c726f889240c355aa5723c03b89f7a46c20c2b78fef1f77110c830808b857",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/documents/recovery.dart",
+    "type": "file",
+    "bytes": 194,
+    "sha256": "79b07d6b137c737b0f22542d1e7fe0b8cc09d90823423be5d2d42984f6cdda9f",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/recovery/README.md",
+    "type": "file",
+    "bytes": 11078,
+    "sha256": "4f8ee4da87d983b077106d944ea04c635b37b41494940ece4f651306485a91cb",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/recovery/contracts.dart",
+    "type": "file",
+    "bytes": 27721,
+    "sha256": "2f701afd6558e78ccb0e34e77b638afe4ff495632469f8636a7444d5fd655849",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/recovery/reconstruction.dart",
+    "type": "file",
+    "bytes": 12212,
+    "sha256": "1ccfeb7a9b4aaa2fdd2b58530d0d15b764bb3eb1f69845f49c57cd63df304bc5",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/recovery/recovery_writer.dart",
+    "type": "file",
+    "bytes": 7807,
+    "sha256": "eb87dc8b6385124ed144e14708a4bda290d0511c18004bb9666c76b1d625cdb9",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/recovery/scheduling.dart",
+    "type": "file",
+    "bytes": 13270,
+    "sha256": "c195090424f34f4eb878517ac23c3933ae794909912fc04ca2b48a7e05a24b30",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/resources/resource_records.dart",
+    "type": "file",
+    "bytes": 16120,
+    "sha256": "ee1a3a8da9bad2cad5079700c4adca8fe62732519721d5c8eafb7f4727321c8a",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/resources/resources.dart",
+    "type": "file",
+    "bytes": 3440,
+    "sha256": "0b4b471379ffe694a1ade7e3a9e3d062504cf07b0295f8575734b656bbe66a3a",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/sections/.gitkeep",
+    "type": "file",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/sessions.dart",
+    "type": "file",
+    "bytes": 977,
+    "sha256": "304bce88f4b62eaedd183b6c2bd046abf6f387c9a5fc88b848e321d5dad36ad2",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/sessions/README.md",
+    "type": "file",
+    "bytes": 15685,
+    "sha256": "3f2c93906de9750c05574ef4f87326d713c54187ca370a7030bbb51064a3b3f9",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/sessions/document_session.dart",
+    "type": "file",
+    "bytes": 28263,
+    "sha256": "cb58f77e5e18400a336a79fec53600ecff58a03ba497bd6e80ba382a641857a0",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/sessions/identities.dart",
+    "type": "file",
+    "bytes": 2032,
+    "sha256": "72e253a2b6065f56cd57e6219817d053293c587aed54c0057668801ae0e66ec8",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/sessions/navigation.dart",
+    "type": "file",
+    "bytes": 2832,
+    "sha256": "54f8b067bdb5c55a243baa19786aa80d668cfa35d3e8084a067214b3ddb6b197",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/documents/sessions/session_contracts.dart",
+    "type": "file",
+    "bytes": 19140,
+    "sha256": "774faaf313f6ced40e66cd69cf21e98a9d0ff21ecff0f8fbd1c2055521de5fed",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/backends/.gitkeep",
+    "type": "file",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/cache/.gitkeep",
+    "type": "file",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/engine/.gitkeep",
+    "type": "file",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/geometry.dart",
+    "type": "file",
+    "bytes": 152,
+    "sha256": "dc0f04af732e05daa043f779f1ec8c658a3fd38842b8b0f77216ae702e872a83",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/geometry/.gitkeep",
+    "type": "file",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/geometry/stroke_geometry.dart",
+    "type": "file",
+    "bytes": 33689,
+    "sha256": "e5ad8d4e18641b13aaa20ff4dc6acfee5d648d10b99d450d366e27f0a472340f",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/graphics/.gitkeep",
+    "type": "file",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/hit_testing.dart",
+    "type": "file",
+    "bytes": 242,
+    "sha256": "8c467126b2671a1d258ea2c11c7d3ccc09eac72174408afd3591d6f03e5a6668",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/hit_testing/.gitkeep",
+    "type": "file",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/hit_testing/content_hit_testing.dart",
+    "type": "file",
+    "bytes": 14266,
+    "sha256": "9b88969dac85e14b6f854c1b9ba0ffdf784fefef669a3bfcc1005b7f64496bd5",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/hit_testing/hit_testing.dart",
+    "type": "file",
+    "bytes": 26682,
+    "sha256": "6bb64e46d2a90d19c8c2c65725045e38513359673d11c9e3e8cddd9a3216a583",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/hit_testing/shape_hit_testing.dart",
+    "type": "file",
+    "bytes": 24390,
+    "sha256": "6577715f396ea205316f6f5c0ce38df335a4ca79edec547ef3262fd3785c4226",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/input/.gitkeep",
+    "type": "file",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/renderer.dart",
+    "type": "file",
+    "bytes": 228,
+    "sha256": "162ad9a958376b071e236624aff08f9805766a03f7d3021e2992354636034255",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/renderer/.gitkeep",
+    "type": "file",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/renderer/content_rendering.dart",
+    "type": "file",
+    "bytes": 8162,
+    "sha256": "c86a07fe1026092f4584fb4d634cf944a3423f6ea18ab5c455554c11ea4f1d71",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/renderer/rendering_scene.dart",
+    "type": "file",
+    "bytes": 49699,
+    "sha256": "a2c865695abdd7e50c4426006c3a3c0296bd39ec10bf4c56d7c08e9af7439c96",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/renderer/shape_rendering.dart",
+    "type": "file",
+    "bytes": 9292,
+    "sha256": "0f1b41f8d2852bee535ad55a263e08c22665fa5f339adf54694d4e2170b8c02a",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/selection.dart",
+    "type": "file",
+    "bytes": 223,
+    "sha256": "0b5e6d8c6ea267f873ae2fcdab884a8631ea67bfd18e119b0b39eb8e649d269d",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/selection/README.md",
+    "type": "file",
+    "bytes": 8573,
+    "sha256": "d757ed27bf4fefa0e066650715a9fb7db4f8e037806fd79e28cd388366a34125",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/selection/selection_contracts.dart",
+    "type": "file",
+    "bytes": 19224,
+    "sha256": "eb7fe6b39dd080e507db846562190b999ac2eaa4889dae8e06fc0d23d9b073ce",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/selection/selection_controller.dart",
+    "type": "file",
+    "bytes": 30560,
+    "sha256": "1b8c47bc73f9537d712ffa06ba8c22fb93af1421b4c8ba9718f964d5b6beae82",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/strokes/.gitkeep",
+    "type": "file",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/tools.dart",
+    "type": "file",
+    "bytes": 200,
+    "sha256": "a2a7682cf768e59b46df11b9373b15767c75880ca06a725a0873aaf3ed4b18e7",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/tools/README.md",
+    "type": "file",
+    "bytes": 6892,
+    "sha256": "37f99e59b14681a4b4be1c046633f4d5751dfc4a2a5d2828259f7ea5e2ab6bc0",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/tools/eraser_gesture_plans.dart",
+    "type": "file",
+    "bytes": 25183,
+    "sha256": "d68faac239ae64dbc11a824f2f4ab27ce8f9e6e747b48d842f81c3c4198a8a8f",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/tools/tools.dart",
+    "type": "file",
+    "bytes": 23848,
+    "sha256": "7ac19c8796457e43377e99624747916289e7f56f6cbd4f07bda5d3d08db2d04c",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/viewport.dart",
+    "type": "file",
+    "bytes": 165,
+    "sha256": "4f9135f056777fd3868d4e38b3ecb3b7d5a6eff24ec0782000078dd88381184c",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/viewport/.gitkeep",
+    "type": "file",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/drawing/viewport/viewport.dart",
+    "type": "file",
+    "bytes": 12394,
+    "sha256": "a48e36711cba1100787a55f01d65ec5dd613a506a8fca6f7014c41c4481c9704",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/main.dart",
+    "type": "file",
+    "bytes": 8572,
+    "sha256": "5961f9905f605743b690e761d3d59cf65bafa420b3cb343d7b1c8ab4760ae7a0",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/platform/README.md",
+    "type": "file",
+    "bytes": 22164,
+    "sha256": "189f61874699c0cce631f8e2bca9213d739be62f2294c3769814c3a2d3ed150e",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/platform/contracts/capabilities.dart",
+    "type": "file",
+    "bytes": 18576,
+    "sha256": "269f452b533f29cbc472d709c8fa8ed601cb68389d10255b6d19a8f29593a016",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/platform/contracts/lifecycle.dart",
+    "type": "file",
+    "bytes": 2289,
+    "sha256": "be02ac72519afa34d5cb7d9bae45469031f989826f2296e8811b0317655166ee",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/platform/contracts/opaque_resources.dart",
+    "type": "file",
+    "bytes": 18720,
+    "sha256": "e32a39f3a3ee7038d73e0d109bc17a696c63b0f761634e945c5cfae69f52bd17",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/platform/contracts/private_storage.dart",
+    "type": "file",
+    "bytes": 14688,
+    "sha256": "54967f83112329846cdd71296e62883731c2735ed6977f50b01d8b2f518def51",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/platform/platform.dart",
+    "type": "file",
+    "bytes": 202,
+    "sha256": "c4917082578a797f635326fc6976e8612635b4f54509ceefa898dfbfc84c106f",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/search/README.md",
+    "type": "file",
+    "bytes": 16675,
+    "sha256": "526a9b95f2518cfab23d4f2f316954a7ef969d4586cad45b8c7ba1e0da70481c",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/ui/README.md",
+    "type": "file",
+    "bytes": 17400,
+    "sha256": "cc7e932a14d9bbcbc99fb537f528eb77ce67d70095f4c9fab4d31fe9e7230911",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/ui/canvas/flutter_image_decoder.dart",
+    "type": "file",
+    "bytes": 7375,
+    "sha256": "2c10c0b2a786e3b452115220851798eb8ccadb0a0123e5e01204478a9add2f31",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/ui/canvas/flutter_pointer_adapter.dart",
+    "type": "file",
+    "bytes": 3115,
+    "sha256": "9754a0a54ac5054273eb336192857349037b4fde1d70a81a6b6dc4f36ea9f7b3",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/ui/canvas/flutter_text_layout_engine.dart",
+    "type": "file",
+    "bytes": 21001,
+    "sha256": "f0aa304d2de4803886205c5a7e7f534d74c3435a05b3eb71308632f989e0674b",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/ui/canvas/pdf_object_paint.dart",
+    "type": "file",
+    "bytes": 1054,
+    "sha256": "98b0306d25c109cd4affa85721d1290605981c396d5dab3c9271e03d95e97996",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/ui/canvas/pdf_raster_image.dart",
+    "type": "file",
+    "bytes": 1351,
+    "sha256": "31d4509467b7fbfde3697b43e113aaa35a17d7c673fee18cb7c88cfa2aa37152",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/ui/canvas/pdf_source_paint.dart",
+    "type": "file",
+    "bytes": 1131,
+    "sha256": "6a165ffb80cc018381086018be4aa7c18e7ffd921eed1d04a290f23f647516c4",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "lib/ui/canvas/phase6_canvas.dart",
+    "type": "file",
+    "bytes": 329513,
+    "sha256": "9adb41a339bda0e9f012be4bf226db74dfcebe5aa19c792f91b77f1250898fc2",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/ui/canvas/phase6_canvas_runtime.dart",
+    "type": "file",
+    "bytes": 37100,
+    "sha256": "9703a5632dee6d0224d86f37750f6083b7bcf9c067902f43a01d0ff0994ed125",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "lib/ui/canvas/phase6_diagnostics.dart",
+    "type": "file",
+    "bytes": 16128,
+    "sha256": "2bffcb9933faef9a94fc7ad134bad3bde26e9cdef59c383d658b1e9bd697cc2b",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "linux/.gitignore",
+    "type": "file",
+    "bytes": 18,
+    "sha256": "5ded4f1a9d10d34bf6ee5beb0711d88ee2ef07b0f07ace9ed77935a246e8eb82",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "linux/CMakeLists.txt",
+    "type": "file",
+    "bytes": 5662,
+    "sha256": "8f655be199d95d55327a96bac71baf24a70924cd65d6fe04c4ac26323a3ce433",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "linux/flutter/CMakeLists.txt",
+    "type": "file",
+    "bytes": 2815,
+    "sha256": "787189e2623313cfee590a0b553338eb9fc68b3af922ddd77c5d39c75f989aeb",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "linux/flutter/generated_plugin_registrant.cc",
+    "type": "file",
+    "bytes": 713,
+    "sha256": "be4702057f167b6f2c3fedb9a5d36cde7870c7370867018dcbc6e28cc9c6622c",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "linux/flutter/generated_plugin_registrant.h",
+    "type": "file",
+    "bytes": 303,
+    "sha256": "00f93bb5b1faefdede8f6065df327522900fb0b8efee86bacf424fd947ed14bb",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "linux/flutter/generated_plugins.cmake",
+    "type": "file",
+    "bytes": 788,
+    "sha256": "58c7d076efeef8b3277ff06907891f13a01dfdb5f4042b7f71fdc9cafa994acf",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "linux/runner/CMakeLists.txt",
+    "type": "file",
+    "bytes": 974,
+    "sha256": "8cdcfd911e770fd7d511c97c7bce6559486a815352a47c953f7ef632e236d2cc",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "linux/runner/main.cc",
+    "type": "file",
+    "bytes": 180,
+    "sha256": "ea23f7cdf74091d63bba29ef60486370b766157b848f0cfe62bd8b1c1695a0c1",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "linux/runner/my_application.cc",
+    "type": "file",
+    "bytes": 5453,
+    "sha256": "5817b9adf5f67fe56dfd311ebe5535364f0959714d0cfb401cece6a8ce473a23",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "linux/runner/my_application.h",
+    "type": "file",
+    "bytes": 451,
+    "sha256": "a4218d7ac0db8a9a6716daf216b2d4fc6bdc7ac647e3183078b2c962ebdfcf70",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "pubspec.lock",
+    "type": "file",
+    "bytes": 18376,
+    "sha256": "4698660c950b5f696926082d495d0ebdec9cb58f5c00d2dcdaa25db6cafffad9",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "pubspec.yaml",
+    "type": "file",
+    "bytes": 543,
+    "sha256": "08117391f30aaab64f270ec85cd5a373c941ac587415665350fe669b4975e44d",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/app/application_state_test.dart",
+    "type": "file",
+    "bytes": 17318,
+    "sha256": "667c456801229bf9f7c7fb390c35e7022b81d7ce83c49da7fb65748e6a09f15b",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/app/settings_test.dart",
+    "type": "file",
+    "bytes": 34385,
+    "sha256": "ef47c593ecb7ddcb09d5db271db3ff8495fd846fa5b8dff122e6290c2e455baa",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/core/geometry/affine_transform_2d_test.dart",
+    "type": "file",
+    "bytes": 10903,
+    "sha256": "7b317443f65e1ecbd2c8f2f89b98d57ff833dccf87a1ae213e5deaf34623acd5",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/core/geometry/geometry_values_test.dart",
+    "type": "file",
+    "bytes": 6253,
+    "sha256": "7ea9ef114f706b62f591072672e8c39b9a8c7fd16d913e0839bf433278754573",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/core/identity/identity_test.dart",
+    "type": "file",
+    "bytes": 4478,
+    "sha256": "79a85b648df5a05d9f53217ea475bad287abeeb64cc7cfd2e4f081915acc20af",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/core/jobs/scheduler_test.dart",
+    "type": "file",
+    "bytes": 43790,
+    "sha256": "1a9b9f3ea294896332d3ba28a55aea752dbbbfb17c8c436eefef31cdd84a2730",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/core/outcomes/outcomes_test.dart",
+    "type": "file",
+    "bytes": 7173,
+    "sha256": "310c0f2edf419ba5bbe2fe6f85511e9a0999ae29afd12a1efa8f19d7d9bb1fdf",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/core/security/security_contracts_test.dart",
+    "type": "file",
+    "bytes": 8031,
+    "sha256": "3916816428023254004d652a8b622d495d271cac434debef53e3fdc7b2310476",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/core/time_random/time_random_test.dart",
+    "type": "file",
+    "bytes": 4312,
+    "sha256": "be0a8f4e950e4b94d7dc9857499d468b661d91f6f41a4cf7be9c0bdb662bb0fb",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/core/validation/validation_test.dart",
+    "type": "file",
+    "bytes": 10666,
+    "sha256": "8efd9b80e04eefa4377047442860a10a26ad66aac245aed0bb62545503cb2280",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/core/versioning/versioning_test.dart",
+    "type": "file",
+    "bytes": 4373,
+    "sha256": "d63251c5f5b27af9cdeb426021308e2a8d1f11708ddb18f55f12f3d56640f480",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/documents/commands/command_contracts_test.dart",
+    "type": "file",
+    "bytes": 9979,
+    "sha256": "3117c84ad03df058a280fa5c879890bbadbed30c4839c037026b89314b7f5ccc",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/documents/commands/document_mutation_coordinator_test.dart",
+    "type": "file",
+    "bytes": 80086,
+    "sha256": "d89e6ab8c93662ac0c3c9f0611e05453beea7454629ccf1302413ec5167d046a",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/documents/commands/phase6_collection_edit_test.dart",
+    "type": "file",
+    "bytes": 21069,
+    "sha256": "477a04bfa92e64a95ae1c24d7e1ed2622682eea19e231da4ae48b56a1aadf2b8",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/documents/document_values_test.dart",
+    "type": "file",
+    "bytes": 17973,
+    "sha256": "67d53689903f69417a484a646d88215906dcf9ad38fffdcec5452dc900f7c4a1",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/documents/files/blocker_regression_test.dart",
+    "type": "file",
+    "bytes": 45331,
+    "sha256": "e0512c2b1dd227d5dfecd5b66029613d068874f9723c1ecaec9e5e2bc33d1f6a",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/documents/files/dependency_boundary_test.dart",
+    "type": "file",
+    "bytes": 3447,
+    "sha256": "85e92b79f83c44631e55db1902aac9f30160584d4850bcfbd4f003c0ad18977f",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/documents/files/json_resource_test.dart",
+    "type": "file",
+    "bytes": 11013,
+    "sha256": "b7ea23632555910ab5304f7ff600fd5e5964eabe6d960be83c65cdd8b900b681",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/documents/files/migration_save_test.dart",
+    "type": "file",
+    "bytes": 44820,
+    "sha256": "deab6ee373e3c65da20cd10d9283c8b0f883895298a20bffcfe4c37315a2710d",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/documents/files/package_codec_test.dart",
+    "type": "file",
+    "bytes": 20334,
+    "sha256": "f91da821196b66c241ea5c868fc58b0cfc05ad38bc84a0ac946a1b07b6e33223",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/documents/handwriting/handwriting_test.dart",
+    "type": "file",
+    "bytes": 11685,
+    "sha256": "8c7945a8ebb62f8ead020a63f4e108bd3bd280bcc89efb2e58c856c3851ddf79",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/documents/linux_pdf_correction_test.dart",
+    "type": "file",
+    "bytes": 20703,
+    "sha256": "d56205f1492d102f0e3c1e28084f90b8faef46e6af17cc868fd4cadec3a9dfac",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/linux_pdf_integration_test.dart",
+    "type": "file",
+    "bytes": 14485,
+    "sha256": "859e7f10fe10f882013efc2bfcc630d1920de3ee56167091520a1b05bb23ed9c",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/linux_pdf_private_test.dart",
+    "type": "file",
+    "bytes": 11376,
+    "sha256": "d6906d91d0dd63ab5dc0d6f089f241b0e8f2bfb3859f097c5b321d2d624e6706",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/pdf_extraction_protocol_test.dart",
+    "type": "file",
+    "bytes": 14223,
+    "sha256": "d5eed5203ddaf93f7fd53ff537c72985f2b3b82d28c3afc759e0f6d35d8787c5",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/pdf_file_selection_test.dart",
+    "type": "file",
+    "bytes": 9540,
+    "sha256": "cb6533919f33d87be66e0ef2a6c1d7b9c2a4e42e3dac18048ab8457d41d5d096",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/pdf_fixture_admission_test.dart",
+    "type": "file",
+    "bytes": 10627,
+    "sha256": "4fc4d9c28f4ff3c9a50f6721fec5da391185e5e090f4e068e2daa7350ead5d25",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/pdf_fixture_setup_test.dart",
+    "type": "file",
+    "bytes": 1849,
+    "sha256": "32c32bcfaffa554eabdcb70bb45139bfa67da3461b160366ec80226d05f1765a",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/pdf_host_android_test.dart",
+    "type": "file",
+    "bytes": 6500,
+    "sha256": "ea9a1e22bc46d52b2359b5d39c34af06114d33cb5c4c0e6e4a28b837cc9330df",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/pdf_host_io_test.dart",
+    "type": "file",
+    "bytes": 5093,
+    "sha256": "f9c49ba921453daa19350e9200d9efab8f966d676205606c663f4056010f2c10",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/pdf_host_web_main.dart",
+    "type": "file",
+    "bytes": 2898,
+    "sha256": "c6b056841a1984f86878b28dcc5a6b6a3d9668596e5b3612a3db7a7dcdc1a650",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/pdf_linux_extraction_test.dart",
+    "type": "file",
+    "bytes": 21799,
+    "sha256": "fecee2e1bdb36f4efb9c221408bec5a5e88ab84c9f01d887ae43e597fa3f070f",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/pdf_notebook_import_test.dart",
+    "type": "file",
+    "bytes": 17134,
+    "sha256": "4589ca517c79fa09c51fa55b3157350650bd10e5bd188cf9064279ba91cfc1a2",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/pdf_object_insertion_test.dart",
+    "type": "file",
+    "bytes": 10188,
+    "sha256": "53f7bdada94c18671631c00fdb7d8fddbc04ed93626d5b992ef3e04df573ebe9",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/pdf_open_workflow_test.dart",
+    "type": "file",
+    "bytes": 7562,
+    "sha256": "0702021b5e0fca78a9593ec13544ca710072b8dddf044f5727644fe53d106701",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/pdf_private_preparation_test.dart",
+    "type": "file",
+    "bytes": 8608,
+    "sha256": "33f74124314c53dd0cf110082784c231ade82318503f3a0595b6eef21e4263e2",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/pdf_source_capture_bounds_test.dart",
+    "type": "file",
+    "bytes": 7797,
+    "sha256": "eea1267f0ad268f5990d0c1d82db0694aa4ed0050f77041542aa8434962476bc",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/pdfrx_patch_test.dart",
+    "type": "file",
+    "bytes": 21110,
+    "sha256": "dacbfcbc5e668d10067189552125a2ba4038a84c2f96c47a4c20ba50c45e8c4c",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/pdfrx_web_parity_main.dart",
+    "type": "file",
+    "bytes": 1539,
+    "sha256": "af2cbd6e38c53484c16d6aed4c0eaae6cd0566eeda431ae7cdc3764d48e2471a",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/phase7_objects_test.dart",
+    "type": "file",
+    "bytes": 226386,
+    "sha256": "90da4d4d8b5bc02ed6bb5a096c8581dd06b1ebf674270e97d73683e7e5100611",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/documents/phase8_pdf_test.dart",
+    "type": "file",
+    "bytes": 52473,
+    "sha256": "ef50ed343cbf00f397f27ad4aa17b41e5befe94c32221666f7d3b2e280c0224f",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/documents/recovery/recovery_test.dart",
+    "type": "file",
+    "bytes": 35895,
+    "sha256": "593bf6f0b92f2a8484d90e7d6843086e54a5e91f99eac58e5254e6fdf6bc0e4f",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/documents/registry_validation_test.dart",
+    "type": "file",
+    "bytes": 28048,
+    "sha256": "6411a10c09b38f15ec66618d7cdb520657978bd3907e2f7bb55a33ddec22135e",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/documents/replacement_duplication_test.dart",
+    "type": "file",
+    "bytes": 21693,
+    "sha256": "e7e09efaba35347326c0b411b8b352b3a0a6b362a6a670f68276a17e89910e03",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/documents/sessions/document_session_test.dart",
+    "type": "file",
+    "bytes": 29975,
+    "sha256": "2707e5c3816c0040ddccea604a41f0ef5866c47835e5f7621047264d10d545da",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/drawing/pdf_object_page_clip_test.dart",
+    "type": "file",
+    "bytes": 11050,
+    "sha256": "a6d7252524a484c9fd30255ed3e33367727a245d8eb671568898196146bb43b2",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/drawing/pdf_object_rendering_test.dart",
+    "type": "file",
+    "bytes": 5220,
+    "sha256": "18625d4967719e9a24948c1ee36ade7884ef83f14785eb6ab42af2b4e242ad86",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/drawing/pdf_source_paint_test.dart",
+    "type": "file",
+    "bytes": 2465,
+    "sha256": "22c594773926e793e5bc55341cd8bc7a288c394db40decedd32247f017bdefb5",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/drawing/phase6_portable_test.dart",
+    "type": "file",
+    "bytes": 94411,
+    "sha256": "51129b91d8cfc6377ad72a3187dcf8f3ac6a5819b8800a2b066bdc5ab3e92e97",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/drawing/selection/selection_controller_test.dart",
+    "type": "file",
+    "bytes": 58645,
+    "sha256": "c9eb98d58d5596e6186e88f65359e093f30f8f3a6a200a56fc67e2f5e187f378",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/fixtures/phase4/canonical_notebook.alnote",
+    "type": "file",
+    "bytes": 2335,
+    "sha256": "c1bfede8112e4151095cfec4006fb22ef29a7fc431c6eab47c33ed840c84f786",
+    "binary": true,
+    "tracked": true
+  },
+  {
+    "path": "test/fixtures/phase4/generate_fixture.dart",
+    "type": "file",
+    "bytes": 807,
+    "sha256": "b6fcf14f7d5357c74efdaf417b386207dcd415ab049461a0bec513774e2c5094",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/fixtures/phase7/PROVENANCE.md",
+    "type": "file",
+    "bytes": 860,
+    "sha256": "064f113701291905982f73cd7f3d3397f96703831affb21d26c7e1643f04c451",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/PROVENANCE.md",
+    "type": "file",
+    "bytes": 1812,
+    "sha256": "49a5f38686d9a20ae51f1560bd4e92a4a9754e2ee97e03857602f222a271b6f1",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/blank-media.pdf",
+    "type": "file",
+    "bytes": 436,
+    "sha256": "d3c7a258df7194c0cf991cd5d0d2c5fcd228d126329ec3b717d13b5747d01a59",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/blank-negative.pdf",
+    "type": "file",
+    "bytes": 479,
+    "sha256": "b049f1956c6c4c58a9d706986057779dd86b556194a45d4f07257b489032dff0",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/blank-two-pages.pdf",
+    "type": "file",
+    "bytes": 565,
+    "sha256": "3decae966d366fce77720a0ff1be50be2354dbe00951a63c15fab8a85e815251",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/blank-workflow.pdf",
+    "type": "file",
+    "bytes": 605,
+    "sha256": "285b5e3c221f23ccd6b829a45bae8e16e60bf9ede7f4d571bd87be5066ff55fa",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/contained-0.pdf",
+    "type": "file",
+    "bytes": 517,
+    "sha256": "9db6be069309830a77bd1a4c728b5b186d71d4e8b928bc93202e79ff47780cc7",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/contained-180.pdf",
+    "type": "file",
+    "bytes": 519,
+    "sha256": "424506a65b37003f16163ec9d712504d3d1cae4a47c7708fd70ae7461bc4dc82",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/contained-270.pdf",
+    "type": "file",
+    "bytes": 519,
+    "sha256": "5fbbc123d3b76a49f2e194bd7ea8519746099ef3da451695e894b273b74886bd",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/contained-90.pdf",
+    "type": "file",
+    "bytes": 518,
+    "sha256": "29f944249500c28976aab0939bf9f659cadc9f50f68fee414180c5f54ebb19bf",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/disjoint-0.pdf",
+    "type": "file",
+    "bytes": 520,
+    "sha256": "837d7db3c1d3de3e6a08ac39d23cd89925ba5800ba475dd7d6b3d66eefa4025d",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/disjoint-180.pdf",
+    "type": "file",
+    "bytes": 522,
+    "sha256": "0510d570e27acd4fdc7133dc7ac4d3ac4bbfdc8dfefac2acce011db2f6c1e656",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/disjoint-270.pdf",
+    "type": "file",
+    "bytes": 522,
+    "sha256": "db1340dbbb5d685889cacdeeb3ac5fb844a830f25252ccedfb5e8d368adb230f",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/disjoint-90.pdf",
+    "type": "file",
+    "bytes": 521,
+    "sha256": "dc48cbc9142999a2c57e4afc0870d828c92cfc9736c0b436fa4d2da8e7fdac30",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/fractional-0.pdf",
+    "type": "file",
+    "bytes": 526,
+    "sha256": "69aa95a1dad7ee08387206e7d7d6ba6aa9de151ed5f53ea1f358d0047184c232",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/fractional-180.pdf",
+    "type": "file",
+    "bytes": 528,
+    "sha256": "1e36af764f13c94082259eadc66a9de9e8ef181d0f39219c337540619fc52c81",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/fractional-270.pdf",
+    "type": "file",
+    "bytes": 528,
+    "sha256": "8ce2e8be4f8615f498b73a05d9bb40b133e3d334a2e23477c89785267b6daddd",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/fractional-90.pdf",
+    "type": "file",
+    "bytes": 527,
+    "sha256": "3e95bbeb9e56a756b229b4acd09d2fc71ff3a8fd2e07014f2f4c3080b42a41fb",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/inherited-0.pdf",
+    "type": "file",
+    "bytes": 525,
+    "sha256": "8b9394b473fe8a1233f23cbafef9ee9379a70128afba8d7d52d96de5633291bd",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/inherited-180.pdf",
+    "type": "file",
+    "bytes": 527,
+    "sha256": "8126d8feb3d34af0754cc7c7ce8ed99721bbad03cffa4ab7440a72fe17f70f4f",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/inherited-270.pdf",
+    "type": "file",
+    "bytes": 527,
+    "sha256": "f301c9384d7b3b8e35f57b644bd0149ea3147767ba9b4d394ef4c265e8e1d546",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/inherited-90.pdf",
+    "type": "file",
+    "bytes": 526,
+    "sha256": "4720a9589efe169210909549a7007109f806b53a78401ebf3dea25b9559305b7",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/inheritedMedia-0.pdf",
+    "type": "file",
+    "bytes": 499,
+    "sha256": "07c849dc2807826ddce5b72880c4f779393b3b524ce1c6465c6e35e1de823951",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/inheritedMedia-180.pdf",
+    "type": "file",
+    "bytes": 501,
+    "sha256": "6cde4ed298609afe8d6c439590abf80070c79c4e274891525d2b98c493cb16d3",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/inheritedMedia-270.pdf",
+    "type": "file",
+    "bytes": 501,
+    "sha256": "bfb8ca4250127584ef89a8e9113eef3205d2dbab83acd2782d6bd25fa8b62bbb",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/inheritedMedia-90.pdf",
+    "type": "file",
+    "bytes": 500,
+    "sha256": "e5ccc45c6b47519830e377bae7ad2bf1ad9551c1b03b4acf27d06e48821c3a88",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/manifest.json",
+    "type": "file",
+    "bytes": 6166,
+    "sha256": "958a3c45c5023ccbc9abe19c44af00b013c78c605e123fdbc30712f8d452e370",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/negative-0.pdf",
+    "type": "file",
+    "bytes": 525,
+    "sha256": "ef5f76d92b5d55c304758a3cc28cc4fc83da0a861d489fb8d475d48503301a57",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/negative-180.pdf",
+    "type": "file",
+    "bytes": 527,
+    "sha256": "292cf0651673b4153874a9dc2f7b8027bf467790af0e7c0c040469a81b7518d0",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/negative-270.pdf",
+    "type": "file",
+    "bytes": 527,
+    "sha256": "0553ccf4af7850a16ce8b55990e7d718897514289612641e17c0dfae54cf6a34",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/negative-90.pdf",
+    "type": "file",
+    "bytes": 526,
+    "sha256": "7565e80f924635bd3d592540fd5fa0ea3c01e88ffe56f234213c5264aa66a48d",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/overlap-0.pdf",
+    "type": "file",
+    "bytes": 519,
+    "sha256": "3a861f1962082090a9fbe448bf426b9631622b65d9f2710acf92622c99331e1a",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/overlap-180.pdf",
+    "type": "file",
+    "bytes": 521,
+    "sha256": "b5bdea99e0ffaf20b26ac956c000ff182e8c80b7a8e360fd3ea77b0b5d27a81f",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/overlap-270.pdf",
+    "type": "file",
+    "bytes": 521,
+    "sha256": "cc34b8a94589028fd0e49c0977abe2ad8b4973843af43c9cf92b96a0291f744b",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/overlap-90.pdf",
+    "type": "file",
+    "bytes": 520,
+    "sha256": "8fb8bdb51113efe9c1782622772d9f1262bd0f9cb7daa58a486c04c417a3cb4c",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/oversized-0.pdf",
+    "type": "file",
+    "bytes": 520,
+    "sha256": "2ea7035f6aec3404d994df782a75be1927ff1f20413e965155adc6d2e0c83bbe",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/oversized-180.pdf",
+    "type": "file",
+    "bytes": 522,
+    "sha256": "a6354e7200ccc8315157d151b17085fe65157b156a03e688dd1c2e1f99f38dab",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/oversized-270.pdf",
+    "type": "file",
+    "bytes": 522,
+    "sha256": "7407ce4a47724f0a5e307fce4fb50f268d1f17595c75b5cceaa2a8ec71a1c73e",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/oversized-90.pdf",
+    "type": "file",
+    "bytes": 521,
+    "sha256": "4099afef8f3983a2b934d5d5bcf3e58c3440616873444f87c280c872a5d4858e",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/reversed-0.pdf",
+    "type": "file",
+    "bytes": 516,
+    "sha256": "1cefbf1a259eb2792285c783e4484fe69af90731ab85d7be43d441951ca784da",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/reversed-180.pdf",
+    "type": "file",
+    "bytes": 518,
+    "sha256": "447bbb482e634b6a94aa96b79fb92a05aab4a575f0f44d0583d77a678de44fa7",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/reversed-270.pdf",
+    "type": "file",
+    "bytes": 518,
+    "sha256": "c3da82f4887940e9bd8d505f3c198f5c55471e086be6548636f8d8b79fd15292",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/reversed-90.pdf",
+    "type": "file",
+    "bytes": 517,
+    "sha256": "e256dde56df15f7921df3b49c0a30f25201b5bcdd88b485479f5887b627dc7ff",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/reversedMedia-0.pdf",
+    "type": "file",
+    "bytes": 493,
+    "sha256": "98c577c388256339e762e3525f68a0323849fa28cfc8cafb4ebb70d8dbbadf7f",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/reversedMedia-180.pdf",
+    "type": "file",
+    "bytes": 495,
+    "sha256": "f25e57ced2c34109944f206a38638c9a315162183478cb3bc87a91a6ae27f0ba",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/reversedMedia-270.pdf",
+    "type": "file",
+    "bytes": 495,
+    "sha256": "74fbbbabbd43205956e0298e93c9acd7e9e0004d1947f861421ebb0dcd29adc2",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/reversedMedia-90.pdf",
+    "type": "file",
+    "bytes": 494,
+    "sha256": "5c95401a5165e26d3499818d8655e792fcea107e58f7ca8cb33282167cc2e4f4",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/admitted/truncated-controlled.pdf",
+    "type": "file",
+    "bytes": 34,
+    "sha256": "a5b85ea1e96d33e5a208c0af3a30b8e9dded6a2de44470f13ecad00994c24212",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/linux-integration/heavy.pdf",
+    "type": "file",
+    "bytes": 46751,
+    "sha256": "b030997ef3a8c05f6e3242c6c7068708089c7d14568fe2438ba93238cfea3d36",
+    "binary": true,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/linux-integration/manifest.json",
+    "type": "file",
+    "bytes": 458,
+    "sha256": "1fa795b41cd4d89b9e831f37dabfac897697a7752f56e58d211c177cefb48d82",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/linux-integration/ordinary.pdf",
+    "type": "file",
+    "bytes": 1300,
+    "sha256": "d84471e20a0e087529e6ef4ab84a24bb56dcf9b96caab28ef0eae85ef64cd7ac",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/linux-private/encrypted-empty-password.pdf",
+    "type": "file",
+    "bytes": 1210,
+    "sha256": "86b7ecc2392832e807388d0100b4bdd8c64c99f966f2861f97ebc60f7f5c0822",
+    "binary": true,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/linux-private/manifest.json",
+    "type": "file",
+    "bytes": 764,
+    "sha256": "46f1d8db41ef134b8b270f5f199880c0431ad94e741baf0ea7d4ccad88100eb1",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/linux-private/mixed.pdf",
+    "type": "file",
+    "bytes": 956,
+    "sha256": "5df0b66ee33d078e7ca5fa27af129289c134246fd226a7c18d405932a1c43b2c",
+    "binary": true,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/linux-private/password.pdf",
+    "type": "file",
+    "bytes": 1210,
+    "sha256": "a7d1e530f2ec2a8f450175aaeea76367d7a95908320b24a2111e11c2b3b7f40c",
+    "binary": true,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/linux-private/scanned.pdf",
+    "type": "file",
+    "bytes": 876,
+    "sha256": "0372761f18f701c98873422abf5045e24eec4da3cd91566ffa32623f3e0dc376",
+    "binary": true,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/linux-private/text.pdf",
+    "type": "file",
+    "bytes": 894,
+    "sha256": "b86593deac1faaf14716512f2578e90988f25c130e3df3adeaa014da067f5d40",
+    "binary": true,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/linux-private/too-many-pages.pdf",
+    "type": "file",
+    "bytes": 6898,
+    "sha256": "5bebe7cab7cb8a31bae2975252876445376a21220ac4ec8a62d40a8e9639ae18",
+    "binary": true,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/web_cleanup.html",
+    "type": "file",
+    "bytes": 795,
+    "sha256": "855f96a9248fe79dc0cf87f8e5216b04d625d291ae8f5d587e0e6fd9030cd280",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/web_cleanup_worker.js",
+    "type": "file",
+    "bytes": 7693,
+    "sha256": "92a75bcf76d93c1b06baf98ec472b0ee20559d0dba6e16dee3037cb8cd6ff0ee",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/web_host_reading.js",
+    "type": "file",
+    "bytes": 2608,
+    "sha256": "e63464e8f447b7e0542ed585056e8a13805e4edc958354d4d67e9bf446aafaf5",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/fixtures/phase8/web_parity_bridge.js",
+    "type": "file",
+    "bytes": 1022,
+    "sha256": "8a3b1b252bd9a66c14db9a7076db35e225170931e49bae89b49d8f2e59adc838",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/flutter_test_config.dart",
+    "type": "file",
+    "bytes": 468,
+    "sha256": "496cf2e6cb80f4a9addca12c0fddee008a87e924854a1691258b53461157ed50",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/native/PdfFixtureReaderTest.kt",
+    "type": "file",
+    "bytes": 11224,
+    "sha256": "7eb6fba78eeb4e7012891a358a4f456166a660130da1d63a22c1a1245b092d25",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/platform/platform_contracts_test.dart",
+    "type": "file",
+    "bytes": 44884,
+    "sha256": "e2aef670c92d06827210eae9a5810471a95608867a21eb0f62a49ae0455263c9",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/support/byte_sequence_random_source.dart",
+    "type": "file",
+    "bytes": 2368,
+    "sha256": "5dd0b4f1a442bac93fc3879faf5ae346c17986bd7a5cc0d8a82198a9e83d4656",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/support/controllable_clock.dart",
+    "type": "file",
+    "bytes": 652,
+    "sha256": "ff57af00607e86be804d27f300775622cb9ecc72cc34ac1f42957751f1c98253",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/support/document_model_test_support.dart",
+    "type": "file",
+    "bytes": 11635,
+    "sha256": "979a846adad59e6ecbc87a5c9083dcd25e0dc3f0e4230b28e1b3594e7e2dd7ac",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/support/pdf_canvas_followup_checks.dart",
+    "type": "file",
+    "bytes": 24488,
+    "sha256": "4c2b5c783803774e292181f3bbf1c6e60e86dec611e550c9e6d188d5b3aeb8b3",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/support/pdf_cleanup_publication_checks.dart",
+    "type": "file",
+    "bytes": 14022,
+    "sha256": "9294e8ab8d8da824a3d0095a2e96f4d8248c3fbce6ba3d466ff9b8f184b46516",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/support/pdf_extraction_fixture.dart",
+    "type": "file",
+    "bytes": 3010,
+    "sha256": "476c4aea4203d63be4a106f7a9e772b26ecd7d1d928ddea0c8d4dd5721cca678",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/support/pdf_geometry_checks.dart",
+    "type": "file",
+    "bytes": 10345,
+    "sha256": "25c746bf6b003435228c7fdc9b748722f22f59193d5a11c1dad99f1b41f1c0e2",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/support/pdf_linux_integration_checks.dart",
+    "type": "file",
+    "bytes": 11516,
+    "sha256": "1354f997e09210896c297b1a14915b886284b1deb091c957973a01f004d43d61",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/support/pdf_linux_prototype_checks.dart",
+    "type": "file",
+    "bytes": 5672,
+    "sha256": "9a646f95da6159d38869efc50b0608b8984d49726b046505adc5b1568d186f8a",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/support/pdf_notebook_import_checks.dart",
+    "type": "file",
+    "bytes": 23724,
+    "sha256": "92e2e573bc85db1294198364d47709ec5d371cb20b4ef3f2e28b9e518611acb6",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/support/pdf_object_insertion_checks.dart",
+    "type": "file",
+    "bytes": 49334,
+    "sha256": "e7b6fbcf53197f295e6cf536f1fbf7b6537862a6a43b7e405937904b8469bb78",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/support/pdf_observer_atomicity_checks.dart",
+    "type": "file",
+    "bytes": 8655,
+    "sha256": "bf172fb4621b0ab643cfb56b073d10a64f022736debbd75d0a948ee4c019de05",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/support/pdf_source_style_checks.dart",
+    "type": "file",
+    "bytes": 6712,
+    "sha256": "84883c8fb85e18741fc5cee8542a33f9c01fc2ce29fca293a1bf1aeda48b2bef",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/support/phase3_test_support.dart",
+    "type": "file",
+    "bytes": 4415,
+    "sha256": "676eb4266716dd010fcd8517fa0c128ebf091be017efc5e88333c8456307d56f",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/support/phase4_test_support.dart",
+    "type": "file",
+    "bytes": 11184,
+    "sha256": "5df51648c4ab9efba4fbf5d820336371226b888d2b66aa1cb28fec71466e0afc",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/support/phase5_test_support.dart",
+    "type": "file",
+    "bytes": 26048,
+    "sha256": "5ad601ef1ae76d4c311e15b82fb8409f57cd48d0e424cf8e9f76cf8b4d37fd48",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/support/uuid_sequence_generator.dart",
+    "type": "file",
+    "bytes": 1357,
+    "sha256": "10f03ecac330d733c8de0962b1538379e5a1e6cd8862e43aae3b97bd11ca962c",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "test/support/verified_fixture_library.dart",
+    "type": "file",
+    "bytes": 1694,
+    "sha256": "93052b607f9815b56714abe1fa8626bc0bfcb00cc6e9e8297f0a6fb1117b89ae",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "test/widget_test.dart",
+    "type": "file",
+    "bytes": 285993,
+    "sha256": "505bf6ff97d4a89ba6313e4e17ad0add13a862cf98d8537b97b0417e9e0ca3e4",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/CHANGELOG.md",
+    "type": "file",
+    "bytes": 70567,
+    "sha256": "0e3fab7c81c0119ae0c1b63a77ef19256bbe845ed59f043d76bfe92ccc0511f9",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/LICENSE",
+    "type": "file",
+    "bytes": 1127,
+    "sha256": "050ccfd8256df03e5ccaec222c0f87a4e5e2069c69515f027b534a63fb00fe23",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/README.md",
+    "type": "file",
+    "bytes": 12968,
+    "sha256": "f6063f8fe28e63e2f03c54acb29f7bf8d1d68a5f4cac1fb6ab3af8d045bb59dd",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/assets/pdfium.wasm",
+    "type": "file",
+    "bytes": 5231809,
+    "sha256": "5b2cbb18e9dc361dae375e971c7e75f7306d39b7749ad4fced475579e6a549df",
+    "binary": true,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/assets/pdfium_client.js",
+    "type": "file",
+    "bytes": 1856,
+    "sha256": "1ac8729c01dd67d03008f410fda7e2f9928d695c0a81e65ebd65bdf622ae5e65",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/assets/pdfium_worker.js",
+    "type": "file",
+    "bytes": 107383,
+    "sha256": "d6662f8255c1b9f27fc889d4e8c6fe26f39d8855290eef2a840275a6bc6a86e7",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/bin/find_package_path.dart",
+    "type": "file",
+    "bytes": 5848,
+    "sha256": "4cba1d9676a1807c0eb15de51c9bbc687b2e5d3a6d578fcfbfb13630f1584752",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/bin/remove_darwin_pdfium_modules.dart",
+    "type": "file",
+    "bytes": 3583,
+    "sha256": "a3eab47729f73204229b36e0b3a87c162aca3b77b0cce6efe399ea6795d27397",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/pdfrx.dart",
+    "type": "file",
+    "bytes": 1198,
+    "sha256": "6f9aa06f457ad7fafe3e6201e233c0f19a96201a0d0949f95cbcafc9862e49d6",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/pdf_document_ref.dart",
+    "type": "file",
+    "bytes": 20482,
+    "sha256": "7b525167084243d57039077a3dd39a7fdeba816c14082890c4c10a8f198d80a2",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/pdfrx_flutter.dart",
+    "type": "file",
+    "bytes": 7023,
+    "sha256": "e80ee316ae4cc46810f6ff3b4949f5da4ad19d9488f596f10ddc8620bc5cebd7",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/utils/double_extensions.dart",
+    "type": "file",
+    "bytes": 803,
+    "sha256": "8c659b50d53e3904c411c44d3347a3514824438b0e137764cfd3f8334ceb46f7",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/utils/edge_insets_extensions.dart",
+    "type": "file",
+    "bytes": 578,
+    "sha256": "07f6eb6c54b5b5c0086e2a19aba8f2be1d14a7c8339e268616cc739297a3e68c",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/utils/fixed_overscroll_physics.dart",
+    "type": "file",
+    "bytes": 4680,
+    "sha256": "a69248f979c2620454879da030dd05139cc53f99ff92a6eef772a215d9333808",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/utils/native/native.dart",
+    "type": "file",
+    "bytes": 1627,
+    "sha256": "3ac7b2daa9a8b6c55f53635364f39275f26963678008c5d47f83fe6e4cc3a0de",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/utils/platform.dart",
+    "type": "file",
+    "bytes": 65,
+    "sha256": "d3acac6031ad330136b0358577e8eb6b15ef0a7c95450d5f7f5e9122d8068c9a",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/utils/web/web.dart",
+    "type": "file",
+    "bytes": 2269,
+    "sha256": "0e9b98c0d8292e14fd111f1b5e090303de595e6711af4c91335700caeba9ef20",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/wasm/js_utils.dart",
+    "type": "file",
+    "bytes": 745,
+    "sha256": "911ee21d7a279cec1a65e0a2fccc4738b8bf2900c6ffea8ff3ce17868c01b581",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/wasm/pdfrx_wasm.dart",
+    "type": "file",
+    "bytes": 31765,
+    "sha256": "38b6abff4888ddc268b60405f98ea454137a743a3fdd7b25152ad6c9ae6e2b62",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/interactive_viewer.dart",
+    "type": "file",
+    "bytes": 71638,
+    "sha256": "1b9a29bdabe8f400bae184318d2e10036ab6065dccf76376fbcb338f75033a23",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/internals/pdf_error_widget.dart",
+    "type": "file",
+    "bytes": 3592,
+    "sha256": "fbe83fce27da13336c7f738acb00dd72723f6c56490b702f1cff28db08f7116c",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/internals/pdf_viewer_key_handler.dart",
+    "type": "file",
+    "bytes": 2340,
+    "sha256": "b5a5c770b3015f53bde45925f9823913dc28464fbce30642b8a6cd4a35af9c3e",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/internals/widget_size_sniffer.dart",
+    "type": "file",
+    "bytes": 1669,
+    "sha256": "096491dc726adb312e8eb9639bf398c187a6bed66475cfe2e95036e971a74567",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/pdf_page_links_overlay.dart",
+    "type": "file",
+    "bytes": 2282,
+    "sha256": "829a3ef97b6d407bdc13e16db5376fd6376b7e97773430a8eabc6956d5d27001",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/pdf_text_searcher.dart",
+    "type": "file",
+    "bytes": 10565,
+    "sha256": "2ab8f623196356c1106a0ab369d58c053a71275c0c6c26c0b9e279f78d5f88a1",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/pdf_viewer.dart",
+    "type": "file",
+    "bytes": 192688,
+    "sha256": "9f3dcdd8e63ced130ec558623f4a4813ac56a19b90ee5d4aa37494b2609d438e",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/pdf_viewer_layout_metrics.dart",
+    "type": "file",
+    "bytes": 1250,
+    "sha256": "b9816abab3b8c13f5cb8b6c0cd41f9bbce234a87acd4fcdcaf4bced24dc173e9",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/pdf_viewer_params.dart",
+    "type": "file",
+    "bytes": 78277,
+    "sha256": "6bc56f73ae168690c90fdb772ef9021d8e802343ed1ebf17aa9191bcd5395c3f",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/pdf_viewer_scroll_thumb.dart",
+    "type": "file",
+    "bytes": 5969,
+    "sha256": "52e61a4f968a415ecf515fda267c8de9f44f621a904abda0c28c150e1c7e8218",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/pdf_widgets.dart",
+    "type": "file",
+    "bytes": 15999,
+    "sha256": "42072758fc4b18882f3e92a34054df42b99ec78f6cc7354715a824d52b2990c5",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/scroll_interaction/pdf_viewer_scroll_interaction_delegate.dart",
+    "type": "file",
+    "bytes": 3345,
+    "sha256": "2055decd90e6486013969d9f4dfb65dd9ef8aee40032d976e3c3785fde36ebb3",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/scroll_interaction/pdf_viewer_scroll_interaction_delegate_instant.dart",
+    "type": "file",
+    "bytes": 3238,
+    "sha256": "e9e1ae352f9aab20e358281e1d040cd2c301c3326268185a4f340afafbf68393",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/scroll_interaction/pdf_viewer_scroll_interaction_delegate_physics.dart",
+    "type": "file",
+    "bytes": 8555,
+    "sha256": "6429f92dc82bb9b19790ee76aef91bb2f853c146dbf27d3a0a01c05cd0479013",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/sizing/pdf_viewer_size_delegate.dart",
+    "type": "file",
+    "bytes": 8527,
+    "sha256": "6caa7fdd3f894f4d352ee4c8dda7194f4f2f4622262174952428cb1d452b9f08",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/sizing/pdf_viewer_size_delegate_legacy.dart",
+    "type": "file",
+    "bytes": 11579,
+    "sha256": "089ac93b0833a057369a41746facb8bd05a4562d22b1054f9ed5c98b7bb59f71",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/sizing/pdf_viewer_size_delegate_smart.dart",
+    "type": "file",
+    "bytes": 16856,
+    "sha256": "827d8ccd57a91291c08173b6bfda23ea79a7484cc87d1a87d44dea25901eada6",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/zoom_steps/pdf_viewer_zoom_steps_delegate.dart",
+    "type": "file",
+    "bytes": 2288,
+    "sha256": "fc3ac65bd2007751af495084375bf3cbb18bfb4be1d5de7e1d16bb1429de1ed8",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/zoom_steps/pdf_viewer_zoom_steps_delegate_default.dart",
+    "type": "file",
+    "bytes": 3154,
+    "sha256": "54608839372a7843e1ce427ae484e3da53a0c8a98517f36342b6d9b6ddb0227d",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/lib/src/widgets/zoom_steps/pdf_viewer_zoom_steps_delegate_smart.dart",
+    "type": "file",
+    "bytes": 4645,
+    "sha256": "2ae75acbe23ee35eeaf73fdb8f889146b26486206c12c5a8b49afaf998a7fa8e",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/pubspec.yaml",
+    "type": "file",
+    "bytes": 1022,
+    "sha256": "c1d9dc7f17d044f8780c0024d8d8b6ab73ebdb668d3a4a84a8494f1d472e544f",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx-2.4.8/screenshot.jpg",
+    "type": "file",
+    "bytes": 398847,
+    "sha256": "80ad7f787fc436b1257b24bf4d3897ebfda40e2e31b8b2402d7aada753907bb0",
+    "binary": true,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/CHANGELOG.md",
+    "type": "file",
+    "bytes": 10744,
+    "sha256": "6e94feb462bf5fc6d894f14af343160ab4987447760319affbe488978a71b7cd",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/LICENSE",
+    "type": "file",
+    "bytes": 1127,
+    "sha256": "050ccfd8256df03e5ccaec222c0f87a4e5e2069c69515f027b534a63fb00fe23",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/README.md",
+    "type": "file",
+    "bytes": 7046,
+    "sha256": "ec3db44344a48ad07b6849c943d4711727ac2b25b738dd57108b498c11b4b411",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/pdfrx_engine.dart",
+    "type": "file",
+    "bytes": 757,
+    "sha256": "26d58d1514b95d1445d01bedac0a15b00bc8f2db460992977ae93127fe737456",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/mock/pdfrx_initialize_mock.dart",
+    "type": "file",
+    "bytes": 1024,
+    "sha256": "26b808372a51ceba7dbf08541d1f9cbd26567fbfc4a0eb924a9a539af520c89e",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/mock/pdfrx_mock.dart",
+    "type": "file",
+    "bytes": 3982,
+    "sha256": "d9acf290dee90b02216442c44e0c7b4d3b05f816b909e670086b6f4e0aa5ecf4",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/mock/string_buffer_wrapper.dart",
+    "type": "file",
+    "bytes": 692,
+    "sha256": "43f297cc3737e74fc95700aed0a09c1077cdab94d502f1cf4768c674b0c0e91d",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/native/http_cache_control.dart",
+    "type": "file",
+    "bytes": 8668,
+    "sha256": "45f633e5c86fd77adb6f96380be3cc424d0e05d43ed9fce5b7253bd3103a8d0a",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/native/native_utils.dart",
+    "type": "file",
+    "bytes": 1045,
+    "sha256": "7dd1f773b3e4c7dcc5d89482508d4c4207eaa879cb6b54ad06694e8e69beacd9",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/native/pdf_file_cache.dart",
+    "type": "file",
+    "bytes": 16512,
+    "sha256": "e516e670db6d2fb24b9be18e8d2ed89dfdc3dabd644e151bef3cae0f1efc2a38",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/native/pdfium.dart",
+    "type": "file",
+    "bytes": 420,
+    "sha256": "f128d0b92c44604a73a2dd20363552af8078e0c598db755f55bbc1057def0401",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/native/pdfium_file_access.dart",
+    "type": "file",
+    "bytes": 3280,
+    "sha256": "d058d2208056c2a8ecfd429e4dd736a49a67df1141deb5b948d66834220935cd",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/native/pdfium_file_write.dart",
+    "type": "file",
+    "bytes": 2172,
+    "sha256": "e5465f6c8c18916e49ab3105dc0a8b007b629cbfa506ff23b8ccde9a0b73c894",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/native/pdfrx_pdfium.dart",
+    "type": "file",
+    "bytes": 77945,
+    "sha256": "f828079f59fd27e0273ddb6d9e3a05fe6da91003f0ca4ecb4b2413639fb7181c",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/native/pthread/file_access.dart",
+    "type": "file",
+    "bytes": 3495,
+    "sha256": "d36f3938b77491094a3e430a32fc5692f8fae6e16a010a3904d127b1541dd821",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/native/pthread/file_write.dart",
+    "type": "file",
+    "bytes": 3413,
+    "sha256": "5a5824d9bcbc0f2e10ef4e6492a1d44da713f73447d71a8a4744bf8332e9fc2f",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/native/pthread/pthread.dart",
+    "type": "file",
+    "bytes": 2178,
+    "sha256": "e55dce7881a66524cf482ef2486838ad13376321b75e1bfe6408098dd778fd46",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/native/string_buffer_wrapper.dart",
+    "type": "file",
+    "bytes": 449,
+    "sha256": "b92e2fbfadb8ac27fcc87e36e7e67cd1aaedf37687019847329c9dc75289ec90",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/native/win32/file_access.dart",
+    "type": "file",
+    "bytes": 3499,
+    "sha256": "4231c8601657b40a7807970970ce2088249c8ab9a800d485141cb29e1f941bae",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/native/win32/file_write.dart",
+    "type": "file",
+    "bytes": 3372,
+    "sha256": "5a3438cea6ea52943a1e41c51fdca30c184eca1b42b1698f34efffeec356b83a",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/native/win32/kernel32.dart",
+    "type": "file",
+    "bytes": 1325,
+    "sha256": "e383b6700f27346ba7eeb33f7c6779ba125e8807cc172f8d1c9c0ee26cbe6c77",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/native/worker.dart",
+    "type": "file",
+    "bytes": 8460,
+    "sha256": "da5cbd5e3385cec93af4bfad226d7e3d7de37bbe481e2ab3ff3b8402616e61e8",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_annotation.dart",
+    "type": "file",
+    "bytes": 1759,
+    "sha256": "a609e1b6a8673d575d81cdd5b1f9e8300dd88145d2ab46ccd8581a7a262cc698",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_datetime.dart",
+    "type": "file",
+    "bytes": 4688,
+    "sha256": "ad473e85ee920dcfe05e63634c33d8e86a8420a1b78ca9ccc94e5e41b34d26ab",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_dest.dart",
+    "type": "file",
+    "bytes": 2034,
+    "sha256": "4b9e863985c17e043731b422d3f8aeb92c4ac388d88f6a81ae51b5776c75dfb9",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_document.dart",
+    "type": "file",
+    "bytes": 15976,
+    "sha256": "8d17f06928023378489af6278f167bd5b1269f479ff9bfed2410e1eb62a2a574",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_document_event.dart",
+    "type": "file",
+    "bytes": 2058,
+    "sha256": "482be177060b739b74e7d9062c288a18a3e05a909a80a6e28fda241524eef4bd",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_exception.dart",
+    "type": "file",
+    "bytes": 511,
+    "sha256": "385517951eeffcbd494aff9325747590d9e9093c8cadf50933fab5a2845284d5",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_font_query.dart",
+    "type": "file",
+    "bytes": 1796,
+    "sha256": "d898a9120d747b454ae0f3f6525dcdc7f89a9174d8ead355a5a15f6d27417faa",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_font_resolver.dart",
+    "type": "file",
+    "bytes": 16216,
+    "sha256": "a302a335264f02513c2e279a7cc2e765197fd9a245d38b1759c7981178d158b5",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_font_resolver_platform_io.dart",
+    "type": "file",
+    "bytes": 18246,
+    "sha256": "9e52d76ee19fd25816aed94db93ccaba6fa5233a0808e397474ecafc6705e528",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_font_resolver_platform_stub.dart",
+    "type": "file",
+    "bytes": 671,
+    "sha256": "5012dd3362407ec4a04eb4f4ff21b763b7058a2ce5ea3212169326667abee085",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_image.dart",
+    "type": "file",
+    "bytes": 1161,
+    "sha256": "15bb3cd355606f72a1194db06f9ef1dc5b3c237c8b00343da9ef636f4de0106f",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_link.dart",
+    "type": "file",
+    "bytes": 1600,
+    "sha256": "4b4687501b67b40602bbf796daf892f2bde41a978da42a174da722cc5d9116f8",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_outline_node.dart",
+    "type": "file",
+    "bytes": 796,
+    "sha256": "02a7b4981b4ef69c3da067405036c846d26b58944ee0f83032f4f6628c5d2e87",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_page.dart",
+    "type": "file",
+    "bytes": 15227,
+    "sha256": "664bf61d658c187f4be093a2f4aa1e93298fd0f3e0ea96255d55667532af09ee",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_page_proxies.dart",
+    "type": "file",
+    "bytes": 5755,
+    "sha256": "38dd44414dfd5b8996761c193c37e967e46768c1ea978336844d0a55977a46b6",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_page_status_change.dart",
+    "type": "file",
+    "bytes": 2106,
+    "sha256": "90ba6146c478613b37bde788c0f6df242de41c344876d902edb596da96fa2a7c",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_permissions.dart",
+    "type": "file",
+    "bytes": 1189,
+    "sha256": "11f01340c9ec2c26ffe4f8b898849b002ec8f002914d2a914de8dbb0777359d5",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_point.dart",
+    "type": "file",
+    "bytes": 2181,
+    "sha256": "b7ac0161f0ad1e152156d7d172e38399da8527c927170ff99ff927e68c78c068",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_rect.dart",
+    "type": "file",
+    "bytes": 6073,
+    "sha256": "7983202140b4eed1401c11848d28d1cb9aa5f76481880733495061706cf6149a",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_text.dart",
+    "type": "file",
+    "bytes": 10592,
+    "sha256": "e760eb17ff1d01d993a97ad081413fb91ed8b941c311f80127e9b3b8f58825b8",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdf_text_formatter.dart",
+    "type": "file",
+    "bytes": 12970,
+    "sha256": "c490191c8ecedc6323dfa05e33bcc23d3e614fd35d209b18e442e281c510309e",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdfrx.dart",
+    "type": "file",
+    "bytes": 2077,
+    "sha256": "77b2a89102945161929b865151ed3f47c842345ed3a66dc5a751c3b60ad25baf",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdfrx_dart.dart",
+    "type": "file",
+    "bytes": 2561,
+    "sha256": "45939a9add8c5150f4e225e50d57ec1f13d3845c626168dbfb0111e348704a38",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdfrx_entry_functions.dart",
+    "type": "file",
+    "bytes": 6910,
+    "sha256": "04c90a3a88c0db93b26d86f190f3a8532d79b5b637896573fbf68cdce5f8e284",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/pdfrx_initialize_dart.dart",
+    "type": "file",
+    "bytes": 2256,
+    "sha256": "3a0e5e0fdf96753ace7d777495f345f46a77b64141624d128082e25958133992",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/utils/list_equals.dart",
+    "type": "file",
+    "bytes": 500,
+    "sha256": "e8e69a56d848bce79d1e09557d8937bc01e0ad3871b91d065f31f88aeab8fac3",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/utils/shuffle_in_place.dart",
+    "type": "file",
+    "bytes": 5993,
+    "sha256": "a3ac563519cbe868100f0dad7a3e0b3991768da813d712b826ce09e21a58bcbe",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/lib/src/utils/unmodifiable_list.dart",
+    "type": "file",
+    "bytes": 1047,
+    "sha256": "df08af77efac265009cf0d213de958fe473abe79dcd6c5eb70fae971d9999a50",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "third_party/pdfrx_engine-0.4.7/pubspec.yaml",
+    "type": "file",
+    "bytes": 762,
+    "sha256": "8c7fb168761ce60527c50008f69301253a0e5190f898c55febd9c5ccb3509831",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/check_pdf_android_native.py",
+    "type": "file",
+    "bytes": 2102,
+    "sha256": "9ee86634fdcc1604e80f93effbd148f68a2d9cdd77ca1019abe77e6b7c0173f5",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/check_pdf_browser.py",
+    "type": "file",
+    "bytes": 5838,
+    "sha256": "e234f544fbbb7e51b116589b2fd3b1f7f662b333f676859e9b5edd2f452e50e3",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/check_pdf_host_browser.py",
+    "type": "file",
+    "bytes": 3123,
+    "sha256": "4683e8df4eab419c7f43f73be8dfe9d321f5a26e95b0644c08683ce050c6f20f",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/check_pdf_vendor.py",
+    "type": "file",
+    "bytes": 2184,
+    "sha256": "96b91fefa7e9c2eefc22d3f52750b796325d7e6859ad55586e78eb0bea9f7c96",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/flutter_toolchain.json",
+    "type": "file",
+    "bytes": 248,
+    "sha256": "8fcd642692f5e19f2a55af4b5683b0d38ba21e168f7bb1e711345f47e486e167",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "tool/linux_pdf/check_containment.py",
+    "type": "file",
+    "bytes": 11114,
+    "sha256": "c674a2deeadf7f0d4bb21b4cdab83e82fac7a26632af7d6a9b0185f2f4c1c702",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/check_failure.py",
+    "type": "file",
+    "bytes": 3059,
+    "sha256": "b26555565dde759c01acd7d8577914a0249bd7790a3fb7a68608b05fd5851dde",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/check_pdf.py",
+    "type": "file",
+    "bytes": 8753,
+    "sha256": "59a98d70e9aab36a891cc2445efe6048862c84dedcc4e4a1178e7d096cec7a65",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/controlled_engine.json",
+    "type": "file",
+    "bytes": 11769,
+    "sha256": "b1c07d5931c045fa19367aa7ede209c82bed87c648c1ae91cc6006e593a605b7",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/distribution.json",
+    "type": "file",
+    "bytes": 581,
+    "sha256": "55f07491ecf87897d71be6f78d1f29af832642befd366dfd863c1327e23fd8fa",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/engine_manifest.json",
+    "type": "file",
+    "bytes": 964,
+    "sha256": "12280c195789e5802e469ebc34ac22bc563d10f177904bc4e1c234d51b281ac4",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/extraction.dart",
+    "type": "file",
+    "bytes": 12167,
+    "sha256": "2bfcf31d0d571616925bda02aedb68d068d91e0e76ab446a65894bba74d13684",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/fetch_engine.py",
+    "type": "file",
+    "bytes": 2236,
+    "sha256": "d03b119fccb9785f361e654d84d1562ef395dc245634d3d69e07712737540979",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/input_transport.c",
+    "type": "file",
+    "bytes": 4687,
+    "sha256": "68b5e877e1e40eed85518a3ee64c4bf89e6ed99edff6533f7315511d538c3fc6",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/measure_integration.dart",
+    "type": "file",
+    "bytes": 2160,
+    "sha256": "8e175dbe3931a06137d1478b43bf2a166621e27788904605a2b339fb457440de",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/package_resources.py",
+    "type": "file",
+    "bytes": 4551,
+    "sha256": "4b08876ddd1d76d8be85741c4d03e5040e7a8ba365317bbbb0af59e02943b6c2",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/packaged_resources.json",
+    "type": "file",
+    "bytes": 17915,
+    "sha256": "65ab051ea8c3d74ad0307f53c9d45cb55a90ddcb80bec3e2c923403ab43f3157",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/private_admission_probe.dart",
+    "type": "file",
+    "bytes": 1115,
+    "sha256": "996a486b3883de17764815788337cc76d292c463663e8c76ce70ae066cd4bbba",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/private_test_fixtures.py",
+    "type": "file",
+    "bytes": 4338,
+    "sha256": "34c8295a526d832ab8017c5951a3845e56d87db7deaaace2599924131f5d7291",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/protocol_probe.c",
+    "type": "file",
+    "bytes": 1994,
+    "sha256": "717b5f51c6e5977318b7f5f7f21044ca92f9344e5d7a1fa74b52be90273f6736",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/provision_package.py",
+    "type": "file",
+    "bytes": 8185,
+    "sha256": "3cb7bb41cf8bc46136c67ca7daf09d610b5553783cb875e2b989b567f3957790",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/run_pdf.py",
+    "type": "file",
+    "bytes": 12614,
+    "sha256": "03fafbe95d6d5c425bb371aaf98cb6350b36dfb82743896e644b65af392cda96",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/sandbox_guard.c",
+    "type": "file",
+    "bytes": 1714,
+    "sha256": "5d3e232102f2d02648ebd3b1c931c44b418f7e7fdc55f4aa72798d5ec4bac994",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/sandbox_probe.c",
+    "type": "file",
+    "bytes": 4234,
+    "sha256": "48277411c4e8879e1b903b61d9df03f187c97ed1fbe44ca86346720b52d784bd",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/test_input_transport.py",
+    "type": "file",
+    "bytes": 3262,
+    "sha256": "f307724dbdc60c77c4ffb1e4b1bc449c122ad970fefcc8cf3f92eaf497d62d5c",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/test_protocol.py",
+    "type": "file",
+    "bytes": 9786,
+    "sha256": "f5e5183e218a0b42f96594a82ffcd00dfcd8700e44559ad90e9ca4464d47f236",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/test_verification.py",
+    "type": "file",
+    "bytes": 5964,
+    "sha256": "4111facc02672e0ebcbb6de59097d9e3719d3db11ea42cb5fc3cc7b3bb97f1b0",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/verify_engine.py",
+    "type": "file",
+    "bytes": 4487,
+    "sha256": "14fc1b47f5ef7d2eca829afd88848745b8944a7ada55cf67b26ecf406606ca80",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/verify_package.py",
+    "type": "file",
+    "bytes": 3194,
+    "sha256": "50ec716f7b83c0bb66b3d05b89bea8ebed8e09f2daf19b8de884052e9b630782",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/linux_pdf/worker.dart",
+    "type": "file",
+    "bytes": 8275,
+    "sha256": "09e669da43072fe71bf565f8d7e96bb6e229e098f89ed6e400799af46f667bfb",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/pdf_fixture_resources.json",
+    "type": "file",
+    "bytes": 1069,
+    "sha256": "d0ec8176781f026552c65d094eb257af5b0e33bfa24dca41055198adf701d521",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/provision_pdf_fixture.py",
+    "type": "file",
+    "bytes": 4003,
+    "sha256": "cfce960d84688315f71dc2afe2f452e440d6478e06101b891ee7833f5def26d0",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/test_pdf_package_acquisition.py",
+    "type": "file",
+    "bytes": 9154,
+    "sha256": "a785662e030089f9ec69c3c617dfd4c25c7425ec0cc2b22cf529d96b047c0d43",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "tool/test_pdf_provisioning.py",
+    "type": "file",
+    "bytes": 6118,
+    "sha256": "84a41b83bd2f581694e6eed6c40063a4ee260c8a15faa17536ffc6539a504a64",
+    "binary": false,
+    "tracked": false
+  },
+  {
+    "path": "web/favicon.png",
+    "type": "file",
+    "bytes": 917,
+    "sha256": "7ab2525f4b86b65d3e4c70358a17e5a1aaf6f437f99cbcc046dad73d59bb9015",
+    "binary": true,
+    "tracked": true
+  },
+  {
+    "path": "web/icons/Icon-192.png",
+    "type": "file",
+    "bytes": 5292,
+    "sha256": "3dce99077602f70421c1c6b2a240bc9b83d64d86681d45f2154143310c980be3",
+    "binary": true,
+    "tracked": true
+  },
+  {
+    "path": "web/icons/Icon-512.png",
+    "type": "file",
+    "bytes": 8252,
+    "sha256": "baccb205ae45f0b421be1657259b4943ac40c95094ab877f3bcbe12cd544dcbe",
+    "binary": true,
+    "tracked": true
+  },
+  {
+    "path": "web/icons/Icon-maskable-192.png",
+    "type": "file",
+    "bytes": 5594,
+    "sha256": "d2c842e22a9f4ec9d996b23373a905c88d9a203b220c5c151885ad621f974b5c",
+    "binary": true,
+    "tracked": true
+  },
+  {
+    "path": "web/icons/Icon-maskable-512.png",
+    "type": "file",
+    "bytes": 20998,
+    "sha256": "6aee06cdcab6b2aef74b1734c4778f4421d2da100b0ff9e52b21b55240202929",
+    "binary": true,
+    "tracked": true
+  },
+  {
+    "path": "web/index.html",
+    "type": "file",
+    "bytes": 1348,
+    "sha256": "3dd17b5f1024120d52c2e0663a4f626413e54ce9218dc1277aad2dfd02b501c9",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "web/manifest.json",
+    "type": "file",
+    "bytes": 961,
+    "sha256": "ae139938b4b747bd6f81de7f657fb2eaf4cf69a4b3c13d557626d3dd20f10467",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/.gitignore",
+    "type": "file",
+    "bytes": 291,
+    "sha256": "96345475f1a3c66bd32d28178fba151ab1506b35b1f7857b8f7651863093ea11",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/CMakeLists.txt",
+    "type": "file",
+    "bytes": 4150,
+    "sha256": "4430d214cdc701b24b0076e7d4598b1ed2868e908890ac4daf316ecc5bd59eb0",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/flutter/CMakeLists.txt",
+    "type": "file",
+    "bytes": 3742,
+    "sha256": "1fe418971b6f41bb35ceb3d64113a835f3f6f171ecaa707bf232492b57a588d6",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/flutter/generated_plugin_registrant.cc",
+    "type": "file",
+    "bytes": 488,
+    "sha256": "3b262051d01edd1f2635dff9236a7a25d8a1e80d644aa589637053b43c9fbd31",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/flutter/generated_plugin_registrant.h",
+    "type": "file",
+    "bytes": 302,
+    "sha256": "dbc11635d7b1ba1887adf40df5b83d634e9c3ab0bee34510c71528bb4d73602a",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/flutter/generated_plugins.cmake",
+    "type": "file",
+    "bytes": 796,
+    "sha256": "d7716f3bcafd6b18d7de8cac5c47184c06b9d2cba61cad5cd18eb1df55515f69",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/runner/CMakeLists.txt",
+    "type": "file",
+    "bytes": 1796,
+    "sha256": "34119ec122e36940235ef4bc245fcfb43b6960ed443e28af1a8d833a81209b9e",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/runner/Runner.rc",
+    "type": "file",
+    "bytes": 3042,
+    "sha256": "1c802b341bb7a83206ce59219fc6e020451a239930caa15f2abc3934f8bb5f06",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/runner/flutter_window.cpp",
+    "type": "file",
+    "bytes": 2122,
+    "sha256": "dd185884c0b5301d400b58f12ebb36b1c8b326531597e531b40e44a6eeb0e943",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/runner/flutter_window.h",
+    "type": "file",
+    "bytes": 928,
+    "sha256": "38e0fcd3a0b83895852ec295cb70d90179c0dcd40d58f065eb5232a4ecd84898",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/runner/main.cpp",
+    "type": "file",
+    "bytes": 1260,
+    "sha256": "d0b0a8e8e5a97909e1af69ea6640fba6a075a44291f77a0ea75fca813c4f7c99",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/runner/resource.h",
+    "type": "file",
+    "bytes": 432,
+    "sha256": "1fa98588b04561590ba1cf0521ab86a9db4a878312f21c9d5861d965ddd8d1ae",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/runner/resources/app_icon.ico",
+    "type": "file",
+    "bytes": 33772,
+    "sha256": "c098d3fc85cacff98b8e69811b48e9f0d852fcee278132d794411d978869cbf8",
+    "binary": true,
+    "tracked": true
+  },
+  {
+    "path": "windows/runner/runner.exe.manifest",
+    "type": "file",
+    "bytes": 602,
+    "sha256": "825d243e9fa1542619909c1b72d09b3ed7c1f3b225bb8367c125835e5dc3f8aa",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/runner/utils.cpp",
+    "type": "file",
+    "bytes": 2168,
+    "sha256": "6c2c87106b4b29d534c7edcafb3b7f7b9079caa3cdafa7e56671ad2adf5a2543",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/runner/utils.h",
+    "type": "file",
+    "bytes": 672,
+    "sha256": "95a7f7dddb832997cefa937a96f89472332277e75734a5de553610760b744b03",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/runner/win32_window.cpp",
+    "type": "file",
+    "bytes": 8534,
+    "sha256": "9065f31ccf746cf8b390121f958f9e959033af864aed779597066625ed56bc36",
+    "binary": false,
+    "tracked": true
+  },
+  {
+    "path": "windows/runner/win32_window.h",
+    "type": "file",
+    "bytes": 3522,
+    "sha256": "7dd03746b19dcf3542829b2f6e8ed40a2714ce5f2cb3b0e23f0118a2fcf62d62",
+    "binary": false,
+    "tracked": true
+  }
+]

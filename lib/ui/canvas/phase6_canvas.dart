@@ -26,6 +26,9 @@ import '../../documents/commands.dart';
 import '../../documents/document_model.dart';
 import '../../documents/files.dart';
 import '../../documents/objects/handwriting.dart';
+import '../../documents/pdf/pdf_admission_policy.dart';
+import '../../documents/pdf/pdf_notebook_import.dart';
+import '../../documents/pdf/pdf_object_insertion.dart';
 import '../../drawing/geometry.dart';
 import '../../drawing/hit_testing.dart';
 import '../../drawing/renderer.dart';
@@ -34,8 +37,21 @@ import '../../drawing/tools.dart';
 import '../../drawing/viewport.dart';
 import 'flutter_image_decoder.dart';
 import 'flutter_text_layout_engine.dart';
+import 'pdf_object_paint.dart';
+import 'pdf_raster_image.dart';
+import 'pdf_source_paint.dart';
 import 'phase6_canvas_runtime.dart';
 import 'phase6_diagnostics.dart';
+
+/// Read-only owner evidence for testing synchronous compound publication.
+@visibleForTesting
+abstract interface class Phase6CanvasPublicationEvidence {
+  DocumentRoot get activePublicationRoot;
+  DocumentRoot? get activePublicationSavedRoot;
+  List<int>? get activePublicationSavedBytes;
+  bool get hasPublicationDraft;
+  List<Listenable> get publicationRepaintSignals;
+}
 
 enum _CanvasTool { pen, wholeEraser, selection, shape, text }
 
@@ -99,6 +115,16 @@ abstract interface class Phase6CanvasPersistenceEvidence {
 
   /// Current transformed Page clip, when a scene is available.
   Rect2? get pageClip;
+
+  /// Whether an authoritative PDF render is currently painted under content.
+  bool get hasRenderedPdfPage;
+
+  /// Number and total pixels of native PDF rasters retained for this Page.
+  int get renderedPdfRasterCount;
+  int get retainedPdfRasterPixels;
+
+  /// Whether the stable unavailable-PDF placeholder is currently painted.
+  bool get displaysPdfPlaceholder;
 
   /// Active bounded overlay primitive count.
   int get previewPrimitiveCount;
@@ -177,7 +203,24 @@ abstract interface class Phase6SelectionFrameEvidence {
 }
 
 final class _Phase6CanvasState extends State<Phase6Canvas>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver
+    implements Phase6CanvasPublicationEvidence {
+  @override
+  DocumentRoot get activePublicationRoot => _coordinator.snapshot.root;
+  @override
+  DocumentRoot? get activePublicationSavedRoot => _savedRoot;
+  @override
+  List<int>? get activePublicationSavedBytes => _savedBytes;
+  @override
+  bool get hasPublicationDraft => _inlineText != null;
+  @override
+  List<Listenable> get publicationRepaintSignals => List.unmodifiable([
+    _penFrozenPreviewLayers,
+    _penPreviewOverlay,
+    _penCursor,
+    _eraserCursor.position,
+  ]);
+
   late final ObjectRegistry _registry;
   late final StrokeGeometryResolver _geometry;
   late final PageHitTester _hitTester;
@@ -204,7 +247,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   Stopwatch? _pendingPenReadyClock;
   Revision? _pendingPenPaintRevision;
   final List<ScenePrimitive> _penActivePreviewPrimitives = [];
-  late final ValueNotifier<List<_PenFrozenLayer>> _penFrozenPreviewLayers;
+  late final _PublicationValueNotifier<List<_PenFrozenLayer>>
+  _penFrozenPreviewLayers;
   late final _PenPreviewController _penPreviewOverlay;
   late final _PenCursorController _penCursor;
   int _penPreviewPrimitiveCount = 0;
@@ -266,6 +310,55 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   final Map<ImageDecodeCacheKey, CancellationController> _imageDecodes = {};
   int _decodedImagePixels = 0;
   bool _imageRefreshScheduled = false;
+  int _pageIndex = 0;
+  int _pdfOpenGeneration = 0;
+  CancellationController? _pdfOpenCancellation;
+  bool _pdfImportActive = false;
+  bool _pdfObjectInsertionActive = false;
+  ({
+    DocumentMutationCoordinator owner,
+    _InlineTextSession session,
+    Object before,
+    Object after,
+  })?
+  _importDraftHistory;
+  _PdfCanvasRenderKey? _pdfRenderKey;
+  CancellationController? _pdfRenderCancellation;
+  ui.Image? _pdfPageImage;
+  final _pdfImages = <_PdfCanvasRenderKey, ui.Image>{};
+  final _pdfFailures = <_PdfCanvasRenderKey>{};
+  Map<_PdfCanvasRenderKey, DocumentResourceSnapshot?> _pdfWanted = {};
+  _PdfCanvasRenderKey? _pdfRenderingKey;
+  bool _pdfDraining = false;
+  DocumentPage? _pdfInterestPage;
+  DocumentMutationCoordinator? _pdfInterestOwner;
+  Phase6CanvasRuntime? _pdfInterestRuntime;
+  Revision? _pdfInterestResourceRevision;
+
+  Map<PdfPageReference, ui.Image> get _pdfObjectImages => {
+    for (final entry in _pdfImages.entries) entry.key.reference: entry.value,
+  };
+
+  // Detach all ownership before image disposal or cancellation callbacks can
+  // reenter. Replacement/disposal deliver these callbacks after publication.
+  List<ui.Image> _detachPdfImages() {
+    final images = _pdfImages.values.toList(growable: false);
+    _pdfImages.clear();
+    _pdfFailures.clear();
+    _pdfWanted = {};
+    _pdfRenderingKey = null;
+    _pdfInterestPage = null;
+    _pdfInterestOwner = null;
+    _pdfInterestRuntime = null;
+    _pdfInterestResourceRevision = null;
+    _pdfRenderKey = null;
+    _pdfPageImage = null;
+    _pdfPlaceholder = false;
+    return images;
+  }
+
+  bool _pdfRenderScheduled = false;
+  bool _pdfPlaceholder = false;
   _TextDialogResult? _activeTextDraft;
   _InlineTextSession? _inlineText;
   TextEditingController? _inlineTextController;
@@ -350,6 +443,41 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   bool get _selectionTransformPreviewReady =>
       _currentSelectionTransformEvidence != null;
 
+  bool _closing = false;
+  int _ownedFitGeneration = 0;
+  _OwnerNotifications? _ownerNotifications;
+
+  void _scheduleOwnedFit(DocumentMutationCoordinator owner) {
+    final generation = ++_ownedFitGeneration;
+    final pageIndex = _pageIndex;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted &&
+          !_closing &&
+          generation == _ownedFitGeneration &&
+          identical(_coordinator, owner) &&
+          _pageIndex == pageIndex)
+        _fitPage();
+    });
+  }
+
+  _OwnerNotifications _beginOwnerPublication() {
+    assert(_ownerNotifications == null);
+    final batch = _OwnerNotifications(widget.runtime.nativePictureObserver, [
+      _penFrozenPreviewLayers,
+      _penPreviewOverlay,
+      _penCursor,
+      _eraserCursor.position,
+    ]);
+    _ownerNotifications = batch;
+    return batch;
+  }
+
+  VoidCallback _finishOwnerPublication(_OwnerNotifications batch) {
+    assert(identical(_ownerNotifications, batch));
+    _ownerNotifications = null;
+    return batch.finish();
+  }
+
   void _pictureCreated() {
     if (_pen != null || _penPreviewAwaitingCommittedPaint) {
       _penNativeResourcesCreated += 1;
@@ -365,6 +493,11 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     if (_pen != null || _penPreviewAwaitingCommittedPaint) {
       _penNativeResourcesDisposed += 1;
     }
+    final notifications = _ownerNotifications;
+    if (notifications != null) {
+      notifications.disposedPictures++;
+      return;
+    }
     try {
       widget.runtime.nativePictureObserver.pictureDisposed();
     } on Object {
@@ -373,8 +506,14 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   }
 
   void _disposePicture(ui.Picture picture) {
+    final notifications = _ownerNotifications;
+    if (notifications != null) {
+      notifications.disposals.add(picture.dispose);
+      _pictureDisposed();
+      return;
+    }
     try {
-      picture.dispose();
+      _disposeNativeResource(picture.dispose);
     } on Object {
       // Native cleanup is best-effort and must not interrupt other cleanup.
     } finally {
@@ -391,7 +530,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     } on Object {
       copied = null;
     }
-    if (!mounted) return;
+    if (!mounted || _closing) return;
     setState(
       () => _status = copied is Ok<void, StructuredFailure>
           ? 'Diagnostics copied'
@@ -401,6 +540,18 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
 
   @override
   void dispose() {
+    _closing = true;
+    widget.runtime.pdfLifecycle?.removeListener(_pdfLifecycleChanged);
+    final notifications = _beginOwnerPublication();
+    final cancellations = [
+      ..._imageDecodes.values,
+      _pdfOpenCancellation,
+      _pdfRenderCancellation,
+    ];
+    _imageDecodes.clear();
+    _pdfOpenCancellation = null;
+    _pdfImportActive = false;
+    _pdfRenderCancellation = null;
     WidgetsBinding.instance.removeObserver(this);
     try {
       _pen?.cancel();
@@ -418,27 +569,62 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     _clearPendingSelectionTransformUpdate();
     _disposeSelectionTransformPreparation();
     _eraserCursor.dispose();
-    for (final controller in _imageDecodes.values) {
-      controller.cancel();
-    }
-    _imageDecodes.clear();
     for (final image in _decodedImages.values) {
-      image.dispose();
+      notifications.disposals.add(image.dispose);
     }
     _decodedImages.clear();
     _decodedImagePixels = 0;
+    notifications.disposals.addAll(
+      _detachPdfImages().map((image) => image.dispose),
+    );
     _disposeInlineTextEditor();
     _zoomFocus.removeListener(_editableFocusChanged);
-    _zoomFocus.dispose();
-    _zoomController.dispose();
-    _canvasFocus.dispose();
+    notifications.disposals.addAll([
+      _zoomFocus.dispose,
+      _zoomController.dispose,
+      _canvasFocus.dispose,
+    ]);
+    final deliver = _finishOwnerPublication(notifications);
     super.dispose();
+    deliver();
+    for (final cancellation in cancellations) {
+      try {
+        cancellation?.cancel();
+      } on Object {
+        /* All callbacks attempted. */
+      }
+    }
+  }
+
+  void _pdfLifecycleChanged() {
+    if (!mounted || _closing) return;
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_closing) setState(() {});
+      });
+    } else {
+      setState(() {});
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant Phase6Canvas oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(
+      oldWidget.runtime.pdfLifecycle,
+      widget.runtime.pdfLifecycle,
+    )) {
+      oldWidget.runtime.pdfLifecycle?.removeListener(_pdfLifecycleChanged);
+      widget.runtime.pdfLifecycle?.addListener(_pdfLifecycleChanged);
+    }
   }
 
   @override
   void initState() {
     super.initState();
-    _penFrozenPreviewLayers = ValueNotifier(const []);
+    widget.runtime.pdfLifecycle?.addListener(_pdfLifecycleChanged);
+    _penFrozenPreviewLayers = _PublicationValueNotifier(const []);
     _canvasFocus = FocusNode(debugLabel: 'Canvas keyboard boundary');
     _penPreviewOverlay = _PenPreviewController(
       frozen: _penFrozenPreviewLayers,
@@ -528,7 +714,9 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed && _inlineText != null) {
+    if (state != AppLifecycleState.resumed &&
+        _inlineText != null &&
+        _pdfOpenCancellation == null) {
       _commitInlineTextEditor();
     }
     if (state != AppLifecycleState.resumed && _router.ownership.owner != null) {
@@ -540,8 +728,18 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     }
   }
 
-  DocumentPage get _page => _coordinator.snapshot.root.pages.single;
+  DocumentPage get _page {
+    final pages = _coordinator.snapshot.root.pages;
+    final index = _pageIndex.clamp(0, pages.length - 1);
+    return pages[index];
+  }
+
   LayerId get _layerId => _page.layers.whereType<ContentLayer>().first.id;
+
+  ContentLayer? get _pdfInsertionLayer {
+    final layer = _page.layers.whereType<ContentLayer>().firstOrNull;
+    return layer != null && layer.visible && !layer.locked ? layer : null;
+  }
 
   ObjectEnvelope? get _selectedTextObject {
     if (_inlineText != null) return null;
@@ -557,6 +755,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   }
 
   void _setTool(_CanvasTool value) {
+    if (!mounted || _closing) return;
+    _ownedFitGeneration++;
     if (!_toolRegistry.definitions.containsKey(_toolId(value))) return;
     if (_inlineText != null && !_commitInlineTextEditor()) return;
     _pen?.cancel();
@@ -590,24 +790,58 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     });
   }
 
-  void _undo() {
-    if (_inlineText != null && !_commitInlineTextEditor()) return;
-    _invalidateSelectionTransformForExternalChange();
-    final result = _coordinator.undo();
-    _selection.reconcile(_coordinator.snapshot.root);
-    setState(() {
-      _status = result is Ok ? 'Undone' : 'Nothing to undo';
-    });
-  }
+  void _undo() => _traverseHistory(undoing: true);
 
-  void _redo() {
-    if (_inlineText != null && !_commitInlineTextEditor()) return;
-    _invalidateSelectionTransformForExternalChange();
-    final result = _coordinator.redo();
-    _selection.reconcile(_coordinator.snapshot.root);
-    setState(() {
-      _status = result is Ok ? 'Redone' : 'Nothing to redo';
-    });
+  void _redo() => _traverseHistory(undoing: false);
+
+  void _traverseHistory({required bool undoing}) {
+    if (!mounted || _closing) return;
+    final draft = _importDraftHistory;
+    final retainDraft =
+        draft != null &&
+        identical(draft.owner, _coordinator) &&
+        identical(draft.session, _inlineText) &&
+        _coordinator.snapshot.currentContentIdentity ==
+            (undoing ? draft.after : draft.before);
+    if (!retainDraft && _inlineText != null && !_commitInlineTextEditor())
+      return;
+    if (!mounted || _closing) return;
+    final owner = _coordinator;
+    final previousPage = _page.id;
+    var published = false;
+    void install() {
+      published = true;
+      final notifications = _beginOwnerPublication();
+      final nextIndex = owner.snapshot.root.pages.indexWhere(
+        (p) => p.id == previousPage,
+      );
+      void Function()? cancel;
+      if (nextIndex < 0) {
+        _disposeInlineTextEditor();
+        _invalidateSelectionTransformForExternalChange();
+        cancel = _installCoordinator(owner, pageIndex: _pageIndex);
+        _scheduleOwnedFit(owner);
+      } else {
+        _pageIndex = nextIndex;
+        _invalidateSelectionTransformForExternalChange();
+        _selection.reconcile(owner.snapshot.root);
+      }
+      setState(() => _status = undoing ? 'Undone' : 'Redone');
+      final deliver = _finishOwnerPublication(notifications);
+      deliver();
+      cancel?.call();
+    }
+
+    final result = undoing
+        ? owner.undo(publishCompanionState: install)
+        : owner.redo(publishCompanionState: install);
+    if (!published && mounted && !_closing && identical(owner, _coordinator)) {
+      setState(
+        () => _status = result is Ok
+            ? (undoing ? 'Undone' : 'Redone')
+            : (undoing ? 'Nothing to undo' : 'Nothing to redo'),
+      );
+    }
   }
 
   void _pointer(PointerEvent raw) {
@@ -838,7 +1072,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
                   addedObjectId != null
               ? _sceneBuilder.appendCommittedObject(
                   previous: previousCommitted,
-                  page: after.root.pages.single,
+                  page: _page,
                   viewport: _viewport,
                   previousDocumentRevision: before.revisions.document,
                   documentRevision: after.revisions.document,
@@ -846,7 +1080,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
                 )
               : null;
           if (increment is Ok<CommittedPageScene, StructuredFailure>) {
-            _committedPage = after.root.pages.single;
+            _committedPage = _page;
             _committedScene = increment.value;
             _committedDisplay = null;
             _committedDisplaySource = null;
@@ -1201,18 +1435,51 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     argb: _textArgb,
   );
 
-  bool _commitInlineTextEditor() {
+  bool _commitInlineTextEditor({
+    bool Function()? stillCurrent,
+    void Function()? publishReplacement,
+  }) {
     final session = _inlineText;
-    if (session == null) return true;
-    final result = _currentTextDraft;
-    final existing = session.existing;
-    if (existing == null && result.text.isEmpty) {
-      _closeInlineTextEditor(
-        status: 'Text creation cancelled',
-        rebuild: mounted,
-      );
+    if (session == null) {
+      if (stillCurrent != null && !stillCurrent()) return false;
+      publishReplacement?.call();
       return true;
     }
+    final result = _currentTextDraft;
+    final existing = session.existing;
+    void finish(_InlineTextCommitOutcome outcome) {
+      if (publishReplacement != null) {
+        publishReplacement();
+        return;
+      }
+      if (outcome == _InlineTextCommitOutcome.committed &&
+          publishReplacement == null) {
+        _selection.reconcile(_coordinator.snapshot.root);
+      }
+      _closeInlineTextEditor(
+        status: outcome == _InlineTextCommitOutcome.noChange
+            ? 'Text unchanged'
+            : existing == null
+            ? 'Text created'
+            : 'Text updated',
+        rebuild: publishReplacement == null && mounted,
+      );
+      publishReplacement?.call();
+    }
+
+    if (existing == null && result.text.isEmpty) {
+      if (stillCurrent != null && !stillCurrent()) return false;
+      if (publishReplacement != null) {
+        publishReplacement();
+      } else {
+        _closeInlineTextEditor(
+          status: 'Text creation cancelled',
+          rebuild: mounted,
+        );
+      }
+      return true;
+    }
+    var publishedTogether = false;
     final outcome = _commitTextDialog(
       session.pageBounds,
       result,
@@ -1220,7 +1487,17 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       existing: existing,
       prior: session.prior,
       baseObjectRevision: session.baseObjectRevision,
+      stillCurrent: stillCurrent,
+      publishCompanionState: publishReplacement == null
+          ? null
+          : () {
+              publishedTogether = true;
+              finish(_InlineTextCommitOutcome.committed);
+            },
     );
+    // Observers may have saved, replaced or disposed the Canvas. All owner
+    // publication was completed before delivery; this tail must touch no state.
+    if (publishedTogether) return true;
     if (outcome == _InlineTextCommitOutcome.rejected) {
       if (mounted) {
         setState(() => _status = 'Text rejected; editor remains open');
@@ -1228,19 +1505,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       }
       return false;
     }
-    if (outcome == _InlineTextCommitOutcome.committed) {
-      _selection.reconcile(_coordinator.snapshot.root);
-    }
-    _closeInlineTextEditor(
-      status: outcome == _InlineTextCommitOutcome.noChange
-          ? 'Text unchanged'
-          : outcome == _InlineTextCommitOutcome.committed
-          ? existing == null
-                ? 'Text created'
-                : 'Text updated'
-          : 'Text rejected',
-      rebuild: mounted,
-    );
+    finish(outcome);
     return true;
   }
 
@@ -1317,7 +1582,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     }
     _penPreviewReleaseScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || _closing) return;
       _penPreviewReleaseScheduled = false;
       if (!_penPreviewAwaitingCommittedPaint) return;
       setState(() {
@@ -1362,10 +1627,18 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     if (session != null && controller != null) {
       controller.removeListener(session.removeControllerListener);
     }
-    controller?.dispose();
-    _inlineTextFocus?.removeListener(_editableFocusChanged);
-    _inlineTextFocus?.dispose();
+    final focus = _inlineTextFocus;
+    focus?.removeListener(_editableFocusChanged);
+    final notifications = _ownerNotifications;
+    if (notifications != null) {
+      if (controller != null) notifications.disposals.add(controller.dispose);
+      if (focus != null) notifications.disposals.add(focus.dispose);
+    } else {
+      controller?.dispose();
+      focus?.dispose();
+    }
     _inlineText = null;
+    _importDraftHistory = null;
     _inlineTextController = null;
     _inlineTextFocus = null;
     _inlineResizePointer = null;
@@ -1396,6 +1669,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     ObjectEnvelope? existing,
     TextPayload? prior,
     Revision? baseObjectRevision,
+    bool Function()? stillCurrent,
+    void Function()? publishCompanionState,
   }) {
     if (existing != null && !_isCurrentTextSession(session)) {
       return _InlineTextCommitOutcome.rejected;
@@ -1484,7 +1759,9 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     if (existing != null && prior != null) {
       if (payload.encode() == prior.encode() &&
           session.currentTransform == existing.transform) {
-        return _InlineTextCommitOutcome.noChange;
+        return stillCurrent == null || stillCurrent()
+            ? _InlineTextCommitOutcome.noChange
+            : _InlineTextCommitOutcome.rejected;
       }
       return baseObjectRevision != null &&
               _publishTextReplacement(
@@ -1493,6 +1770,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
                 prior,
                 payload,
                 baseObjectRevision,
+                stillCurrent: stillCurrent,
+                publishCompanionState: publishCompanionState,
               )
           ? _InlineTextCommitOutcome.committed
           : _InlineTextCommitOutcome.rejected;
@@ -1504,6 +1783,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
               payload: payload.encode(),
               transform: transform,
               description: 'Create text',
+              stillCurrent: stillCurrent,
+              publishCompanionState: publishCompanionState,
             )
         ? _InlineTextCommitOutcome.committed
         : _InlineTextCommitOutcome.rejected;
@@ -1548,8 +1829,10 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     ObjectEnvelope source,
     TextPayload before,
     TextPayload after,
-    Revision baseObjectRevision,
-  ) {
+    Revision baseObjectRevision, {
+    bool Function()? stillCurrent,
+    void Function()? publishCompanionState,
+  }) {
     try {
       if (!_isCurrentTextSession(session)) return false;
       final semantics =
@@ -1637,8 +1920,11 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
             : null,
       );
       return request is Ok<AtomicObjectReplacementRequest, StructuredFailure> &&
-          _coordinator.execute(request.value)
-              is Ok<CommandCommit, CommandFailure>;
+          _coordinator.execute(
+            request.value,
+            stillCurrent: stillCurrent,
+            publishCompanionState: publishCompanionState,
+          ) is Ok<CommandCommit, CommandFailure>;
     } on Object {
       return false;
     }
@@ -1650,6 +1936,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     required PreservedData payload,
     required AffineTransform2D transform,
     required String description,
+    bool Function()? stillCurrent,
+    void Function()? publishCompanionState,
   }) {
     try {
       final objectUuid = _uuid.generateV4();
@@ -1659,9 +1947,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
         return false;
       }
       if (objectUuid.value == correlationUuid.value) return false;
-      final envelopeVersion = SchemaVersion.create(
-        1,
-      ).fold<SchemaVersion?>(onOk: (value) => value, onErr: (_) => null);
+      final envelopeVersion = SchemaVersion.create(1)
+          .fold<SchemaVersion?>(onOk: (value) => value, onErr: (_) => null);
       if (envelopeVersion == null) return false;
       final object = ObjectEnvelope.create(
         id: ObjectId.fromUuid(objectUuid.value),
@@ -1698,7 +1985,11 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       );
       return request
               is Ok<AtomicObjectCollectionEditRequest, StructuredFailure> &&
-          _coordinator.execute(request.value) is Ok;
+          _coordinator.execute(
+            request.value,
+            stillCurrent: stillCurrent,
+            publishCompanionState: publishCompanionState,
+          ) is Ok;
     } on Object {
       return false;
     }
@@ -2521,9 +2812,9 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
         );
         if (request
             is Ok<AtomicWholeObjectTransformRequest, StructuredFailure>) {
-          committed =
-              _coordinator.execute(request.value)
-                  is Ok<CommandCommit, CommandFailure>;
+          committed = _coordinator.execute(
+            request.value,
+          ) is Ok<CommandCommit, CommandFailure>;
           if (committed) _selectionTransformPublications += 1;
           if (!committed) failureStageCode = 6;
         } else {
@@ -2764,6 +3055,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
   }
 
   void _zoom(double factor, {ViewPoint? pivot}) {
+    _ownedFitGeneration++;
     if (!factor.isFinite || factor <= 0) return;
     _zoomTo(
       (_viewport.zoom * factor).clamp(
@@ -3542,7 +3834,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     _navigationFrameScheduled = true;
     SchedulerBinding.instance.scheduleFrameCallback((_) {
       _navigationFrameScheduled = false;
-      if (!mounted) return;
+      if (!mounted || _closing) return;
       final operations = List<_PendingNavigationOperation>.of(
         _pendingNavigationOperations,
       );
@@ -4000,7 +4292,477 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
         revision: value.revision,
       ).fold<ViewportSnapshot?>(onOk: (result) => result, onErr: (_) => null);
 
+  Future<void> _importPdfPages() async {
+    final workflow = widget.runtime.localPdfOpenWorkflow;
+    if (!mounted ||
+        _closing ||
+        workflow == null ||
+        _pdfOpenCancellation != null ||
+        _coordinator.snapshot.root is! NotebookDocument)
+      return;
+    final owner = _coordinator;
+    final destination = owner.snapshot;
+    final afterPageId = _page.id;
+    final generation = ++_pdfOpenGeneration;
+    final cancellation = CancellationController();
+    _pdfOpenCancellation = cancellation;
+    _pdfImportActive = true;
+    _pdfObjectInsertionActive = false;
+    bool current() =>
+        mounted &&
+        !_closing &&
+        generation == _pdfOpenGeneration &&
+        !cancellation.token.isCancelled &&
+        identical(owner, _coordinator) &&
+        _page.id == afterPageId &&
+        owner.snapshot.currentContentIdentity ==
+            destination.currentContentIdentity;
+    var published = false;
+    var status = 'PDF import cancelled or destination changed';
+    setState(() => _status = 'Preparing PDF pages…');
+    try {
+      final opened = await workflow.open(
+        cancellationToken: cancellation.token,
+        stillCurrent: current,
+      );
+      if (!current()) return;
+      if (opened is! LocalPdfOpenSuccess) {
+        status = opened is LocalPdfOpenCancelled ? 'PDF import cancelled' : 'PDF import unavailable: source rejected, unsupported, or over limits';
+        return;
+      }
+      final selection = await _choosePdfImportPages(
+        opened.root.pages.length,
+        cancellation.token,
+      );
+      if (selection == null || !current()) return;
+      final prepared = await prepareNotebookPdfImport(
+        opened: opened,
+        destination: destination,
+        afterPageId: afterPageId,
+        selection: selection,
+        uuidGenerator: _uuid,
+        cancellationToken: cancellation.token,
+      );
+      if (!current()) return;
+      if (prepared is! Ok<ImportPdfPagesRequest, StructuredFailure>) {
+        status = 'PDF import rejected: invalid selection or preparation limits';
+        return;
+      }
+      final result = owner.execute(
+        prepared.value,
+        stillCurrent: current,
+        publishCompanionState: () {
+          // Keep the destination, editor, Selection and saved checkpoint intact.
+          // Complete UI ownership before synchronous command observers run.
+          published = true;
+          final session = _inlineText;
+          _importDraftHistory = session == null
+              ? null
+              : (
+                  owner: owner,
+                  session: session,
+                  before: destination.currentContentIdentity,
+                  after: owner.snapshot.currentContentIdentity,
+                );
+          _pdfOpenCancellation = null;
+          _pdfImportActive = false;
+          setState(
+            () => _status =
+                'Imported ${prepared.value.pages.length} PDF pages after this page',
+          );
+        },
+      );
+      if (result is Err<CommandCommit, CommandFailure>) {
+        status =
+            'PDF import rejected: destination, identity, or history capacity';
+      }
+    } on Object {
+      status = 'PDF import could not be completed';
+    } finally {
+      // A successful observer may have replaced or disposed this Canvas.
+      if (!published &&
+          mounted &&
+          !_closing &&
+          identical(_pdfOpenCancellation, cancellation)) {
+        _pdfOpenCancellation = null;
+        _pdfImportActive = false;
+        setState(() => _status = status);
+      }
+    }
+  }
+
+  Future<void> _insertPdfObjects() async {
+    final workflow = widget.runtime.localPdfOpenWorkflow;
+    if (!mounted ||
+        _closing ||
+        workflow == null ||
+        _pdfOpenCancellation != null ||
+        _coordinator.snapshot.root is! NotebookDocument)
+      return;
+    final owner = _coordinator;
+    final destination = owner.snapshot;
+    final afterPageId = _page.id;
+    final layer = _pdfInsertionLayer;
+    if (layer == null) return;
+    final layerId = layer.id;
+    final generation = ++_pdfOpenGeneration;
+    final cancellation = CancellationController();
+    _pdfOpenCancellation = cancellation;
+    _pdfImportActive = true;
+    _pdfObjectInsertionActive = true;
+    bool current() =>
+        mounted &&
+        !_closing &&
+        generation == _pdfOpenGeneration &&
+        !cancellation.token.isCancelled &&
+        identical(owner, _coordinator) &&
+        _page.id == afterPageId &&
+        owner.snapshot.currentContentIdentity ==
+            destination.currentContentIdentity;
+    var published = false;
+    var status = 'PDF insertion cancelled or destination changed';
+    setState(() => _status = 'Preparing PDF Objects…');
+    try {
+      final opened = await workflow.open(
+        cancellationToken: cancellation.token,
+        stillCurrent: current,
+      );
+      if (!current()) return;
+      if (opened is! LocalPdfOpenSuccess) {
+        status = opened is LocalPdfOpenCancelled ? 'PDF insertion cancelled' : 'PDF insertion unavailable: source rejected, unsupported, or over limits';
+        return;
+      }
+      final selection = await _choosePdfImportPages(
+        opened.root.pages.length,
+        cancellation.token,
+        objects: true,
+      );
+      if (selection == null || !current()) return;
+      final prepared = await preparePdfObjectInsertion(
+        opened: opened,
+        destination: destination,
+        pageId: afterPageId,
+        layerId: layerId,
+        modelLimits: widget.runtime.pdfModelLimits,
+        maximumOperations: widget.runtime.maximumCommandOperations,
+        selection: selection,
+        uuidGenerator: _uuid,
+        cancellationToken: cancellation.token,
+      );
+      if (!current()) return;
+      if (prepared
+          is! Ok<AtomicObjectCollectionEditRequest, StructuredFailure>) {
+        status =
+            'PDF insertion rejected: invalid selection or preparation limits';
+        return;
+      }
+      final result = owner.execute(
+        prepared.value,
+        stillCurrent: current,
+        publishCompanionState: () {
+          // Keep the destination, editor, Selection and saved checkpoint intact.
+          // Complete UI ownership before synchronous command observers run.
+          published = true;
+          final session = _inlineText;
+          _importDraftHistory = session == null
+              ? null
+              : (
+                  owner: owner,
+                  session: session,
+                  before: destination.currentContentIdentity,
+                  after: owner.snapshot.currentContentIdentity,
+                );
+          _pdfOpenCancellation = null;
+          _pdfImportActive = false;
+          setState(
+            () => _status =
+                'Inserted ${prepared.value.additions.length} PDF page Objects',
+          );
+        },
+      );
+      if (result is Err<CommandCommit, CommandFailure>) {
+        status = 'PDF insertion rejected: destination, identity, or history capacity';
+      }
+    } on Object {
+      status = 'PDF insertion could not be completed';
+    } finally {
+      // A successful observer may have replaced or disposed this Canvas.
+      if (!published &&
+          mounted &&
+          !_closing &&
+          identical(_pdfOpenCancellation, cancellation)) {
+        _pdfOpenCancellation = null;
+        _pdfImportActive = false;
+        setState(() => _status = status);
+      }
+    }
+  }
+
+  Future<String?> _choosePdfImportPages(
+    int pageCount,
+    CancellationToken token, {
+    bool objects = false,
+  }) async {
+    final controller = TextEditingController(text: 'all');
+    final navigator = Navigator.of(context);
+    String? error;
+    final route = DialogRoute<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: Text(objects ? 'Insert PDF page' : 'Import PDF pages'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                objects
+                    ? '$pageCount source pages. Insert movable Objects on this page.'
+                    : '$pageCount source pages. Insert after the current notebook page.',
+              ),
+              TextField(
+                key: Key(objects ? 'pdf-object-pages' : 'pdf-import-pages'),
+                controller: controller,
+                maxLength: 8192,
+                decoration: InputDecoration(
+                  labelText: 'Pages',
+                  hintText: 'all or 1, 3-5',
+                  errorText: error,
+                ),
+              ),
+              const Text(
+                'Save/Reopen is in memory. PDFs that open may exceed the separate 10 MB storage limits.',
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: navigator.pop, child: const Text('Cancel')),
+            TextButton(
+              key: Key(
+                objects ? 'confirm-pdf-insertion' : 'confirm-pdf-import',
+              ),
+              onPressed: () {
+                if (parsePdfPageSelection(controller.text, pageCount)
+                    is! Ok<List<int>, StructuredFailure>) {
+                  update(
+                    () => error =
+                        'Use all or page numbers/ranges from 1 to $pageCount.',
+                  );
+                } else {
+                  navigator.pop(controller.text);
+                }
+              },
+              child: Text(objects ? 'Insert' : 'Import'),
+            ),
+          ],
+        ),
+      ),
+    );
+    void cancel(String? _) {
+      if (route.isActive) navigator.removeRoute(route);
+    }
+
+    if (token.isCancelled) {
+      controller.dispose();
+      return null;
+    }
+    token.addListener(cancel);
+    try {
+      final selection = await navigator.push(route);
+      // Finish the route's owned animation/overlay before observers can replace
+      // or synchronously dispose the document UI during command publication.
+      await route.completed;
+      return selection;
+    } finally {
+      token.removeListener(cancel);
+      controller.dispose();
+    }
+  }
+
+  Future<void> _openPdf() async {
+    final workflow = widget.runtime.localPdfOpenWorkflow;
+    if (!mounted ||
+        _closing ||
+        workflow == null ||
+        _pdfOpenCancellation != null)
+      return;
+    final generation = ++_pdfOpenGeneration;
+    final startingCoordinator = _coordinator;
+    final startingIdentity = _coordinator.snapshot.currentContentIdentity;
+    final cancellation = CancellationController();
+    _pdfOpenCancellation = cancellation;
+    setState(() => _status = 'Opening PDF…');
+    final outcome = await workflow.open(
+      cancellationToken: cancellation.token,
+      stillCurrent: () =>
+          mounted &&
+          generation == _pdfOpenGeneration &&
+          identical(_coordinator, startingCoordinator) &&
+          _coordinator.snapshot.currentContentIdentity == startingIdentity,
+    );
+    if (!mounted || generation != _pdfOpenGeneration) return;
+    if (outcome is LocalPdfOpenCancelled) {
+      _pdfOpenCancellation = null;
+      setState(() => _status = 'PDF open cancelled');
+      return;
+    }
+    if (outcome is LocalPdfOpenFailure) {
+      _pdfOpenCancellation = null;
+      setState(
+        () => _status = switch (outcome.reason) {
+          LocalPdfOpenFailureReason.passwordRequired => 'This PDF requires a password. Password-protected PDFs are not supported in this test build.',
+          LocalPdfOpenFailureReason.unsupportedEncryption ||
+          LocalPdfOpenFailureReason.unsupported =>
+            'This PDF uses features not supported in this test build.',
+          LocalPdfOpenFailureReason.limitExceeded =>
+            'This PDF exceeds the supported size or processing limits.',
+          LocalPdfOpenFailureReason.quarantined =>
+            'Not an approved development fixture; PDF remains quarantined',
+          LocalPdfOpenFailureReason.busy =>
+            'PDF processing is busy. Try opening again when it finishes.',
+          LocalPdfOpenFailureReason.backendUnavailable => 'PDF opening is unavailable because Linux isolation could not be started or verified.',
+          LocalPdfOpenFailureReason.corrupt ||
+          LocalPdfOpenFailureReason.failed => 'This PDF could not be opened.',
+          LocalPdfOpenFailureReason.unavailable =>
+            'The selected PDF is unavailable',
+          LocalPdfOpenFailureReason.invalidDocument =>
+            'This PDF could not be prepared',
+        },
+      );
+      return;
+    }
+    // Prepare the replacement before touching the old document or live draft.
+    final opened = outcome as LocalPdfOpenSuccess;
+    final coordinator = widget.runtime.coordinatorFor(
+      root: opened.root,
+      resources: <DocumentResourceSnapshot>[opened.resource],
+    );
+    bool stillCurrent() =>
+        mounted &&
+        generation == _pdfOpenGeneration &&
+        !cancellation.token.isCancelled &&
+        identical(_coordinator, startingCoordinator) &&
+        _coordinator.snapshot.currentContentIdentity == startingIdentity;
+    if (coordinator is! Ok<DocumentMutationCoordinator, CommandFailure> ||
+        !stillCurrent()) {
+      _pdfOpenCancellation = null;
+      setState(() => _status = 'This PDF could not be prepared');
+      return;
+    }
+    // The synchronous command boundary installs all owner state before it
+    // delivers any old-document observers. No obsolete tail runs afterward.
+    void installPrepared() {
+      final notifications = _beginOwnerPublication();
+      _disposeInlineTextEditor();
+      _invalidateSelectionTransformForExternalChange();
+      late void Function() notifyCancellation;
+      setState(() {
+        notifyCancellation = _installCoordinator(
+          coordinator.value,
+          pageIndex: 0,
+        );
+        _savedBytes = null;
+        _savedRoot = null;
+        _reopenedMaterializedRoot = null;
+        _status = 'Opened PDF (${opened.root.pages.length} pages)';
+      });
+      _scheduleOwnedFit(coordinator.value);
+      final deliver = _finishOwnerPublication(notifications);
+      deliver();
+      notifyCancellation();
+    }
+
+    if (!_commitInlineTextEditor(
+      stillCurrent: stillCurrent,
+      publishReplacement: installPrepared,
+    )) {
+      _pdfOpenCancellation = null;
+    }
+  }
+
+  void Function() _installCoordinator(
+    DocumentMutationCoordinator coordinator, {
+    required int pageIndex,
+  }) {
+    // Capture at most two cancellation deliveries. Callers complete their
+    // saved/status fields before delivering callbacks against the new owner.
+    final oldOpen = _pdfOpenCancellation;
+    final oldRender = _pdfRenderCancellation;
+    _pdfOpenGeneration += 1;
+    _pdfOpenCancellation = null;
+    _pdfImportActive = false;
+    _pdfRenderCancellation = null;
+    _pdfRenderKey = null;
+    _ownerNotifications!.disposals.addAll(
+      _detachPdfImages().map((image) => image.dispose),
+    );
+    _pdfPlaceholder = false;
+    _coordinator = coordinator;
+    _pageIndex = pageIndex.clamp(0, coordinator.snapshot.root.pages.length - 1);
+    _selection = SelectionController(
+      objectRegistry: _registry,
+      coalescingBoundarySink: _coordinator,
+      maximumTargets: widget.runtime.maximumSelectionTargets,
+      handwritingLimits: _limits,
+      strokeGeometryResolver: _geometry,
+      handwritingGeometryCache: widget.runtime.geometryCache,
+    );
+    _pen = null;
+    _clearPenPreview();
+    _router.cancel();
+    _clearEraserTransient();
+    _selectionDown = null;
+    _selectionCurrent = null;
+    _committedScene = null;
+    _committedPage = null;
+    _committedPaintEvidence = null;
+    _displayCommittedPaintChunks = const [];
+    _displayCommittedPaintSource = null;
+    _committedDisplaySource = null;
+    _committedDisplay = null;
+    return () {
+      for (final cancellation in [oldOpen, oldRender]) {
+        try {
+          cancellation?.cancel();
+        } on Object {
+          // Cancellation already won and all listeners were attempted. A
+          // listener error must not prevent the other token or command event.
+        }
+      }
+    };
+  }
+
+  void _switchPage(int index) {
+    final pages = _coordinator.snapshot.root.pages;
+    if (index < 0 || index >= pages.length || index == _pageIndex) return;
+    if (_inlineText != null && !_commitInlineTextEditor()) return;
+    _invalidateSelectionTransformForExternalChange();
+    setState(() {
+      _pageIndex = index;
+      _selection.discard();
+      _pdfRenderCancellation?.cancel();
+      _pdfRenderCancellation = null;
+      _pdfRenderKey = null;
+      for (final image in _detachPdfImages()) {
+        _disposeNativeResource(image.dispose);
+      }
+      _pdfPlaceholder = false;
+      _committedScene = null;
+      _committedPage = null;
+      _committedPaintEvidence = null;
+      _displayCommittedPaintChunks = const [];
+      _displayCommittedPaintSource = null;
+      _committedDisplaySource = null;
+      _committedDisplay = null;
+      _status = 'Page ${index + 1} of ${pages.length}';
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _fitPage();
+    });
+  }
+
   void _save() {
+    if (!mounted || _closing) return;
+    _ownedFitGeneration++;
     if (_inlineText != null && !_commitInlineTextEditor()) return;
     final capture = _coordinator.captureForSave();
     final snapshot = AlnotePackageSnapshot.create(
@@ -4012,9 +4774,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       setState(() => _status = 'Save failed');
       return;
     }
-    final bytes = AlnotePackageCodec(
-      objectRegistry: _registry,
-    ).encode(snapshot.value, limits: widget.runtime.storageLimits);
+    final bytes = AlnotePackageCodec(objectRegistry: _registry)
+        .encode(snapshot.value, limits: widget.runtime.storageLimits);
     setState(() {
       if (bytes is Ok<List<int>, StructuredFailure>) {
         final acknowledged = _coordinator.acknowledgeSave(capture);
@@ -4034,19 +4795,20 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     });
   }
 
-  void _reopen() {
-    if (_inlineText != null) _cancelInlineTextEditor();
-    _invalidateSelectionTransformForExternalChange();
-    final bytes = _savedBytes;
-    final savedRoot = _savedRoot;
-    if (bytes == null || savedRoot == null) {
-      setState(() => _status = 'No in-memory save exists');
-      return;
-    }
+  void _reopen({required List<int> bytes, required DocumentRoot savedRoot}) {
+    if (!mounted || _closing) return;
+    _ownedFitGeneration++;
+    final owner = _coordinator;
+    final generation = _pdfOpenGeneration;
     final outcome = widget.runtime.reopenGateway.reopen(
       bytes: bytes,
       savedRoot: savedRoot,
     );
+    if (!mounted ||
+        _closing ||
+        !identical(owner, _coordinator) ||
+        generation != _pdfOpenGeneration)
+      return;
     if (outcome is Phase6ReopenFailure) {
       setState(
         () => _status = switch (outcome.stage) {
@@ -4060,35 +4822,33 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
       return;
     }
     final reopened = outcome as Phase6ReopenSuccess;
+    final notifications = _beginOwnerPublication();
+    if (_inlineText != null) _cancelInlineTextEditor();
+    _invalidateSelectionTransformForExternalChange();
+    late void Function() notifyCancellation;
     setState(() {
-      _coordinator = reopened.coordinator;
-      _selection = SelectionController(
-        objectRegistry: _registry,
-        coalescingBoundarySink: _coordinator,
-        maximumTargets: widget.runtime.maximumSelectionTargets,
-        handwritingLimits: _limits,
-        strokeGeometryResolver: _geometry,
-        handwritingGeometryCache: widget.runtime.geometryCache,
+      notifyCancellation = _installCoordinator(
+        reopened.coordinator,
+        pageIndex: 0,
       );
-      _pen = null;
-      _clearPenPreview();
-      _router.cancel();
-      _clearEraserTransient();
-      _selectionDown = null;
-      _selectionCurrent = null;
-      _committedScene = null;
-      _committedPage = null;
+      _savedBytes = bytes;
+      _savedRoot = savedRoot;
       _reopenedMaterializedRoot = reopened.root;
       _status = 'Reopened in-memory save';
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _fitPage();
-    });
+    _scheduleOwnedFit(reopened.coordinator);
+    final deliver = _finishOwnerPublication(notifications);
+    deliver();
+    notifyCancellation();
   }
 
   @override
   Widget build(BuildContext context) {
     if (_pen != null) _penParentBuilds += 1;
+    // A retained action reopens the immutable save it represented, even when
+    // called synchronously by an observer after another document was installed.
+    final reopenBytes = _savedBytes;
+    final reopenRoot = _savedRoot;
     final gestureIdle = _router.ownership.owner == null;
     final selectedText = _selectedTextObject;
     final selectionCapabilities = _currentSelectionCapabilities;
@@ -4376,15 +5136,95 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
           label: const Text('Redo'),
         ),
       ),
+      Tooltip(
+        message: widget.runtime.localPdfOpenWorkflow == null
+            ? (platformLocalPdfOpeningAvailable
+                  ? 'PDF parsing is quarantined in this build'
+                  : platformLocalPdfOpeningStatus)
+            : widget.runtime.pdfAdmission.ordinaryInputEnabled
+            ? 'Open an unencrypted PDF in the private Linux test build'
+            : 'Only reviewed development fixtures are admitted; arbitrary PDFs stay quarantined',
+        child: TextButton.icon(
+          key: const Key('open-pdf'),
+          onPressed:
+              widget.runtime.localPdfOpenWorkflow != null &&
+                  _pdfOpenCancellation == null &&
+                  widget.runtime.pdfLifecycle?.availability !=
+                      PdfBackendAvailability.cleanupPending
+              ? _openPdf
+              : null,
+          icon: const Icon(Icons.picture_as_pdf),
+          label: Text(
+            widget.runtime.pdfAdmission.ordinaryInputEnabled
+                ? 'Open PDF'
+                : 'Fixtures',
+          ),
+        ),
+      ),
       TextButton.icon(
         onPressed: _save,
         icon: const Icon(Icons.save),
         label: const Text('Save in memory'),
       ),
       TextButton.icon(
-        onPressed: _savedBytes == null ? null : _reopen,
+        onPressed: reopenBytes == null || reopenRoot == null
+            ? null
+            : () => _reopen(bytes: reopenBytes, savedRoot: reopenRoot),
         icon: const Icon(Icons.folder_open),
         label: const Text('Reopen saved'),
+      ),
+      if (_coordinator.snapshot.root is NotebookDocument)
+        TextButton.icon(
+          key: const Key('import-pdf-pages'),
+          onPressed:
+              widget.runtime.localPdfOpenWorkflow != null &&
+                  _pdfOpenCancellation == null &&
+                  widget.runtime.pdfLifecycle?.availability !=
+                      PdfBackendAvailability.cleanupPending
+              ? _importPdfPages
+              : null,
+          icon: const Icon(Icons.playlist_add),
+          label: const Text('Import PDF pages'),
+        ),
+      if (_coordinator.snapshot.root is NotebookDocument)
+        TextButton.icon(
+          key: const Key('insert-pdf-page'),
+          onPressed:
+              widget.runtime.localPdfOpenWorkflow != null &&
+                  _pdfInsertionLayer != null &&
+                  _pdfOpenCancellation == null &&
+                  widget.runtime.pdfLifecycle?.availability !=
+                      PdfBackendAvailability.cleanupPending
+              ? _insertPdfObjects
+              : null,
+          icon: const Icon(Icons.picture_as_pdf),
+          label: const Text('Insert PDF page'),
+        ),
+      if (_pdfImportActive)
+        TextButton(
+          key: const Key('cancel-pdf-import'),
+          onPressed: () => _pdfOpenCancellation?.cancel(),
+          child: Text(
+            _pdfObjectInsertionActive ? 'Cancel insertion' : 'Cancel import',
+          ),
+        ),
+      TextButton.icon(
+        key: const Key('previous-page'),
+        onPressed: _pageIndex > 0 ? () => _switchPage(_pageIndex - 1) : null,
+        icon: const Icon(Icons.navigate_before),
+        label: const Text('Previous'),
+      ),
+      Text(
+        'Page ${_pageIndex + 1} of ${_coordinator.snapshot.root.pages.length}',
+        key: const Key('page-indicator'),
+      ),
+      TextButton.icon(
+        key: const Key('next-page'),
+        onPressed: _pageIndex + 1 < _coordinator.snapshot.root.pages.length
+            ? () => _switchPage(_pageIndex + 1)
+            : null,
+        icon: const Icon(Icons.navigate_next),
+        label: const Text('Next'),
       ),
       Tooltip(
         message: 'Zoom out',
@@ -4486,16 +5326,50 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     final primaryToolControls = controls
         .take(_CanvasTool.values.length)
         .toList(growable: false);
-    final primaryDocumentControls = primaryTail.take(4).toList(growable: false);
+    final documentControlCount =
+        5 +
+        (_coordinator.snapshot.root is NotebookDocument ? 2 : 0) +
+        (_pdfImportActive ? 1 : 0);
+    final primaryDocumentControls = primaryTail
+        .take(documentControlCount)
+        .toList(growable: false);
     final primaryNavigationControls = primaryTail
-        .skip(4)
+        .skip(documentControlCount)
         .toList(growable: false);
     final contextualControls = controls
         .skip(_CanvasTool.values.length)
         .take(contextualCount)
         .toList(growable: false);
     final scaffold = Scaffold(
-      appBar: AppBar(title: const Text('AL NOTE')),
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('AL NOTE'),
+            Text(
+              widget.runtime.pdfLifecycle?.availability ==
+                      PdfBackendAvailability.cleanupPending
+                  ? 'PDF processing is unavailable while the previous worker is being stopped.'
+                  : widget.runtime.localPdfOpenWorkflow != null
+                  ? widget.runtime.pdfAdmission.ordinaryInputEnabled
+                        ? 'Private Linux PDF test · unencrypted PDFs within limits'
+                        : 'Development PDF fixtures only · other files stay quarantined'
+                  : platformLocalPdfOpeningAvailable
+                  ? 'PDF parsing quarantined in this build'
+                  : 'PDF opening unavailable · bounded platform reader required',
+              key: const Key('pdf-admission-status'),
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+            if (_pdfPlaceholder)
+              Text(
+                'This page could not be rendered.',
+                key: const Key('pdf-page-failure'),
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+          ],
+        ),
+      ),
       body: Column(
         children: [
           Material(
@@ -4591,6 +5465,7 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
                     ? null
                     : _committedPaintChunksFor(committed, committedExclusions);
                 _scheduleImageRefresh(committedDisplay);
+                _schedulePdfRefresh();
                 final selectionFrame = _inlineText != null
                     ? null
                     : transformEvidence?.selectionFrame ??
@@ -4702,6 +5577,18 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
                                           ),
                                           painter: _CanvasPainter(
                                             snapshot: committedDisplay,
+                                            pdfPageImage: _pdfPageImage,
+                                            pdfSource: _page.layers
+                                                .whereType<PdfSourceLayer>()
+                                                .firstOrNull,
+                                            pdfPlaceholder:
+                                                _pdfPlaceholder &&
+                                                _page.layers
+                                                    .whereType<PdfSourceLayer>()
+                                                    .isNotEmpty,
+                                            pdfImages: Map.unmodifiable(
+                                              _pdfObjectImages,
+                                            ),
                                             decodedImages: Map.unmodifiable(
                                               _decodedImages,
                                             ),
@@ -4739,6 +5626,9 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
                                             child: CustomPaint(
                                               painter: _CommittedChunkPainter(
                                                 chunk: chunk,
+                                                pdfImages: Map.unmodifiable(
+                                                  _pdfObjectImages,
+                                                ),
                                                 decodedImages: Map.unmodifiable(
                                                   _decodedImages,
                                                 ),
@@ -4853,6 +5743,12 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
                                           ),
                                           painter: _CanvasPainter(
                                             snapshot: overlays,
+                                            pdfPageImage: null,
+                                            pdfSource: null,
+                                            pdfPlaceholder: false,
+                                            pdfImages: Map.unmodifiable(
+                                              _pdfObjectImages,
+                                            ),
                                             decodedImages: Map.unmodifiable(
                                               _decodedImages,
                                             ),
@@ -5361,7 +6257,12 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     for (final primitive in primitives) {
-      _paintPrimitive(canvas, primitive, decodedImages: _decodedImages);
+      _paintPrimitive(
+        canvas,
+        primitive,
+        decodedImages: _decodedImages,
+        pdfImages: _pdfObjectImages,
+      );
     }
     return recorder.endRecording();
   }
@@ -5589,6 +6490,16 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
           payload: primitive.payload,
           localToViewCoefficients: coefficients,
         ).fold<ScenePrimitive?>(onOk: (value) => value, onErr: (_) => null);
+      case PdfPagePrimitive():
+        final coefficients = mapCoefficients(primitive.localToViewCoefficients);
+        if (coefficients == null) return null;
+        return PdfPagePrimitive.create(
+          plane: RenderPlane.toolPreview,
+          bounds: mappedBounds,
+          opacity: primitive.opacity,
+          payload: primitive.payload,
+          localToViewCoefficients: coefficients,
+        ).fold<ScenePrimitive?>(onOk: (value) => value, onErr: (_) => null);
       case TextBoxPrimitive():
         final coefficients = mapCoefficients(primitive.localToViewCoefficients);
         if (coefficients == null) return null;
@@ -5809,9 +6720,8 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
           onErr: (_) => null,
         );
     _penGeometryResolutions += 1;
-    final color = RenderColor.create(
-      preview.style.argb,
-    ).fold<RenderColor?>(onOk: (value) => value, onErr: (_) => null);
+    final color = RenderColor.create(preview.style.argb)
+        .fold<RenderColor?>(onOk: (value) => value, onErr: (_) => null);
     if (geometry == null || color == null) {
       return false;
     }
@@ -5942,12 +6852,263 @@ final class _Phase6CanvasState extends State<Phase6Canvas>
     return recorder.endRecording();
   }
 
+  void _schedulePdfRefresh() {
+    if (_pdfRenderScheduled) return;
+    _pdfRenderScheduled = true;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _pdfRenderScheduled = false;
+      if (!mounted || _closing) return;
+      unawaited(_refreshPdfPage());
+    });
+  }
+
+  Future<void> _refreshPdfPage() async {
+    final snapshot = _coordinator.snapshot;
+    if (identical(_pdfInterestPage, _page) &&
+        identical(_pdfInterestOwner, _coordinator) &&
+        identical(_pdfInterestRuntime, widget.runtime) &&
+        _pdfInterestResourceRevision == snapshot.revisions.resourceCatalog)
+      return;
+    _pdfInterestPage = _page;
+    _pdfInterestOwner = _coordinator;
+    _pdfInterestRuntime = widget.runtime;
+    _pdfInterestResourceRevision = snapshot.revisions.resourceCatalog;
+    final limits = widget.runtime.pdfProcessingLimits;
+    final source = _page.layers.whereType<PdfSourceLayer>().firstOrNull;
+    final references = <PdfPageReference>{if (source != null) source.reference};
+    // Persistent registry-bounded Objects on the current Page are the latest
+    // interest set, not a queue of per-build/per-gesture requests.
+    if (limits != null) {
+      for (final layer in _page.layers) {
+        if (layer is! ContentLayer || !layer.visible || layer.opacity == 0)
+          continue;
+        for (final object in layer.objects) {
+          if (!object.visible ||
+              object.typeKey != pdfPageObjectTypeKey ||
+              object.typeSchemaVersion != pdfPageObjectSchemaVersion)
+            continue;
+          final payload = PdfPageObjectPayload.decode(
+            object.payload,
+            limits: widget.runtime.pdfModelLimits,
+          );
+          if (payload is Ok<PdfPageObjectPayload, StructuredFailure>) {
+            references.add(payload.value.reference);
+          }
+        }
+      }
+    }
+    final wanted = <_PdfCanvasRenderKey, DocumentResourceSnapshot?>{};
+    if (limits != null && references.isNotEmpty) {
+      final maximum = math.min(
+        widget.runtime.maximumHitResults,
+        limits.maximumRenderPixels,
+      );
+      final count = math.min(references.length, maximum);
+      final pixels = limits.maximumRenderPixels ~/ math.max(1, count);
+      final resources = {for (final r in snapshot.resources) r.identity: r};
+      for (final reference in references.take(maximum)) {
+        final dimensions = _pdfRenderDimensions(reference, limits, pixels);
+        if (dimensions == null) continue;
+        final resource = resources[reference.resourceIdentity];
+        wanted[_PdfCanvasRenderKey(
+              reference: reference,
+              resourceBytes: resource?.bytes,
+              pixelWidth: dimensions.$1,
+              pixelHeight: dimensions.$2,
+            )] =
+            resource;
+      }
+    }
+    final previousSourceImage = _pdfPageImage;
+    final previousPlaceholder = _pdfPlaceholder;
+    _pdfWanted = wanted;
+    final obsolete = <ui.Image>[];
+    _pdfImages.removeWhere((key, image) {
+      if (wanted.containsKey(key)) return false;
+      obsolete.add(image);
+      return true;
+    });
+    _pdfFailures.removeWhere((key) => !wanted.containsKey(key));
+    _pdfRenderKey = wanted.keys
+        .where((key) => key.reference == source?.reference)
+        .firstOrNull;
+    _pdfPageImage = _pdfImages[_pdfRenderKey];
+    _pdfPlaceholder =
+        source != null &&
+        (_pdfRenderKey == null || _pdfFailures.contains(_pdfRenderKey));
+    final cancel = wanted.containsKey(_pdfRenderingKey)
+        ? null
+        : _pdfRenderCancellation;
+    // Painter state is already detached when image disposal delivers callbacks.
+    if (mounted &&
+        (obsolete.isNotEmpty ||
+            previousSourceImage != _pdfPageImage ||
+            previousPlaceholder != _pdfPlaceholder))
+      setState(() {});
+    for (final image in obsolete) {
+      _disposeNativeResource(image.dispose);
+    }
+    try {
+      cancel?.cancel();
+    } on Object {
+      /* All cancellation callbacks attempted. */
+    }
+    if (mounted && !_closing) unawaited(_drainPdfRenders());
+  }
+
+  bool _pdfReferenceCurrent(_PdfCanvasRenderKey key) {
+    if (!identical(
+      _coordinator.snapshot.resources
+          .where((r) => r.identity == key.reference.resourceIdentity)
+          .firstOrNull
+          ?.bytes,
+      key.resourceBytes,
+    ))
+      return false;
+    for (final layer in _page.layers) {
+      if (layer is PdfSourceLayer && layer.reference == key.reference)
+        return true;
+      if (layer is! ContentLayer || !layer.visible || layer.opacity == 0)
+        continue;
+      for (final object in layer.objects) {
+        if (!object.visible ||
+            object.typeKey != pdfPageObjectTypeKey ||
+            object.typeSchemaVersion != pdfPageObjectSchemaVersion)
+          continue;
+        final payload = PdfPageObjectPayload.decode(
+          object.payload,
+          limits: widget.runtime.pdfModelLimits,
+        );
+        if (payload is Ok<PdfPageObjectPayload, StructuredFailure> &&
+            payload.value.reference == key.reference)
+          return true;
+      }
+    }
+    return false;
+  }
+
+  Future<void> _drainPdfRenders() async {
+    if (_pdfDraining || !mounted || _closing) return;
+    _pdfDraining = true;
+    try {
+      while (mounted && !_closing) {
+        final key = _pdfWanted.keys
+            .where(
+              (key) =>
+                  !_pdfImages.containsKey(key) && !_pdfFailures.contains(key),
+            )
+            .firstOrNull;
+        if (key == null) break;
+        final resource = _pdfWanted[key];
+        final owner = _coordinator;
+        final pageId = _page.id;
+        final cancellation = CancellationController();
+        _pdfRenderingKey = key;
+        _pdfRenderCancellation = cancellation;
+        ui.Image? decoded;
+        try {
+          if (resource != null &&
+              widget.runtime.pdfAdmission.permits(
+                resource.bytes,
+                cancellation.token,
+              )) {
+            final request = PdfRenderRequest.create(
+              reference: key.reference,
+              trust: widget.runtime.pdfAdmission.trust,
+              region: PdfPageClip.full,
+              pixelWidth: key.pixelWidth,
+              pixelHeight: key.pixelHeight,
+              includeSafeNativeAppearances: false,
+              limits: widget.runtime.pdfProcessingLimits!,
+              cancellationToken: cancellation.token,
+            );
+            if (request is Ok<PdfRenderRequest, StructuredFailure>) {
+              final result = await widget.runtime.pdfBackend.render(
+                request.value,
+                resourceReader: _SnapshotPdfResourceReader([resource]),
+              );
+              if (result is PdfRenderSuccess &&
+                  !cancellation.token.isCancelled) {
+                decoded = await preparePdfRasterImage(
+                  result.output,
+                  cancellation.token,
+                );
+              }
+            }
+          }
+        } on Object {
+          // A failed source remains a stable placeholder for this byte identity.
+        }
+        final current =
+            mounted &&
+            !_closing &&
+            identical(_pdfRenderCancellation, cancellation) &&
+            !cancellation.token.isCancelled &&
+            _pdfWanted.containsKey(key) &&
+            identical(owner, _coordinator) &&
+            _page.id == pageId &&
+            _pdfReferenceCurrent(key);
+        if (identical(_pdfRenderCancellation, cancellation)) {
+          _pdfRenderCancellation = null;
+          _pdfRenderingKey = null;
+        }
+        if (!current) {
+          // A document edit can precede its next frame. Remove that obsolete
+          // interest now so a synchronously failing delegate cannot spin.
+          if (!cancellation.token.isCancelled && !_pdfReferenceCurrent(key)) {
+            _pdfWanted.remove(key);
+          }
+          if (decoded != null) _disposeNativeResource(decoded.dispose);
+          continue;
+        }
+        setState(() {
+          if (decoded == null) {
+            _pdfFailures.add(key);
+          } else {
+            _pdfImages[key] = decoded;
+          }
+          _pdfPageImage = _pdfImages[_pdfRenderKey];
+          _pdfPlaceholder =
+              _pdfRenderKey != null && _pdfFailures.contains(_pdfRenderKey);
+        });
+      }
+    } finally {
+      _pdfDraining = false;
+    }
+  }
+
+  (int, int)? _pdfRenderDimensions(
+    PdfPageReference reference,
+    PdfProcessingLimits limits,
+    int pixelBudget,
+  ) {
+    var width = reference.displayedWidth.ceil();
+    var height = reference.displayedHeight.ceil();
+    if (width <= 0 || height <= 0) return null;
+    final dimensionScale = math.min(
+      1.0,
+      math.min(
+        limits.maximumRenderDimension / width,
+        limits.maximumRenderDimension / height,
+      ),
+    );
+    final pixelScale = math.min(1.0, math.sqrt(pixelBudget / (width * height)));
+    final scale = math.min(dimensionScale, pixelScale);
+    width = math.max(1, (width * scale).floor());
+    height = math.max(1, (height * scale).floor());
+    return width <= limits.maximumRenderDimension &&
+            height <= limits.maximumRenderDimension &&
+            width <= pixelBudget ~/ height
+        ? (width, height)
+        : null;
+  }
+
   void _scheduleImageRefresh(RenderSnapshot? scene) {
     if (scene == null || _imageRefreshScheduled) return;
     _imageRefreshScheduled = true;
     SchedulerBinding.instance.addPostFrameCallback((_) {
       _imageRefreshScheduled = false;
-      if (!mounted) return;
+      if (!mounted || _closing) return;
       unawaited(_refreshDecodedImages(scene));
     });
   }
@@ -6284,7 +7445,8 @@ final class _EraserCursorController {
 
   final VoidCallback onRequest;
   final ValueChanged<int> onRepaint;
-  final ValueNotifier<ViewPoint?> position = ValueNotifier(null);
+  final _PublicationValueNotifier<ViewPoint?> position =
+      _PublicationValueNotifier(null);
   ViewPoint? _latest;
   bool _scheduled = false;
   int _generation = 0;
@@ -6370,6 +7532,7 @@ void _paintPrimitive(
   Canvas canvas,
   ScenePrimitive primitive, {
   Map<ImageDecodeCacheKey, FlutterDecodedImage> decodedImages = const {},
+  Map<PdfPageReference, ui.Image> pdfImages = const {},
 }) {
   switch (primitive) {
     case FilledPolygonPrimitive(
@@ -6393,9 +7556,8 @@ void _paintPrimitive(
         path,
         Paint()
           ..style = PaintingStyle.fill
-          ..color = Color(
-            color.argb,
-          ).withValues(alpha: _colorAlpha(color.argb) * opacity),
+          ..color = Color(color.argb)
+              .withValues(alpha: _colorAlpha(color.argb) * opacity),
       );
       if (localToViewCoefficients != null) canvas.restore();
     case FilledPolygonGroupPrimitive(
@@ -6519,6 +7681,20 @@ void _paintPrimitive(
         rect.topRight,
         rect.bottomLeft,
         Paint()..color = const Color(0xff9ca3af).withValues(alpha: opacity),
+      );
+      canvas.restore();
+    case PdfPagePrimitive(
+      :final payload,
+      :final opacity,
+      :final localToViewCoefficients,
+    ):
+      canvas.save();
+      canvas.transform(_canvasMatrix(localToViewCoefficients));
+      paintPdfPageObject(
+        canvas,
+        payload,
+        image: pdfImages[payload.reference],
+        opacity: opacity,
       );
       canvas.restore();
     case TextBoxPrimitive(
@@ -6656,7 +7832,7 @@ final class _DashedTextBoundaryPainter extends CustomPainter {
       old.color != color;
 }
 
-final class _PenCursorController extends ChangeNotifier {
+final class _PenCursorController extends _PublicationNotifier {
   ViewPoint? position;
   int updateCount = 0;
   int paintCount = 0;
@@ -6711,7 +7887,7 @@ final class _PenCursorPainter extends CustomPainter
       old.controller != controller;
 }
 
-final class _PenPreviewController extends ChangeNotifier {
+final class _PenPreviewController extends _PublicationNotifier {
   _PenPreviewController({required this.frozen, required this.active});
 
   final ValueListenable<List<_PenFrozenLayer>> frozen;
@@ -6859,10 +8035,77 @@ final class _CommittedPaintChunk {
   final List<ScenePrimitive> primitives;
 }
 
+final class _PdfCanvasRenderKey {
+  const _PdfCanvasRenderKey({
+    required this.reference,
+    required this.resourceBytes,
+    required this.pixelWidth,
+    required this.pixelHeight,
+  });
+
+  final PdfPageReference reference;
+  // Identity is sufficient only because resource bytes are immutable. Reopened
+  // or replaced bytes create a different key and must pass admission again.
+  final List<int>? resourceBytes;
+  final int pixelWidth;
+  final int pixelHeight;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is _PdfCanvasRenderKey &&
+          other.reference == reference &&
+          identical(other.resourceBytes, resourceBytes) &&
+          other.pixelWidth == pixelWidth &&
+          other.pixelHeight == pixelHeight;
+
+  @override
+  int get hashCode => Object.hash(
+    reference,
+    identityHashCode(resourceBytes),
+    pixelWidth,
+    pixelHeight,
+  );
+}
+
+final class _SnapshotPdfResourceReader implements PdfResourceReader {
+  _SnapshotPdfResourceReader(Iterable<DocumentResourceSnapshot> resources)
+    : _resources = <ResourceIdentity, DocumentResourceSnapshot>{
+        for (final resource in resources) resource.identity: resource,
+      };
+
+  final Map<ResourceIdentity, DocumentResourceSnapshot> _resources;
+
+  @override
+  Future<Result<PdfResourceBytes, StructuredFailure>> read({
+    required ResourceIdentity identity,
+    required PdfProcessingLimits limits,
+    required CancellationToken cancellationToken,
+  }) async {
+    final resource = _resources[identity];
+    if (resource == null) {
+      return Err<PdfResourceBytes, StructuredFailure>(
+        StructuredFailure(
+          code: 'ui.canvas.pdf_resource_missing',
+          category: FailureCategory.resource,
+          retryDisposition: RetryDisposition.never,
+          message: 'The PDF source resource is unavailable.',
+        ),
+      );
+    }
+    return PdfResourceBytes.fromSnapshot(
+      resource: resource,
+      limits: limits,
+      cancellationToken: cancellationToken,
+    );
+  }
+}
+
 final class _CommittedChunkPainter extends CustomPainter {
   const _CommittedChunkPainter({
     required this.chunk,
     required this.decodedImages,
+    required this.pdfImages,
     required this.pageClip,
     required this.excludedObjectId,
     required this.onPainted,
@@ -6870,6 +8113,7 @@ final class _CommittedChunkPainter extends CustomPainter {
 
   final _CommittedPaintChunk chunk;
   final Map<ImageDecodeCacheKey, FlutterDecodedImage> decodedImages;
+  final Map<PdfPageReference, ui.Image> pdfImages;
   final Rect2 pageClip;
   final ObjectId? excludedObjectId;
   final ValueChanged<bool> onPainted;
@@ -6888,7 +8132,12 @@ final class _CommittedChunkPainter extends CustomPainter {
     for (final object in chunk.objects) {
       if (object.objectId == excludedObjectId) continue;
       for (final primitive in object.primitives) {
-        _paintPrimitive(canvas, primitive, decodedImages: decodedImages);
+        _paintPrimitive(
+          canvas,
+          primitive,
+          decodedImages: decodedImages,
+          pdfImages: pdfImages,
+        );
       }
     }
     canvas.restore();
@@ -6900,6 +8149,7 @@ final class _CommittedChunkPainter extends CustomPainter {
       old.chunk != chunk ||
       old.pageClip != pageClip ||
       old.excludedObjectId != excludedObjectId ||
+      !mapEquals(old.pdfImages, pdfImages) ||
       !mapEquals(old.decodedImages, decodedImages);
 
   @override
@@ -6915,7 +8165,11 @@ final class _CanvasPainter extends CustomPainter
     implements Phase6CanvasPersistenceEvidence {
   _CanvasPainter({
     required this.snapshot,
+    required this.pdfPageImage,
+    required this.pdfSource,
+    required this.pdfPlaceholder,
     required this.decodedImages,
+    required this.pdfImages,
     required this.paintBackground,
     required this.paintPrimitives,
     required this.buildSemantics,
@@ -6932,7 +8186,11 @@ final class _CanvasPainter extends CustomPainter
     this.onPainted,
   });
   final RenderSnapshot? snapshot;
+  final ui.Image? pdfPageImage;
+  final PdfSourceLayer? pdfSource;
+  final bool pdfPlaceholder;
   final Map<ImageDecodeCacheKey, FlutterDecodedImage> decodedImages;
+  final Map<PdfPageReference, ui.Image> pdfImages;
   final bool paintBackground;
   final bool paintPrimitives;
   final bool buildSemantics;
@@ -6954,6 +8212,20 @@ final class _CanvasPainter extends CustomPainter
   Rect2? get pageClip => snapshot?.pageClip;
 
   @override
+  bool get hasRenderedPdfPage => pdfPageImage != null;
+
+  @override
+  int get renderedPdfRasterCount => pdfImages.length;
+  @override
+  int get retainedPdfRasterPixels => pdfImages.values.fold(
+    0,
+    (sum, image) => sum + image.width * image.height,
+  );
+
+  @override
+  bool get displaysPdfPlaceholder => pdfPlaceholder;
+
+  @override
   void paint(Canvas canvas, Size size) {
     if (paintBackground) {
       canvas.drawRect(
@@ -6973,10 +8245,23 @@ final class _CanvasPainter extends CustomPainter
     canvas.clipRect(clip);
     if (paintBackground) {
       canvas.drawRect(clip, Paint()..color = Colors.white);
+      paintPdfSource(
+        canvas,
+        clip,
+        image: pdfPageImage,
+        placeholder: pdfPlaceholder,
+        visible: pdfSource?.visible ?? false,
+        opacity: pdfSource?.opacity ?? 0,
+      );
     }
     if (paintPrimitives) {
       for (final primitive in scene.primitives) {
-        _paintPrimitive(canvas, primitive, decodedImages: decodedImages);
+        _paintPrimitive(
+          canvas,
+          primitive,
+          decodedImages: decodedImages,
+          pdfImages: pdfImages,
+        );
       }
     }
     canvas.restore();
@@ -6986,8 +8271,12 @@ final class _CanvasPainter extends CustomPainter
   @override
   bool shouldRepaint(covariant _CanvasPainter old) =>
       old.snapshot != snapshot ||
+      old.pdfPageImage != pdfPageImage ||
+      old.pdfSource != pdfSource ||
+      old.pdfPlaceholder != pdfPlaceholder ||
       old.paintBackground != paintBackground ||
       old.paintPrimitives != paintPrimitives ||
+      !mapEquals(old.pdfImages, pdfImages) ||
       !mapEquals(old.decodedImages, decodedImages);
 
   @override
@@ -7620,4 +8909,154 @@ final class _PanCanvasIntent extends Intent {
 
   final double dx;
   final double dy;
+}
+
+// Replacement uses four fixed notifier slots. Values change immediately, but
+// listeners cannot reenter until every owner field and resource detach is done.
+class _PublicationNotifier extends ChangeNotifier {
+  bool _deferred = false;
+  bool _pending = false;
+  bool _disposed = false;
+  bool _baseDisposed = false;
+  int _deliveryDepth = 0;
+
+  void beginPublication() {
+    assert(!_deferred);
+    _deferred = true;
+  }
+
+  VoidCallback? finishPublication() {
+    _deferred = false;
+    final pending = _pending;
+    _pending = false;
+    if (_disposed) return _disposeBase;
+    return pending ? _deliver : null;
+  }
+
+  @override
+  void notifyListeners() {
+    if (_disposed) return;
+    if (_deferred) {
+      _pending = true;
+      return;
+    }
+    _deliver();
+  }
+
+  void _deliver() {
+    if (_disposed) return;
+    _deliveryDepth++;
+    try {
+      super.notifyListeners();
+    } finally {
+      _deliveryDepth--;
+      if (_disposed && _deliveryDepth == 0) _disposeBase();
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    if (!_deferred && _deliveryDepth == 0 && !_baseDisposed) {
+      _baseDisposed = true;
+      super.dispose();
+    }
+  }
+
+  void _disposeBase() {
+    if (_baseDisposed || _deliveryDepth > 0) return;
+    _baseDisposed = true;
+    super.dispose();
+  }
+}
+
+final class _PublicationValueNotifier<T> extends _PublicationNotifier
+    implements ValueListenable<T> {
+  _PublicationValueNotifier(this._value);
+  T _value;
+  @override
+  T get value => _value;
+  set value(T next) {
+    if (_value == next) return;
+    _value = next;
+    notifyListeners();
+  }
+}
+
+final class _OwnerNotifications {
+  _OwnerNotifications(this.observer, this.notifiers) {
+    for (final notifier in notifiers) {
+      notifier.beginPublication();
+    }
+  }
+  final Phase6NativePictureObserver observer;
+  final List<_PublicationNotifier> notifiers;
+  int disposedPictures = 0;
+  // Bounded by retained Pen/Selection pictures and the existing image cache.
+  final List<VoidCallback> disposals = [];
+
+  VoidCallback finish() {
+    final callbacks = [
+      for (final notifier in notifiers) notifier.finishPublication(),
+    ];
+    final count = disposedPictures;
+    // No owner/controller writes remain. Captured accounting delivery survives
+    // disposal; repaint delivery is cancelled when its notifier is disposed.
+    return () {
+      for (final dispose in disposals) {
+        _disposeNativeResource(dispose);
+      }
+      for (var i = 0; i < count; i++) {
+        try {
+          observer.pictureDisposed();
+        } on Object {
+          /* Accounting only. */
+        }
+      }
+      for (final callback in callbacks) {
+        try {
+          callback?.call();
+        } on Object {
+          /* Continue other notifications. */
+        }
+      }
+    };
+  }
+}
+
+// Flutter invokes its public disposal hooks before releasing the native handle.
+// Shield hook exceptions so they cannot skip that release. A hook's deliberate
+// replacement of the global callback is retained, including during reentrancy.
+void _disposeNativeResource(VoidCallback dispose) {
+  final pictureHook = ui.Picture.onDispose;
+  final imageHook = ui.Image.onDispose;
+  void pictureObserver(ui.Picture picture) {
+    try {
+      pictureHook?.call(picture);
+    } on Object {
+      /* Accounting only. */
+    }
+  }
+
+  void imageObserver(ui.Image image) {
+    try {
+      imageHook?.call(image);
+    } on Object {
+      /* Accounting only. */
+    }
+  }
+
+  if (pictureHook != null) ui.Picture.onDispose = pictureObserver;
+  if (imageHook != null) ui.Image.onDispose = imageObserver;
+  try {
+    dispose();
+  } on Object {
+    /* Continue other detached resources. */
+  } finally {
+    if (identical(ui.Picture.onDispose, pictureObserver))
+      ui.Picture.onDispose = pictureHook;
+    if (identical(ui.Image.onDispose, imageObserver))
+      ui.Image.onDispose = imageHook;
+  }
 }

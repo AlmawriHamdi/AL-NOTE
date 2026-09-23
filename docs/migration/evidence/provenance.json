@@ -1,0 +1,44 @@
+[
+  {
+    "source": "/tmp/al-note-pdf-objects-independent/report.md",
+    "source_sha256": "6fd18c44bc0a9f0314e84bde1d1bb0f6cb7a70839d6be764c8989e31309b9257",
+    "copy": "pdf-objects-independent.md",
+    "copy_sha256": "a5ca50df0477e476f890166e9dc14ad1d6ee37eecdc490e7e2b91d44384954ec",
+    "normalization": "Repository/SDK paths and historical PID; raw /tmp links annotated as excluded HDD evidence. No result or limitation changed."
+  },
+  {
+    "source": "/tmp/al-note-pdf-objects-f1-independent/report.md",
+    "source_sha256": "fa0773bd96e2bb70cc8bdb44c278b422e83cd6cfb2e8aa0bf9dc96bb5a69db2b",
+    "copy": "pdf-objects-f1-independent.md",
+    "copy_sha256": "b1027edc57c6abe42dddab88b3bd65109cd01dde04a5eb33bcb887cbbfadbdeb",
+    "normalization": "Repository/SDK paths and historical PID; raw /tmp links annotated as excluded HDD evidence. No result or limitation changed."
+  },
+  {
+    "source": "/tmp/al-note-pdf-extraction-independent/report.md",
+    "source_sha256": "8c6d54e6254b32a04d55b33b5b1ff842e6d257fb900c7b11ac7de3f2cc62341f",
+    "copy": "pdf-extraction-independent.md",
+    "copy_sha256": "51a1f5419cbd673bebc5fb173aef34ee1107c7e1a81f6dfaab4b32566581396b",
+    "normalization": "Repository/SDK paths and historical PID; raw /tmp links annotated as excluded HDD evidence. No result or limitation changed."
+  },
+  {
+    "source": "build/pdf-extraction-publication/handoff-summary.json",
+    "source_sha256": "a4bfefd1e49026f4ce614c30da4d55c096549575fda9b6953bab43bd484468aa",
+    "copy": "publication-handoff-summary.json",
+    "copy_sha256": "a4bfefd1e49026f4ce614c30da4d55c096549575fda9b6953bab43bd484468aa",
+    "normalization": "None; reviewed nonsecret record."
+  },
+  {
+    "source": "build/sdk-upgrade-3.47.4/evidence/approved-verification-exception.json",
+    "source_sha256": "41a6364ac65df512b2c1411b96eccfe258c6e3d819a35599b70fbe485d472fba",
+    "copy": "sdk-verification-exception.json",
+    "copy_sha256": "41a6364ac65df512b2c1411b96eccfe258c6e3d819a35599b70fbe485d472fba",
+    "normalization": "None; reviewed nonsecret record."
+  },
+  {
+    "source": "build/pre-cachyos-backup/source-inventory-before.json",
+    "source_sha256": "197783f43dbeb3a9d560ebbee95f9b66f6051a5abc724a841aa263ec8fc2e031",
+    "copy": "source-inventory-before.json",
+    "copy_sha256": "197783f43dbeb3a9d560ebbee95f9b66f6051a5abc724a841aa263ec8fc2e031",
+    "normalization": "None; reviewed nonsecret record."
+  }
+]

@@ -5,6 +5,7 @@ import '../../core/outcomes/result.dart';
 import '../../core/outcomes/structured_failure.dart';
 import '../../core/versioning/schema_version.dart';
 import '../layers/document_layer.dart';
+import '../pdf/pdf_model.dart';
 import '../resources/resources.dart';
 import 'identifiers.dart';
 import 'preserved_data.dart';
@@ -39,6 +40,18 @@ final class DocumentPage {
     final structureFailure = _validateLayerStructure(copiedLayers);
     if (structureFailure != null) {
       return Err<DocumentPage, StructuredFailure>(structureFailure);
+    }
+    for (final layer in copiedLayers) {
+      if (layer is PdfSourceLayer &&
+          (layer.reference.displayedWidth != size.width ||
+              layer.reference.displayedHeight != size.height)) {
+        return Err<DocumentPage, StructuredFailure>(
+          _documentFailure(
+            'documents.pages.pdf_source_size_mismatch',
+            'A PDF source Layer must fill its Page exactly.',
+          ),
+        );
+      }
     }
     return Ok<DocumentPage, StructuredFailure>(
       DocumentPage._(
@@ -340,6 +353,38 @@ final class StandalonePdfDocument extends DocumentRoot {
     final failure = _validatePageTreeIdentities(copiedPages);
     if (failure != null) {
       return Err<StandalonePdfDocument, StructuredFailure>(failure);
+    }
+    for (final page in copiedPages) {
+      for (final layer in page.layers) {
+        if (layer is PdfSourceLayer &&
+            layer.reference.resourceIdentity != source.identity) {
+          return Err<StandalonePdfDocument, StructuredFailure>(
+            _documentFailure(
+              'documents.model.pdf_source_identity_mismatch',
+              'PDF source references must share the document source identity.',
+            ),
+          );
+        }
+        for (final object in layer.objects) {
+          if (object.typeKey != pdfPageObjectTypeKey ||
+              object.typeSchemaVersion != pdfPageObjectSchemaVersion) {
+            continue;
+          }
+          final payload = PdfPageObjectPayload.decode(
+            object.payload,
+            limits: PdfModelLimits.portableStorage,
+          );
+          if (payload is Ok<PdfPageObjectPayload, StructuredFailure> &&
+              payload.value.reference.resourceIdentity != source.identity) {
+            return Err<StandalonePdfDocument, StructuredFailure>(
+              _documentFailure(
+                'documents.model.pdf_object_identity_mismatch',
+                'PDF Page Objects must share the document source identity.',
+              ),
+            );
+          }
+        }
+      }
     }
     return Ok<StandalonePdfDocument, StructuredFailure>(
       StandalonePdfDocument._(

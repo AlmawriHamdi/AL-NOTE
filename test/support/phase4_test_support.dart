@@ -10,26 +10,20 @@ ResourceLimitSnapshot phase4Limits({
 }) {
   final limits = <({ResourceLimitKey key, ResourceLimitCeiling ceiling})>[];
   for (final requirement in alnoteStorageLimitRequirements.entries) {
-    final key =
-        (ResourceLimitKey.parse(requirement.key)
-                as Ok<ResourceLimitKey, StructuredFailure>)
-            .value;
-    final unitCeiling =
-        (ResourceLimitCeiling.create(
-                  value:
-                      overrides[requirement.key] ??
-                      (requirement.value == ResourceLimitUnit.ratio
-                          ? 1000
-                          : ceiling),
-                  unit: requirement.value,
-                )
-                as Ok<ResourceLimitCeiling, StructuredFailure>)
-            .value;
+    final key = (ResourceLimitKey.parse(
+      requirement.key,
+    ) as Ok<ResourceLimitKey, StructuredFailure>).value;
+    final unitCeiling = (ResourceLimitCeiling.create(
+      value:
+          overrides[requirement.key] ??
+          (requirement.value == ResourceLimitUnit.ratio ? 1000 : ceiling),
+      unit: requirement.value,
+    ) as Ok<ResourceLimitCeiling, StructuredFailure>).value;
     limits.add((key: key, ceiling: unitCeiling));
   }
-  return (ResourceLimitSnapshot.create(limits)
-          as Ok<ResourceLimitSnapshot, StructuredFailure>)
-      .value;
+  return (ResourceLimitSnapshot.create(
+    limits,
+  ) as Ok<ResourceLimitSnapshot, StructuredFailure>).value;
 }
 
 /// A deterministic in-memory portable package source.

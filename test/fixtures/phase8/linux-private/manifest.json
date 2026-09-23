@@ -1,0 +1,26 @@
+{
+  "encrypted-empty-password.pdf": {
+    "bytes": 1210,
+    "sha256": "86b7ecc2392832e807388d0100b4bdd8c64c99f966f2861f97ebc60f7f5c0822"
+  },
+  "mixed.pdf": {
+    "bytes": 956,
+    "sha256": "5df0b66ee33d078e7ca5fa27af129289c134246fd226a7c18d405932a1c43b2c"
+  },
+  "password.pdf": {
+    "bytes": 1210,
+    "sha256": "a7d1e530f2ec2a8f450175aaeea76367d7a95908320b24a2111e11c2b3b7f40c"
+  },
+  "scanned.pdf": {
+    "bytes": 876,
+    "sha256": "0372761f18f701c98873422abf5045e24eec4da3cd91566ffa32623f3e0dc376"
+  },
+  "text.pdf": {
+    "bytes": 894,
+    "sha256": "b86593deac1faaf14716512f2578e90988f25c130e3df3adeaa014da067f5d40"
+  },
+  "too-many-pages.pdf": {
+    "bytes": 6898,
+    "sha256": "5bebe7cab7cb8a31bae2975252876445376a21220ac4ec8a62d40a8e9639ae18"
+  }
+}

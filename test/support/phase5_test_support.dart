@@ -289,30 +289,25 @@ final class InMemorySettingsAdapter implements SettingsPersistenceAdapter {
     final revision = SettingsStoreRevision(
       (next as Ok<Revision, StructuredFailure>).value,
     );
-    current =
-        (SettingsPersistenceSnapshot.create(
-                  maximumUnknownRecords: 16,
-                  maximumUnknownFieldsPerRecord: 16,
-                  storeRevision: revision,
-                  records: records,
-                  unknownRecords: preservedUnknownRecords,
-                  damaged: false,
-                  lastKnownGoodAvailable: true,
-                  maximumRecords: 100000,
-                  maximumValueBytes: 100000000,
-                )
-                as Ok<SettingsPersistenceSnapshot, StructuredFailure>)
-            .value;
+    current = (SettingsPersistenceSnapshot.create(
+      maximumUnknownRecords: 16,
+      maximumUnknownFieldsPerRecord: 16,
+      storeRevision: revision,
+      records: records,
+      unknownRecords: preservedUnknownRecords,
+      damaged: false,
+      lastKnownGoodAvailable: true,
+      maximumRecords: 100000,
+      maximumValueBytes: 100000000,
+    ) as Ok<SettingsPersistenceSnapshot, StructuredFailure>).value;
     return Completed(
       (SettingsCommitEvidence.create(
-                storeRevision: returnUnexpectedCommitRevision
-                    ? expectedRevision
-                    : revision,
-                atomicity: SettingsAtomicityEvidence.atomicCommit,
-                durability: SettingsDurabilityEvidence.durableCommit,
-              )
-              as Ok<SettingsCommitEvidence, StructuredFailure>)
-          .value,
+        storeRevision: returnUnexpectedCommitRevision
+            ? expectedRevision
+            : revision,
+        atomicity: SettingsAtomicityEvidence.atomicCommit,
+        durability: SettingsDurabilityEvidence.durableCommit,
+      ) as Ok<SettingsCommitEvidence, StructuredFailure>).value,
     );
   }
 }
@@ -450,23 +445,17 @@ final class InMemoryRecoveryStore implements RecoveryStore {
     );
     if (index < 0) return Failed(testFailure('recovery_missing'));
     final prior = values[index];
-    values[index] =
-        (RecoveryGenerationRecord.create(
-                  manifest: prior.manifest,
-                  checkpoint: prior.checkpoint,
-                  journal: [
-                    ...prior.journal,
-                    RecoveryJournalRecord(
-                      transaction: transaction,
-                      committed: false,
-                    ),
-                  ],
-                  lastKnownGood: prior.lastKnownGood,
-                  maximumTransactions: 100000,
-                  maximumJournalBytes: 100000000,
-                )
-                as Ok<RecoveryGenerationRecord, StructuredFailure>)
-            .value;
+    values[index] = (RecoveryGenerationRecord.create(
+      manifest: prior.manifest,
+      checkpoint: prior.checkpoint,
+      journal: [
+        ...prior.journal,
+        RecoveryJournalRecord(transaction: transaction, committed: false),
+      ],
+      lastKnownGood: prior.lastKnownGood,
+      maximumTransactions: 100000,
+      maximumJournalBytes: 100000000,
+    ) as Ok<RecoveryGenerationRecord, StructuredFailure>).value;
     return const Completed(null);
   }
 
@@ -499,36 +488,28 @@ final class InMemoryRecoveryStore implements RecoveryStore {
       transaction: journal[markerIndex].transaction,
       committed: true,
     );
-    final manifest =
-        (RecoveryManifest.create(
-                  setId: prior.manifest.setId,
-                  documentId: prior.manifest.documentId,
-                  generation: generation,
-                  lastSequence: sequence,
-                  checkpointHash: prior.manifest.checkpointHash,
-                  retainedResources: prior.manifest.retainedResources,
-                  ownership: prior.manifest.ownership,
-                  cleanShutdown: prior.manifest.cleanShutdown,
-                  maximumRetainedResources:
-                      prior.manifest.retainedResources.length,
-                )
-                as Ok<RecoveryManifest, StructuredFailure>)
-            .value;
-    values[index] =
-        (RecoveryGenerationRecord.create(
-                  manifest: manifest,
-                  checkpoint: prior.checkpoint,
-                  journal: journal,
-                  lastKnownGood: prior.lastKnownGood,
-                  maximumTransactions: journal.length,
-                  maximumJournalBytes: journal.fold<int>(
-                    0,
-                    (sum, record) =>
-                        sum + record.transaction.replacementBytes.length,
-                  ),
-                )
-                as Ok<RecoveryGenerationRecord, StructuredFailure>)
-            .value;
+    final manifest = (RecoveryManifest.create(
+      setId: prior.manifest.setId,
+      documentId: prior.manifest.documentId,
+      generation: generation,
+      lastSequence: sequence,
+      checkpointHash: prior.manifest.checkpointHash,
+      retainedResources: prior.manifest.retainedResources,
+      ownership: prior.manifest.ownership,
+      cleanShutdown: prior.manifest.cleanShutdown,
+      maximumRetainedResources: prior.manifest.retainedResources.length,
+    ) as Ok<RecoveryManifest, StructuredFailure>).value;
+    values[index] = (RecoveryGenerationRecord.create(
+      manifest: manifest,
+      checkpoint: prior.checkpoint,
+      journal: journal,
+      lastKnownGood: prior.lastKnownGood,
+      maximumTransactions: journal.length,
+      maximumJournalBytes: journal.fold<int>(
+        0,
+        (sum, record) => sum + record.transaction.replacementBytes.length,
+      ),
+    ) as Ok<RecoveryGenerationRecord, StructuredFailure>).value;
     return const Completed(null);
   }
 
@@ -539,12 +520,10 @@ final class InMemoryRecoveryStore implements RecoveryStore {
       ? Cancelled(cancellationToken.reason)
       : Completed(
           (RecoveryQuotaEvidence.create(
-                    maximumBytes: quotaBytes,
-                    usedBytes: 0,
-                    durable: true,
-                  )
-                  as Ok<RecoveryQuotaEvidence, StructuredFailure>)
-              .value,
+            maximumBytes: quotaBytes,
+            usedBytes: 0,
+            durable: true,
+          ) as Ok<RecoveryQuotaEvidence, StructuredFailure>).value,
         );
   @override
   Future<OperationOutcome<void, StructuredFailure>> cleanup(
@@ -632,13 +611,11 @@ final class InMemoryPrivateStorage implements PrivateStorage {
     final all = source..sort((a, b) => a.id.compareTo(b.id));
     return Completed(
       (PrivateStorageEnumeration.create(
-                records: all.take(maximumResults),
-                truncated: all.length > maximumResults,
-                maximumResults: maximumResults,
-                maximumRecordBytes: maximumRecordBytes,
-              )
-              as Ok<PrivateStorageEnumeration, StructuredFailure>)
-          .value,
+        records: all.take(maximumResults),
+        truncated: all.length > maximumResults,
+        maximumResults: maximumResults,
+        maximumRecordBytes: maximumRecordBytes,
+      ) as Ok<PrivateStorageEnumeration, StructuredFailure>).value,
     );
   }
 
@@ -673,19 +650,15 @@ final class InMemoryPrivateStorage implements PrivateStorage {
         final nextRecord = (current?.recordRevision ?? _zero).increment();
         if (nextRecord is Err<Revision, StructuredFailure>)
           return Failed(nextRecord.error);
-        candidate[operation.id] =
-            (PrivateByteRecord.create(
-                      id: operation.id,
-                      recordRevision:
-                          (nextRecord as Ok<Revision, StructuredFailure>).value,
-                      bytes: operation.bytes,
-                      checksum: _checksum(operation.bytes),
-                      lastKnownGood: true,
-                      maximumBytes: maximumRecordBytes,
-                      maximumChecksumBytes: 64,
-                    )
-                    as Ok<PrivateByteRecord, StructuredFailure>)
-                .value;
+        candidate[operation.id] = (PrivateByteRecord.create(
+          id: operation.id,
+          recordRevision: (nextRecord as Ok<Revision, StructuredFailure>).value,
+          bytes: operation.bytes,
+          checksum: _checksum(operation.bytes),
+          lastKnownGood: true,
+          maximumBytes: maximumRecordBytes,
+          maximumChecksumBytes: 64,
+        ) as Ok<PrivateByteRecord, StructuredFailure>).value;
       } else if (operation is DeletePrivateRecord) {
         if (current?.recordRevision != operation.expectedRecordRevision)
           return Failed(testFailure('private_conflict'));
@@ -704,18 +677,13 @@ final class InMemoryPrivateStorage implements PrivateStorage {
     _revisions[batch.repository] = revision;
     return Completed(
       (PrivateStorageCommitEvidence.create(
-                storeRevision: revision,
-                atomicity: StorageAtomicityEvidence.atomicCommit,
-                durability:
-                    (StorageDurabilityEvidence.create(
-                              durable: true,
-                              flushed: true,
-                            )
-                            as Ok<StorageDurabilityEvidence, StructuredFailure>)
-                        .value,
-              )
-              as Ok<PrivateStorageCommitEvidence, StructuredFailure>)
-          .value,
+        storeRevision: revision,
+        atomicity: StorageAtomicityEvidence.atomicCommit,
+        durability: (StorageDurabilityEvidence.create(
+          durable: true,
+          flushed: true,
+        ) as Ok<StorageDurabilityEvidence, StructuredFailure>).value,
+      ) as Ok<PrivateStorageCommitEvidence, StructuredFailure>).value,
     );
   }
 
@@ -726,20 +694,18 @@ final class InMemoryPrivateStorage implements PrivateStorage {
     required CancellationToken cancellationToken,
   }) => commit(
     (PrivateStorageBatch.create(
-              repository: plan.repository,
-              expectedStoreRevision: plan.expectedStoreRevision,
-              operations: [
-                for (final id in plan.records)
-                  if (_data[plan.repository]?[id] case final record?)
-                    DeletePrivateRecord(
-                      id: id,
-                      expectedRecordRevision: record.recordRevision,
-                    ),
-              ],
-              maximumOperations: plan.records.length,
-            )
-            as Ok<PrivateStorageBatch, StructuredFailure>)
-        .value,
+      repository: plan.repository,
+      expectedStoreRevision: plan.expectedStoreRevision,
+      operations: [
+        for (final id in plan.records)
+          if (_data[plan.repository]?[id] case final record?)
+            DeletePrivateRecord(
+              id: id,
+              expectedRecordRevision: record.recordRevision,
+            ),
+      ],
+      maximumOperations: plan.records.length,
+    ) as Ok<PrivateStorageBatch, StructuredFailure>).value,
     maximumOperations: plan.records.length,
     maximumRecordBytes: quotaBytes,
     cancellationToken: cancellationToken,
@@ -750,11 +716,9 @@ final class InMemoryPrivateStorage implements PrivateStorage {
       _preflight<StoragePressureEvidence>(cancellationToken) ??
       Completed(
         (StoragePressureEvidence.create(
-                  pressure: StoragePressure.normal,
-                  availableBytes: quotaBytes,
-                )
-                as Ok<StoragePressureEvidence, StructuredFailure>)
-            .value,
+          pressure: StoragePressure.normal,
+          availableBytes: quotaBytes,
+        ) as Ok<StoragePressureEvidence, StructuredFailure>).value,
       );
 }
 

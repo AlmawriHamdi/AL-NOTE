@@ -21,9 +21,9 @@ final class SelectionSubTargetKind {
   /// Parses a stable kind.
   static Result<SelectionSubTargetKind, StructuredFailure> parse(
     String source,
-  ) => NamespacedIdentifier.parse(
-    source,
-  ).map(SelectionSubTargetKind.fromIdentifier);
+  ) =>
+      NamespacedIdentifier.parse(source)
+          .map(SelectionSubTargetKind.fromIdentifier);
 
   /// The wrapped identifier.
   final NamespacedIdentifier identifier;
@@ -267,9 +267,8 @@ final class WholeObjectTransformPreview {
         preconditions.resourceCatalog != null) {
       return Err(_selectionContractFailure('invalid_preview_state'));
     }
-    final affine = AffineTransform2D.fromOperation(
-      operation,
-    ).fold(onOk: (value) => value, onErr: (_) => null);
+    final affine = AffineTransform2D.fromOperation(operation)
+        .fold(onOk: (value) => value, onErr: (_) => null);
     if (affine == null) {
       return Err(_selectionContractFailure('invalid_preview_transform'));
     }

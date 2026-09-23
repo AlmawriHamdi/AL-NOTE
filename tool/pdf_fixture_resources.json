@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "purpose": "Controlled fixture tests only; distinct from isolated ordinary-PDF runtime",
+  "release": "chromium/7811",
+  "architecture": "x64",
+  "targets": {
+    "linux": {
+      "archive_url": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/7811/pdfium-linux-x64.tgz",
+      "archive_bytes": 3613707,
+      "archive_sha256": "e76e0a37aefb843d56f04657475ce612157021b1ebc53d801f2fbfcc537ccf64",
+      "member": "lib/libpdfium.so",
+      "filename": "libpdfium.so",
+      "bytes": 7583000,
+      "sha256": "d106072a29b3689a5d6739948f98a97fe3ec82f5a1c309dc44e86f6c549fb44e"
+    },
+    "windows": {
+      "archive_url": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/7811/pdfium-win-x64.tgz",
+      "archive_bytes": 3718879,
+      "archive_sha256": "2e7af12674ac3716cb0e20369bb9fb269ceadfa2f0b0597097a520e6834175a0",
+      "member": "bin/pdfium.dll",
+      "filename": "pdfium.dll",
+      "bytes": 7176704,
+      "sha256": "019b6ee6e54e5508002e43c5199b00f6caca26d32dd23c7bb229ff6855cd5394"
+    }
+  }
+}

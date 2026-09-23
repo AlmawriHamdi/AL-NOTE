@@ -17,6 +17,7 @@ import '../model/identifiers.dart';
 import '../objects/object_envelope.dart';
 import '../objects/object_registry.dart';
 import '../objects/text/text_model.dart';
+import '../pdf/pdf_model.dart';
 import '../resources/resources.dart';
 import 'command_contracts.dart';
 import 'revision_snapshot.dart';
@@ -175,6 +176,11 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
                  .expand((layer) => layer.objects))
            object.id,
        },
+       _issuedPageIds = {for (final page in root.pages) page.id},
+       _issuedLayerIds = {
+         for (final page in root.pages)
+           for (final layer in page.layers) layer.id,
+       },
        _objectGenerations = <ObjectId, Revision>{
          for (final object
              in root.pages
@@ -257,6 +263,8 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   ContentIdentity? _savedContentIdentity;
   final Set<ContentIdentity> _issuedContentIdentities;
   final Set<ObjectId> _issuedObjectIds;
+  final Set<PageId> _issuedPageIds;
+  final Set<LayerId> _issuedLayerIds;
   final Map<ObjectId, Revision> _objectGenerations;
   final List<_HistoryEntry> _history = [];
   int _historyCursor = 0;
@@ -310,16 +318,32 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   }
 
   /// Executes one typed request synchronously and atomically.
+  /// [stillCurrent], when supplied, is checked after all fallible preparation
+  /// and before publication. False or a thrown exception rejects without a
+  /// document/history change or observer notification.
+  /// [publishCompanionState] synchronously installs already prepared owner state
+  /// after command publication and before observers. It must not perform fallible
+  /// preparation. Any owner callbacks must follow complete companion state
+  /// installation, with no remaining owner writes afterward. The guard stays held
+  /// through both phases. Even an unexpected hook exception cannot skip observer
+  /// delivery or strand the guard; it propagates after delivery.
   Result<CommandCommit, CommandFailure> execute(
     CommandRequest request, {
     CommandExecutionDiagnosticSink? diagnostics,
+    bool Function()? stillCurrent,
+    void Function()? publishCompanionState,
   }) {
     if (_mutationActive) {
       return Err(_failure('reentrant_mutation', FailureCategory.state));
     }
     _mutationActive = true;
     try {
-      return _executeInsideBoundary(request, diagnostics);
+      return _executeInsideBoundary(
+        request,
+        diagnostics,
+        stillCurrent,
+        publishCompanionState,
+      );
     } finally {
       _mutationActive = false;
     }
@@ -328,6 +352,8 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   Result<CommandCommit, CommandFailure> _executeInsideBoundary(
     CommandRequest request,
     CommandExecutionDiagnosticSink? diagnostics,
+    bool Function()? stillCurrent,
+    void Function()? publishCompanionState,
   ) {
     final preparationClock = Stopwatch()..start();
     if (request.documentId != _root.id) {
@@ -348,6 +374,7 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
       AtomicObjectReplacementRequest() => _prepareReplacement(request),
       AtomicWholeObjectTransformRequest() => _prepareTransform(request),
       AtomicObjectCollectionEditRequest() => _prepareCollectionEdit(request),
+      ImportPdfPagesRequest() => _preparePdfImport(request),
     };
     preparationClock.stop();
     _recordExecutionDiagnostic(
@@ -356,8 +383,149 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
       preparationClock.elapsedMicroseconds,
     );
     return prepared.fold(
-      onOk: (value) => _publishPrepared(value, request, diagnostics),
+      onOk: (value) => _publishPrepared(
+        value,
+        request,
+        diagnostics,
+        stillCurrent,
+        publishCompanionState,
+      ),
       onErr: Err<CommandCommit, CommandFailure>.new,
+    );
+  }
+
+  Result<_Prepared, CommandFailure> _preparePdfImport(
+    ImportPdfPagesRequest request,
+  ) {
+    final root = _root;
+    final pages = request.pages;
+    final resource = request.resource;
+    if (root is! NotebookDocument ||
+        pages.isEmpty ||
+        pages.length > ImportPdfPagesRequest.maximumImportedPages ||
+        root.pages.length >
+            ImportPdfPagesRequest.maximumNotebookPages - pages.length ||
+        request.metadata.coalescing != null ||
+        resource.mediaType != pdfResourceMediaType ||
+        resource.role != pdfSourceResourceRole ||
+        resource.decodedByteLength <= 0 ||
+        resource.decodedByteLength > 50000000) {
+      return Err(_failure('invalid_pdf_import', FailureCategory.validation));
+    }
+    if (request.preconditions.sections[request.sectionId] == null ||
+        request.preconditions.pages[request.afterPageId] == null ||
+        request.preconditions.resourceCatalog == null) {
+      return Err(
+        _failure('missing_revision_precondition', FailureCategory.validation),
+      );
+    }
+    final section = root.sections
+        .where((s) => s.id == request.sectionId)
+        .firstOrNull;
+    final at =
+        section?.pages.indexWhere((p) => p.id == request.afterPageId) ?? -1;
+    if (section == null || at < 0)
+      return Err(_failure('destination_missing', FailureCategory.state));
+    final pageIds = <PageId>{};
+    final layerIds = <LayerId>{};
+    var previousIndex = -1;
+    for (final page in pages) {
+      if (!pageIds.add(page.id) ||
+          _issuedPageIds.contains(page.id) ||
+          page.layers.length != 2) {
+        return Err(_failure('invalid_pdf_import', FailureCategory.validation));
+      }
+      final source = page.layers[0];
+      final notes = page.layers[1];
+      if (source is! PdfSourceLayer ||
+          notes is! ContentLayer ||
+          !source.locked ||
+          !source.visible ||
+          source.opacity != 1 ||
+          notes.locked ||
+          !notes.visible ||
+          notes.opacity != 1 ||
+          notes.objects.isNotEmpty ||
+          source.reference.resourceIdentity != resource.identity ||
+          source.reference.pageIndex <= previousIndex) {
+        return Err(_failure('invalid_pdf_import', FailureCategory.validation));
+      }
+      previousIndex = source.reference.pageIndex;
+      for (final layer in page.layers) {
+        if (!layerIds.add(layer.id) || _issuedLayerIds.contains(layer.id)) {
+          return Err(
+            _failure('identity_collision', FailureCategory.validation),
+          );
+        }
+      }
+    }
+    final existing = _resources[resource.identity];
+    if (existing != null &&
+        (existing.digest != resource.digest ||
+            existing.decodedByteLength != resource.decodedByteLength ||
+            existing.mediaType != resource.mediaType ||
+            existing.role != resource.role ||
+            existing.schemaVersion != resource.schemaVersion ||
+            existing.packagePath != resource.packagePath)) {
+      return Err(
+        _failure('resource_identity_collision', FailureCategory.validation),
+      );
+    }
+    if (existing == null && root.resources.contains(resource.identity)) {
+      return Err(
+        _failure('resource_identity_collision', FailureCategory.validation),
+      );
+    }
+    final catalog = ResourceCatalog.create([
+      ...root.resources.entries,
+      if (existing == null) ResourceCatalogEntry(resource.identity),
+    ]).fold<ResourceCatalog?>(onOk: (v) => v, onErr: (_) => null);
+    final changedSection = DocumentSection.create(
+      id: section.id,
+      name: section.name,
+      extensionData: section.extensionData,
+      pages: [
+        ...section.pages.take(at + 1),
+        ...pages,
+        ...section.pages.skip(at + 1),
+      ],
+    ).fold<DocumentSection?>(onOk: (v) => v, onErr: (_) => null);
+    if (catalog == null || changedSection == null) {
+      return Err(_failure('invalid_candidate', FailureCategory.validation));
+    }
+    final candidate = NotebookDocument.create(
+      id: root.id,
+      schemaVersion: root.schemaVersion,
+      title: root.title,
+      resources: catalog,
+      extensionData: root.extensionData,
+      sections: [
+        for (final value in root.sections)
+          if (value.id == section.id) changedSection else value,
+      ],
+    ).fold<NotebookDocument?>(onOk: (v) => v, onErr: (_) => null);
+    if (candidate == null || !_validator.validate(candidate).isValid) {
+      return Err(_failure('invalid_candidate', FailureCategory.validation));
+    }
+    return Ok(
+      _Prepared(
+        before: root,
+        after: candidate,
+        objectIds: const {},
+        pageIds: pageIds,
+        layerIds: layerIds,
+        oldObjectBounds: const {},
+        newObjectBounds: const {},
+        geometryChangedObjectIds: const {},
+        appearanceChanged: true,
+        textChanged: false,
+        metadataChanged: false,
+        addedResourceReferences: {resource.identity},
+        removedResourceReferences: const {},
+        membershipChanged: true,
+        pageCollectionSection: section.id,
+        addedResources: {if (existing == null) resource.identity: resource},
+      ),
     );
   }
 
@@ -744,9 +912,8 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
         _failure('missing_revision_precondition', FailureCategory.validation),
       );
     }
-    final affine = AffineTransform2D.fromOperation(
-      request.operation,
-    ).fold(onOk: (value) => value, onErr: (_) => null);
+    final affine = AffineTransform2D.fromOperation(request.operation)
+        .fold(onOk: (value) => value, onErr: (_) => null);
     if (affine == null) {
       return Err(_failure('invalid_transform', FailureCategory.validation));
     }
@@ -849,6 +1016,8 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
     _Prepared prepared,
     CommandRequest request,
     CommandExecutionDiagnosticSink? diagnostics,
+    bool Function()? stillCurrent,
+    void Function()? publishCompanionState,
   ) {
     final publicationClock = Stopwatch()..start();
     final nextRevisions = _advancedRevisions(prepared);
@@ -886,11 +1055,27 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
       nextRevisions.document,
     );
 
+    // All fallible preparation, UUID and history callbacks have finished. The
+    // caller can reject a stale/cancelled compound UI action before any state
+    // or observer publication. The existing mutation boundary blocks reentry.
+    if (stillCurrent != null) {
+      try {
+        if (!stillCurrent()) {
+          return Err(_failure('stale_publication', FailureCategory.state));
+        }
+      } on Object {
+        return Err(_failure('stale_publication', FailureCategory.state));
+      }
+    }
     _root = prepared.after;
     _resources = _applyResourceChanges(_resources, prepared);
     _revisions = nextRevisions;
     _recordObjectGenerations(prepared, nextRevisions);
     _issuedObjectIds.addAll(prepared.addedObjectIds);
+    if (prepared.pageCollectionSection != null) {
+      _issuedPageIds.addAll(prepared.pageIds);
+      _issuedLayerIds.addAll(prepared.layerIds);
+    }
     _currentContentIdentity = nextIdentity;
     _issuedContentIdentities.add(nextIdentity);
     _history
@@ -898,8 +1083,13 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
       ..addAll(historyPlan.entries);
     _historyCursor = historyPlan.cursor;
     _coalescingBoundaryPending = false;
-    final observerFailures = _notify(change);
-    publicationClock.stop();
+    var observerFailures = 0;
+    try {
+      publishCompanionState?.call();
+    } finally {
+      observerFailures = _notify(change);
+      publicationClock.stop();
+    }
     _recordExecutionDiagnostic(
       diagnostics,
       CommandExecutionDiagnosticStage.publicationObservers,
@@ -944,6 +1134,9 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
       afterRoot: prepared.after,
       replacedObjectCount: prepared.objectIds.length,
       retainedResourceBytes: _retainedResourceBytes(prepared),
+      retainedStructureBytes: prepared.pageCollectionSection == null
+          ? 0
+          : prepared.pageIds.length * 4096,
     );
     final costResult = _estimateCost(
       estimateInput,
@@ -1016,7 +1209,13 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
           ),
         );
       }
-      final descriptionBytes = utf8.encode(retainedDescription).length;
+      final descriptionLength = utf8.encode(retainedDescription).length;
+      if (input.retainedStructureBytes < 0 ||
+          input.retainedStructureBytes >
+              Revision.maximumValue - descriptionLength) {
+        return Err(_failure('history_cost_overflow', FailureCategory.resource));
+      }
+      final descriptionBytes = descriptionLength + input.retainedStructureBytes;
       if (descriptionBytes > Revision.maximumValue ||
           input.retainedResourceBytes < 0 ||
           input.retainedResourceBytes > Revision.maximumValue ||
@@ -1071,12 +1270,19 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   }
 
   /// Undoes the newest reachable history entry exactly, without Registry calls.
-  Result<CommandCommit, CommandFailure> undo() => _traverse(undoing: true);
+  Result<CommandCommit, CommandFailure> undo({
+    void Function()? publishCompanionState,
+  }) => _traverse(undoing: true, publishCompanionState: publishCompanionState);
 
   /// Redoes the next reachable history entry exactly, without Registry calls.
-  Result<CommandCommit, CommandFailure> redo() => _traverse(undoing: false);
+  Result<CommandCommit, CommandFailure> redo({
+    void Function()? publishCompanionState,
+  }) => _traverse(undoing: false, publishCompanionState: publishCompanionState);
 
-  Result<CommandCommit, CommandFailure> _traverse({required bool undoing}) {
+  Result<CommandCommit, CommandFailure> _traverse({
+    required bool undoing,
+    void Function()? publishCompanionState,
+  }) {
     if (_mutationActive)
       return Err(_failure('reentrant_mutation', FailureCategory.state));
     if (!_historyTraversalEnabled) {
@@ -1131,8 +1337,14 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
       _recordObjectGenerations(prepared, nextRevisions);
       _historyCursor += undoing ? -1 : 1;
       _coalescingBoundaryPending = true;
+      var observerFailures = 0;
+      try {
+        publishCompanionState?.call();
+      } finally {
+        observerFailures = _notify(change);
+      }
       return Ok(
-        CommandCommit(change: change, observerFailureCount: _notify(change)),
+        CommandCommit(change: change, observerFailureCount: observerFailures),
       );
     } finally {
       _mutationActive = false;
@@ -1196,6 +1408,61 @@ final class DocumentMutationCoordinator implements CoalescingBoundarySink {
   }
 
   DocumentRevisionSnapshot? _advancedRevisions(_Prepared prepared) {
+    if (prepared.pageCollectionSection != null) {
+      final document = _revisions.document.increment().fold<Revision?>(
+        onOk: (v) => v,
+        onErr: (_) => null,
+      );
+      final sectionId = prepared.pageCollectionSection!;
+      final section = _revisions.sections[sectionId]
+          ?.increment()
+          .fold<Revision?>(onOk: (v) => v, onErr: (_) => null);
+      final resources =
+          prepared.addedResources.isEmpty && prepared.removedResources.isEmpty
+          ? _revisions.resourceCatalog
+          : _revisions.resourceCatalog.increment().fold<Revision?>(
+              onOk: (v) => v,
+              onErr: (_) => null,
+            );
+      if (document == null || section == null || resources == null) return null;
+      final pages = Map<PageId, Revision>.of(_revisions.pages);
+      final layers = Map<LayerId, Revision>.of(_revisions.layers);
+      final membership = Map<LayerId, Revision>.of(_revisions.layerMembership);
+      final livePages = prepared.after.pages.map((p) => p.id).toSet();
+      final liveLayers = prepared.after.pages
+          .expand((p) => p.layers)
+          .map((l) => l.id)
+          .toSet();
+      // Document sequencing gives restored entities a fresh generation, so a
+      // request captured before Undo cannot become valid again after Redo.
+      for (final id in prepared.pageIds) {
+        if (livePages.contains(id)) {
+          pages[id] = document;
+        } else {
+          pages.remove(id);
+        }
+      }
+      for (final id in prepared.layerIds) {
+        if (liveLayers.contains(id)) {
+          layers[id] = document;
+          membership[id] = document;
+        } else {
+          layers.remove(id);
+          membership.remove(id);
+        }
+      }
+      return DocumentRevisionSnapshot.fromValues(
+        documentId: _revisions.documentId,
+        document: document,
+        sections: {..._revisions.sections, sectionId: section},
+        pages: pages,
+        layers: layers,
+        layerMembership: membership,
+        objects: _revisions.objects,
+        resourceCatalog: resources,
+      );
+    }
+
     final resourcesChanged =
         prepared.addedResources.isNotEmpty ||
         prepared.removedResources.isNotEmpty;
@@ -2013,6 +2280,7 @@ final class _Prepared {
     Set<ObjectId> removedObjectIds = const {},
     Set<ObjectId>? replacedObjectIds,
     this.membershipChanged = false,
+    this.pageCollectionSection,
     Set<ObjectId>? movedObjectIds,
     Map<ResourceIdentity, DocumentResourceSnapshot> addedResources = const {},
     Map<ResourceIdentity, DocumentResourceSnapshot> removedResources = const {},
@@ -2049,7 +2317,8 @@ final class _Prepared {
   final Set<ObjectId> geometryChangedObjectIds;
   Rect2? get oldBounds => _aggregateRectangles(oldObjectBounds.values);
   Rect2? get newBounds => _aggregateRectangles(newObjectBounds.values);
-  bool get geometryChanged => geometryChangedObjectIds.isNotEmpty;
+  bool get geometryChanged =>
+      geometryChangedObjectIds.isNotEmpty || pageCollectionSection != null;
   final bool appearanceChanged;
   final bool textChanged;
   final bool metadataChanged;
@@ -2059,6 +2328,7 @@ final class _Prepared {
   final Set<ObjectId> removedObjectIds;
   final Set<ObjectId> replacedObjectIds;
   final bool membershipChanged;
+  final SectionId? pageCollectionSection;
   final Set<ObjectId> movedObjectIds;
   final Map<ResourceIdentity, DocumentResourceSnapshot> addedResources;
   final Map<ResourceIdentity, DocumentResourceSnapshot> removedResources;
@@ -2081,6 +2351,7 @@ final class _Prepared {
     removedObjectIds: addedObjectIds,
     replacedObjectIds: replacedObjectIds,
     membershipChanged: membershipChanged,
+    pageCollectionSection: pageCollectionSection,
     movedObjectIds: movedObjectIds,
     addedResources: removedResources,
     removedResources: addedResources,

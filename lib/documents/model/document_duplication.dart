@@ -307,6 +307,11 @@ final class DocumentDuplicator {
     Map<ObjectId, ObjectId> objectIds,
     IdentityRemapping remapping,
   ) {
+    if (source is PdfSourceLayer) {
+      // Page/Section remapping also includes annotations in sibling Layers.
+      // The immutable source has no Objects to remap and keeps its reference.
+      return Ok<DocumentLayer, StructuredFailure>(source.withIdentity(newId));
+    }
     if (source is! ContentLayer) {
       return Err<DocumentLayer, StructuredFailure>(_unsupportedDuplication());
     }

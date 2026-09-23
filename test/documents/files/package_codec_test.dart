@@ -45,15 +45,14 @@ void main() {
         AlnotePackageCodec(objectRegistry: testRegistry()),
         _snapshot(testNotebook()),
       );
-      final fixture = File(
-        'test/fixtures/phase4/canonical_notebook.alnote',
-      ).readAsBytesSync();
+      final fixture = File('test/fixtures/phase4/canonical_notebook.alnote')
+          .readAsBytesSync();
 
       expect(fixture, hasLength(2335));
       expect(
-        (Sha256Digest.calculate(fixture) as Ok<Sha256Digest, StructuredFailure>)
-            .value
-            .hexadecimal,
+        (Sha256Digest.calculate(
+          fixture,
+        ) as Ok<Sha256Digest, StructuredFailure>).value.hexadecimal,
         'c1bfede8112e4151095cfec4006fb22ef29a7fc431c6eab47c33ed840c84f786',
       );
       expect(bytes, fixture);
@@ -158,66 +157,38 @@ void main() {
           ),
         ],
       );
-      final snapshot =
-          (AlnotePackageSnapshot.create(
-                    document: document,
-                    resources: const <DocumentResourceSnapshot>[],
-                    preservation:
-                        (AlnotePackagePreservation.create(
-                                  unknownManifestFields:
-                                      PreservedMap(<String, PreservedData>{
-                                        'futureManifest': const PreservedString(
-                                          'value',
-                                        ),
-                                      }),
-                                  optionalFeatures: const <String>[
-                                    'future_feature',
-                                  ],
-                                  extensionNamespaces: const <String>[
-                                    'example',
-                                  ],
-                                  opaqueEntries: <AlnoteOpaqueEntry>[
-                                    (AlnoteOpaqueEntry.create(
-                                              path:
-                                                  'extensions/example/data.bin',
-                                              mediaType: _media(
-                                                'application/example',
-                                              ),
-                                              schemaVersion: testSchemaVersion,
-                                              bytes: <int>[4, 5, 6],
-                                            )
-                                            as Ok<
-                                              AlnoteOpaqueEntry,
-                                              StructuredFailure
-                                            >)
-                                        .value,
-                                  ],
-                                )
-                                as Ok<
-                                  AlnotePackagePreservation,
-                                  StructuredFailure
-                                >)
-                            .value,
-                  )
-                  as Ok<AlnotePackageSnapshot, StructuredFailure>)
-              .value;
+      final snapshot = (AlnotePackageSnapshot.create(
+        document: document,
+        resources: const <DocumentResourceSnapshot>[],
+        preservation: (AlnotePackagePreservation.create(
+          unknownManifestFields: PreservedMap(<String, PreservedData>{
+            'futureManifest': const PreservedString('value'),
+          }),
+          optionalFeatures: const <String>['future_feature'],
+          extensionNamespaces: const <String>['example'],
+          opaqueEntries: <AlnoteOpaqueEntry>[
+            (AlnoteOpaqueEntry.create(
+              path: 'extensions/example/data.bin',
+              mediaType: _media('application/example'),
+              schemaVersion: testSchemaVersion,
+              bytes: <int>[4, 5, 6],
+            ) as Ok<AlnoteOpaqueEntry, StructuredFailure>).value,
+          ],
+        ) as Ok<AlnotePackagePreservation, StructuredFailure>).value,
+      ) as Ok<AlnotePackageSnapshot, StructuredFailure>).value;
       final registry = testRegistry();
       final first = _encode(
         AlnotePackageCodec(objectRegistry: registry),
         snapshot,
       );
-      final opened =
-          AlnotePackageReader(objectRegistry: registry).openBytes(
-                first,
-                limits: phase4Limits(),
-                cancellationToken: CancellationController().token,
-              )
-              as Completed<OpenedAlnotePackage, StructuredFailure>;
-      final materialized =
-          opened.value.materializeSnapshot(
-                cancellationToken: CancellationController().token,
-              )
-              as Completed<AlnotePackageSnapshot, StructuredFailure>;
+      final opened = AlnotePackageReader(objectRegistry: registry).openBytes(
+        first,
+        limits: phase4Limits(),
+        cancellationToken: CancellationController().token,
+      ) as Completed<OpenedAlnotePackage, StructuredFailure>;
+      final materialized = opened.value.materializeSnapshot(
+        cancellationToken: CancellationController().token,
+      ) as Completed<AlnotePackageSnapshot, StructuredFailure>;
       final second = _encode(
         AlnotePackageCodec(objectRegistry: registry),
         materialized.value,
@@ -285,16 +256,13 @@ void main() {
       );
       final mediaType = _media('application/pdf');
       final role = _role('alnote.resource.pdf');
-      final resource =
-          (DocumentResource.capture(
-                    identity: pdfResourceId,
-                    mediaType: mediaType,
-                    role: role,
-                    schemaVersion: testSchemaVersion,
-                    bytes: <int>[1, 2, 3, 4],
-                  )
-                  as Ok<DocumentResource, StructuredFailure>)
-              .value;
+      final resource = (DocumentResource.capture(
+        identity: pdfResourceId,
+        mediaType: mediaType,
+        role: role,
+        schemaVersion: testSchemaVersion,
+        bytes: <int>[1, 2, 3, 4],
+      ) as Ok<DocumentResource, StructuredFailure>).value;
 
       for (final snapshot in <AlnotePackageSnapshot>[
         _snapshot(pageDocument),
@@ -304,13 +272,11 @@ void main() {
           AlnotePackageCodec(objectRegistry: registry),
           snapshot,
         );
-        final opened =
-            AlnotePackageReader(objectRegistry: registry).openBytes(
-                  bytes,
-                  limits: phase4Limits(),
-                  cancellationToken: CancellationController().token,
-                )
-                as Completed<OpenedAlnotePackage, StructuredFailure>;
+        final opened = AlnotePackageReader(objectRegistry: registry).openBytes(
+          bytes,
+          limits: phase4Limits(),
+          cancellationToken: CancellationController().token,
+        ) as Completed<OpenedAlnotePackage, StructuredFailure>;
         final result = opened.value.materializeSnapshot(
           cancellationToken: CancellationController().token,
         );
@@ -341,14 +307,12 @@ void main() {
         final document = testNotebook(resources: catalog);
         DocumentResource resource(ResourceIdentity id) =>
             (DocumentResource.capture(
-                      identity: id,
-                      mediaType: _media('image/png'),
-                      role: _role('alnote.resource.image'),
-                      schemaVersion: testSchemaVersion,
-                      bytes: <int>[7, 8, 9],
-                    )
-                    as Ok<DocumentResource, StructuredFailure>)
-                .value;
+              identity: id,
+              mediaType: _media('image/png'),
+              role: _role('alnote.resource.image'),
+              schemaVersion: testSchemaVersion,
+              bytes: <int>[7, 8, 9],
+            ) as Ok<DocumentResource, StructuredFailure>).value;
         final bytes = _encode(
           AlnotePackageCodec(objectRegistry: testRegistry()),
           _snapshot(
@@ -366,11 +330,10 @@ void main() {
         );
         final opened =
             AlnotePackageReader(objectRegistry: testRegistry()).openBytes(
-                  bytes,
-                  limits: phase4Limits(),
-                  cancellationToken: CancellationController().token,
-                )
-                as Completed<OpenedAlnotePackage, StructuredFailure>;
+              bytes,
+              limits: phase4Limits(),
+              cancellationToken: CancellationController().token,
+            ) as Completed<OpenedAlnotePackage, StructuredFailure>;
         expect(opened.value.resourceHandles, hasLength(2));
         for (final handle in opened.value.resourceHandles) {
           expect(
@@ -539,22 +502,20 @@ void main() {
 AlnotePackageSnapshot _snapshot(
   DocumentRoot document, {
   Iterable<DocumentResource> resources = const <DocumentResource>[],
-}) =>
-    (AlnotePackageSnapshot.create(
-              document: document,
-              resources: resources.map(DocumentResourceSnapshot.new),
-            )
-            as Ok<AlnotePackageSnapshot, StructuredFailure>)
-        .value;
+}) => (AlnotePackageSnapshot.create(
+  document: document,
+  resources: resources.map(DocumentResourceSnapshot.new),
+) as Ok<AlnotePackageSnapshot, StructuredFailure>).value;
 
 List<int> _encode(AlnotePackageCodec codec, AlnotePackageSnapshot snapshot) =>
-    (codec.encode(snapshot, limits: phase4Limits())
-            as Ok<List<int>, StructuredFailure>)
-        .value;
+    (codec.encode(
+      snapshot,
+      limits: phase4Limits(),
+    ) as Ok<List<int>, StructuredFailure>).value;
 
-ResourceMediaType _media(String value) =>
-    (ResourceMediaType.parse(value) as Ok<ResourceMediaType, StructuredFailure>)
-        .value;
+ResourceMediaType _media(String value) => (ResourceMediaType.parse(
+  value,
+) as Ok<ResourceMediaType, StructuredFailure>).value;
 
 ResourceRole _role(String value) =>
     (ResourceRole.parse(value) as Ok<ResourceRole, StructuredFailure>).value;
@@ -602,6 +563,6 @@ List<int> _corruptStoredEntry(List<int> source, String target) {
   throw StateError('target entry missing');
 }
 
-PreservedInteger _preservedInteger(int value) =>
-    (PreservedInteger.create(value) as Ok<PreservedInteger, StructuredFailure>)
-        .value;
+PreservedInteger _preservedInteger(int value) => (PreservedInteger.create(
+  value,
+) as Ok<PreservedInteger, StructuredFailure>).value;

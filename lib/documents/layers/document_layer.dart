@@ -7,6 +7,7 @@ import '../../core/versioning/schema_version.dart';
 import '../model/identifiers.dart';
 import '../model/preserved_data.dart';
 import '../objects/object_envelope.dart';
+import '../pdf/pdf_model.dart';
 
 /// A permanent namespaced Layer type identity.
 final class LayerTypeKey implements Comparable<LayerTypeKey> {
@@ -20,6 +21,11 @@ final class LayerTypeKey implements Comparable<LayerTypeKey> {
   /// The ordinary built-in mixed-content Layer type key.
   static final LayerTypeKey content = _trustedLayerTypeKey(
     'alnote.layer.content',
+  );
+
+  /// The built-in immutable PDF source Layer type key.
+  static final LayerTypeKey pdfSource = _trustedLayerTypeKey(
+    'alnote.pdf.source',
   );
 
   /// The wrapped AL NOTE namespaced identifier.
@@ -232,6 +238,138 @@ final class ContentLayer extends DocumentLayer {
   );
 }
 
+/// Built-in Page-filling PDF source Layer.
+///
+/// It owns no ordinary Objects and shares one immutable resource identity
+/// through [reference]. It has no transform surface and is always locked.
+final class PdfSourceLayer extends DocumentLayer {
+  PdfSourceLayer._({
+    required super.id,
+    required super.envelopeVersion,
+    required super.name,
+    required super.visible,
+    required super.opacity,
+    required this.reference,
+    required super.extensionData,
+  }) : super._(
+         typeKey: LayerTypeKey.pdfSource,
+         typeSchemaVersion: pdfPageReferenceSchemaVersion,
+         role: LayerCoreRole.pdfSource,
+         locked: true,
+         objects: const <ObjectEnvelope>[],
+         typeData: reference.encode(),
+       );
+
+  /// Creates a locked built-in source Layer with exactly one Page reference.
+  static Result<PdfSourceLayer, StructuredFailure> create({
+    required LayerId id,
+    required SchemaVersion envelopeVersion,
+    required String name,
+    required bool visible,
+    required double opacity,
+    required PdfPageReference reference,
+    required PdfModelLimits limits,
+    PreservedMap? extensionData,
+  }) {
+    final checkedReference = reference.validatedFor(limits);
+    final extensions = extensionData ?? PreservedMap.empty();
+    if (_opacityFailure(opacity) != null ||
+        checkedReference is! Ok<PdfPageReference, StructuredFailure> ||
+        _containsReservedLayerField(extensions) ||
+        !preservedUnknownDataAllowed(
+          root: extensions,
+          maximumFieldsPerBoundary: limits.maximumUnknownFields,
+          maximumNodes: limits.maximumUnknownNodes,
+          maximumDepth: limits.maximumNestingDepth,
+          maximumStringCodeUnits: limits.maximumUnknownStringCodeUnits,
+        )) {
+      return Err<PdfSourceLayer, StructuredFailure>(_invalidPdfSourceLayer());
+    }
+    return Ok<PdfSourceLayer, StructuredFailure>(
+      PdfSourceLayer._(
+        id: id,
+        envelopeVersion: envelopeVersion,
+        name: name,
+        visible: visible,
+        opacity: opacity,
+        reference: checkedReference.value,
+        extensionData: extensions,
+      ),
+    );
+  }
+
+  /// Reopens the exact schema-1 envelope or rejects corrupt built-in data.
+  static Result<PdfSourceLayer, StructuredFailure> reopen({
+    required LayerId id,
+    required SchemaVersion envelopeVersion,
+    required SchemaVersion typeSchemaVersion,
+    required String name,
+    required bool visible,
+    required bool locked,
+    required double opacity,
+    required Iterable<ObjectEnvelope> objects,
+    required PreservedData typeData,
+    required PreservedMap extensionData,
+    required PdfModelLimits limits,
+  }) {
+    if (typeSchemaVersion != pdfPageReferenceSchemaVersion || !locked) {
+      return Err<PdfSourceLayer, StructuredFailure>(_invalidPdfSourceLayer());
+    }
+    try {
+      if (objects.iterator.moveNext()) {
+        return Err<PdfSourceLayer, StructuredFailure>(_invalidPdfSourceLayer());
+      }
+    } on Object {
+      return Err<PdfSourceLayer, StructuredFailure>(_invalidPdfSourceLayer());
+    }
+    final decoded = PdfPageReference.decode(typeData, limits: limits);
+    if (decoded is! Ok<PdfPageReference, StructuredFailure>) {
+      return Err<PdfSourceLayer, StructuredFailure>(_invalidPdfSourceLayer());
+    }
+    return create(
+      id: id,
+      envelopeVersion: envelopeVersion,
+      name: name,
+      visible: visible,
+      opacity: opacity,
+      reference: decoded.value,
+      limits: limits,
+      extensionData: extensionData,
+    );
+  }
+
+  /// The exact persisted Page reference and shared resource identity.
+  final PdfPageReference reference;
+
+  /// Rebuilds the validated Layer with a new document-scoped identity.
+  PdfSourceLayer withIdentity(LayerId replacementId) => PdfSourceLayer._(
+    id: replacementId,
+    envelopeVersion: envelopeVersion,
+    name: name,
+    visible: visible,
+    opacity: opacity,
+    reference: reference,
+    extensionData: extensionData,
+  );
+
+  @override
+  Result<DocumentLayer, StructuredFailure> withObjects(
+    Iterable<ObjectEnvelope> replacement,
+  ) {
+    try {
+      if (replacement.iterator.moveNext()) {
+        return Err<DocumentLayer, StructuredFailure>(_invalidPdfSourceLayer());
+      }
+    } on Object {
+      return Err<DocumentLayer, StructuredFailure>(_invalidPdfSourceLayer());
+    }
+    return Ok<DocumentLayer, StructuredFailure>(this);
+  }
+
+  @override
+  String toString() => 'PdfSourceLayer(id: $id, visible: $visible)';
+}
+
 /// An inert preserved Layer whose specialized type behavior is unavailable.
 final class UnknownLayer extends DocumentLayer {
   UnknownLayer._({
@@ -324,6 +462,35 @@ StructuredFailure? _opacityFailure(double opacity) {
   }
   return null;
 }
+
+const Set<String> _reservedLayerFields = <String>{
+  'envelopeVersion',
+  'id',
+  'locked',
+  'name',
+  'objects',
+  'opacity',
+  'role',
+  'type',
+  'typeData',
+  'typeSchemaVersion',
+  'visible',
+};
+
+bool _containsReservedLayerField(PreservedMap value) {
+  try {
+    return value.values.keys.any(_reservedLayerFields.contains);
+  } on Object {
+    return true;
+  }
+}
+
+StructuredFailure _invalidPdfSourceLayer() => StructuredFailure(
+  code: 'documents.layers.invalid_pdf_source',
+  category: FailureCategory.validation,
+  retryDisposition: RetryDisposition.never,
+  message: 'The PDF source Layer does not satisfy its bounded contract.',
+);
 
 bool _objectListsEqual(List<ObjectEnvelope> left, List<ObjectEnvelope> right) {
   if (left.length != right.length) {

@@ -277,8 +277,8 @@ Sha256Digest _digest(String value) => Sha256Digest.parse(value).fold(
   onErr: (_) => throw const _ManifestRejected('entry_integrity'),
 );
 
-ResourceMediaType _mediaType(String value) =>
-    ResourceMediaType.parse(value).fold(
+ResourceMediaType _mediaType(String value) => ResourceMediaType.parse(value)
+    .fold(
       onOk: (result) => result,
       onErr: (_) => throw const _ManifestRejected('manifest_catalog'),
     );

@@ -16,12 +16,14 @@ final class ApplicationStateSnapshot {
 }
 
 /// Receives one complete accepted Application State snapshot.
-typedef ApplicationStateListener =
-    void Function(ApplicationStateSnapshot snapshot);
+typedef ApplicationStateListener = void Function(
+  ApplicationStateSnapshot snapshot,
+);
 
 /// Receives one accepted platform lifecycle event.
-typedef ApplicationLifecycleListener =
-    void Function(PlatformLifecycleEvent event);
+typedef ApplicationLifecycleListener = void Function(
+  PlatformLifecycleEvent event,
+);
 
 /// Instance-owned logical Session and view registry.
 final class ApplicationState {

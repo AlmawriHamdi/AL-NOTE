@@ -378,28 +378,26 @@ DocumentMutationCoordinator _coordinator() {
     for (var i = 500; i < 550; i++) testUuid(i),
   ]);
   return (DocumentMutationCoordinator.create(
-            initialRoot: testNotebook(
-              sections: [
-                testSection(
-                  pages: [
-                    testPage(layers: [testContentLayer()]),
-                  ],
-                ),
-              ],
-            ),
-            validator: DocumentValidator(registry),
-            uuidGenerator: generator,
-            historyLimits: _ok(
-              HistoryLimits.create(
-                maximumRetainedCommandCount: 10,
-                maximumEstimatedRetainedBytes: 100000,
-              ),
-            ),
-            retainedCostEstimator: FixedHistoryCostEstimator(100),
-            maximumListeners: 4,
-          )
-          as Ok<DocumentMutationCoordinator, CommandFailure>)
-      .value;
+    initialRoot: testNotebook(
+      sections: [
+        testSection(
+          pages: [
+            testPage(layers: [testContentLayer()]),
+          ],
+        ),
+      ],
+    ),
+    validator: DocumentValidator(registry),
+    uuidGenerator: generator,
+    historyLimits: _ok(
+      HistoryLimits.create(
+        maximumRetainedCommandCount: 10,
+        maximumEstimatedRetainedBytes: 100000,
+      ),
+    ),
+    retainedCostEstimator: FixedHistoryCostEstimator(100),
+    maximumListeners: 4,
+  ) as Ok<DocumentMutationCoordinator, CommandFailure>).value;
 }
 
 ObjectRegistry _registry() =>

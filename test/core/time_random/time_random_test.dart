@@ -104,14 +104,12 @@ void main() {
 
   group('UuidSequenceGenerator', () {
     test('returns UUIDs in deterministic order then reports exhaustion', () {
-      final first =
-          (UuidIdentifier.parse('00000000-0000-4000-8000-000000000001')
-                  as Ok<UuidIdentifier, StructuredFailure>)
-              .value;
-      final second =
-          (UuidIdentifier.parse('00000000-0000-4000-8000-000000000002')
-                  as Ok<UuidIdentifier, StructuredFailure>)
-              .value;
+      final first = (UuidIdentifier.parse(
+        '00000000-0000-4000-8000-000000000001',
+      ) as Ok<UuidIdentifier, StructuredFailure>).value;
+      final second = (UuidIdentifier.parse(
+        '00000000-0000-4000-8000-000000000002',
+      ) as Ok<UuidIdentifier, StructuredFailure>).value;
       final generator = UuidSequenceGenerator.fromValues(<UuidIdentifier>[
         first,
         second,

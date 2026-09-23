@@ -14,7 +14,7 @@ class AlNoteApp extends StatelessWidget {
   final Phase6CanvasRuntime runtime;
 
   @override
-  Widget build(final BuildContext context) {
+  Widget build(BuildContext context) {
     return MaterialApp(
       home: Phase6Canvas(runtime: runtime),
       debugShowCheckedModeBanner: false,

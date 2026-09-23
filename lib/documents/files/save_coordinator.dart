@@ -174,9 +174,8 @@ final class AlnoteSaveCoordinator {
       await _abortSafely(staging);
       return _cancelled(cancellationToken);
     }
-    final storageLimits = AlnoteStorageLimits.fromSnapshot(
-      limits,
-    ).fold(onOk: (value) => value, onErr: (_) => null);
+    final storageLimits = AlnoteStorageLimits.fromSnapshot(limits)
+        .fold(onOk: (value) => value, onErr: (_) => null);
     if (storageLimits == null) {
       await _abortSafely(staging);
       return Failed<AlnoteSaveEvidence, StructuredFailure>(

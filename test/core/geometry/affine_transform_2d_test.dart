@@ -82,9 +82,9 @@ void main() {
 
       expect(_apply(identity, _point(2, 3)), _point(2, 3));
       expect(
-        (identity.applyToVector(_vector(4, 5))
-                as Ok<Vector2, StructuredFailure>)
-            .value,
+        (identity.applyToVector(
+          _vector(4, 5),
+        ) as Ok<Vector2, StructuredFailure>).value,
         _vector(4, 5),
       );
       expect(identity.determinant, 1);
@@ -97,9 +97,9 @@ void main() {
 
       expect(_apply(translation, _point(1, 3)), _point(5, 1));
       expect(
-        (translation.applyToVector(_vector(1, 3))
-                as Ok<Vector2, StructuredFailure>)
-            .value,
+        (translation.applyToVector(
+          _vector(1, 3),
+        ) as Ok<Vector2, StructuredFailure>).value,
         _vector(1, 3),
       );
     });
@@ -125,12 +125,12 @@ void main() {
         TranslationTransformOperation2D(_vector(1, 0)),
       );
       final scale = _transform(_scale(2, 2, _point(0, 0)));
-      final translationThenScale =
-          (translation.then(scale) as Ok<AffineTransform2D, StructuredFailure>)
-              .value;
-      final scaleThenTranslation =
-          (scale.then(translation) as Ok<AffineTransform2D, StructuredFailure>)
-              .value;
+      final translationThenScale = (translation.then(
+        scale,
+      ) as Ok<AffineTransform2D, StructuredFailure>).value;
+      final scaleThenTranslation = (scale.then(
+        translation,
+      ) as Ok<AffineTransform2D, StructuredFailure>).value;
 
       expect(_apply(translationThenScale, _point(1, 1)), _point(4, 2));
       expect(_apply(scaleThenTranslation, _point(1, 1)), _point(3, 2));
@@ -142,10 +142,9 @@ void main() {
       );
       final rotation = _transform(_rotation(math.pi / 3, _point(2, 5)));
       final scale = _transform(_scale(2, 0.5, _point(-1, 4)));
-      final first =
-          (translation.then(rotation)
-                  as Ok<AffineTransform2D, StructuredFailure>)
-              .value;
+      final first = (translation.then(
+        rotation,
+      ) as Ok<AffineTransform2D, StructuredFailure>).value;
       final combined =
           (first.then(scale) as Ok<AffineTransform2D, StructuredFailure>).value;
       final original = _point(11, -8);
@@ -236,9 +235,10 @@ void main() {
       expect(exact.hashCode, same.hashCode);
       expect(exact, isNot(nearby));
       expect(
-        (exact.approximatelyEquals(nearby, tolerance: 0.00001)
-                as Ok<bool, StructuredFailure>)
-            .value,
+        (exact.approximatelyEquals(
+          nearby,
+          tolerance: 0.00001,
+        ) as Ok<bool, StructuredFailure>).value,
         isTrue,
       );
     });
@@ -263,23 +263,22 @@ Vector2 _vector(double x, double y) =>
     (Vector2.create(x: x, y: y) as Ok<Vector2, StructuredFailure>).value;
 
 RotationTransformOperation2D _rotation(double radians, Point2 pivot) =>
-    (RotationTransformOperation2D.create(radians: radians, pivot: pivot)
-            as Ok<RotationTransformOperation2D, StructuredFailure>)
-        .value;
+    (RotationTransformOperation2D.create(
+      radians: radians,
+      pivot: pivot,
+    ) as Ok<RotationTransformOperation2D, StructuredFailure>).value;
 
 ScaleTransformOperation2D _scale(double scaleX, double scaleY, Point2 pivot) =>
     (ScaleTransformOperation2D.create(
-              scaleX: scaleX,
-              scaleY: scaleY,
-              pivot: pivot,
-            )
-            as Ok<ScaleTransformOperation2D, StructuredFailure>)
-        .value;
+      scaleX: scaleX,
+      scaleY: scaleY,
+      pivot: pivot,
+    ) as Ok<ScaleTransformOperation2D, StructuredFailure>).value;
 
 AffineTransform2D _transform(TransformOperation2D operation) =>
-    (AffineTransform2D.fromOperation(operation)
-            as Ok<AffineTransform2D, StructuredFailure>)
-        .value;
+    (AffineTransform2D.fromOperation(
+      operation,
+    ) as Ok<AffineTransform2D, StructuredFailure>).value;
 
 Point2 _apply(AffineTransform2D transform, Point2 point) =>
     (transform.applyToPoint(point) as Ok<Point2, StructuredFailure>).value;
@@ -313,18 +312,20 @@ void _expectRoundTrip(
       (transform.inverse() as Ok<AffineTransform2D, StructuredFailure>).value;
   final roundTrip = _apply(inverse, _apply(transform, point));
   expect(
-    (roundTrip.approximatelyEquals(point, tolerance: tolerance)
-            as Ok<bool, StructuredFailure>)
-        .value,
+    (roundTrip.approximatelyEquals(
+      point,
+      tolerance: tolerance,
+    ) as Ok<bool, StructuredFailure>).value,
     isTrue,
   );
 }
 
 void _expectPointNear(Point2 actual, Point2 expected) {
   expect(
-    (actual.approximatelyEquals(expected, tolerance: 1e-10)
-            as Ok<bool, StructuredFailure>)
-        .value,
+    (actual.approximatelyEquals(
+      expected,
+      tolerance: 1e-10,
+    ) as Ok<bool, StructuredFailure>).value,
     isTrue,
   );
 }
